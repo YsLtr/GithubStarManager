@@ -6,6 +6,8 @@
 // @author       YsLtr
 // @match        https://github.com/*tab=stars*
 // @grant        GM_addStyle
+// @grant        GM_setValue
+// @grant        GM_getValue
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -151,7 +153,6 @@
         -webkit-box-orient: vertical !important;
         overflow: hidden !important;
         margin: 0 0 12px 0 !important;
-        flex-grow: 1 !important;
         min-width: 0 !important;
       }
 
@@ -194,6 +195,92 @@
         border-radius: 50% !important;
       }
 
+      /* 标签容器 — 位于描述和元信息之间 */
+      .stars-card-tags {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+        margin: 0 0 8px 0;
+        min-height: 22px;
+      }
+
+      /* 单个标签 pill */
+      .stars-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 12px;
+        line-height: 1.4;
+        background: var(--bgColor-accent-muted, #ddf4ff);
+        color: var(--fgColor-accent, #0969da);
+        white-space: nowrap;
+      }
+
+      /* 标签删除按钮 — 悬浮标签时显示 */
+      .stars-tag .stars-tag-del {
+        cursor: pointer;
+        font-size: 14px;
+        line-height: 1;
+        width: 0;
+        overflow: hidden;
+        opacity: 0;
+        transition: width 0.15s, opacity 0.15s, margin 0.15s;
+      }
+      .stars-tag:hover .stars-tag-del {
+        width: 12px;
+        margin-left: 2px;
+        opacity: 0.6;
+      }
+      .stars-tag .stars-tag-del:hover {
+        opacity: 1;
+      }
+
+      /* 添加标签按钮 — 悬浮卡片时显示 */
+      .stars-tag-add {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        border: 1px dashed var(--borderColor-default, #d1d9e0);
+        color: var(--fgColor-muted, #656d76);
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity 0.15s;
+        background: transparent;
+      }
+      .stars-tag-add::before,
+      .stars-tag-add::after {
+        content: '';
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: currentColor;
+        border-radius: 1px;
+      }
+      .stars-tag-add::before {
+        width: 10px;
+        height: 1.5px;
+      }
+      .stars-tag-add::after {
+        width: 1.5px;
+        height: 10px;
+      }
+      .stars-grid-card:hover .stars-tag-add {
+        opacity: 1;
+      }
+      .stars-tag-add:hover {
+        background: var(--bgColor-accent-muted, #ddf4ff);
+        color: var(--fgColor-accent, #0969da);
+        border-color: var(--fgColor-accent, #0969da);
+      }
+
       /* 分页器占满整行 */
       .stars-grid-container .paginate-container {
         grid-column: 1 / -1 !important;
@@ -210,6 +297,70 @@
   // ====== DOM 重构逻辑 ======
   function isDesktop() {
     return window.innerWidth >= MOBILE_BREAKPOINT;
+  }
+
+  // ====== 标签存储 ======
+  function loadAllTags() {
+    return GM_getValue('stars_tags', {});
+  }
+
+  function saveTags(repoId, tagsArray) {
+    const all = loadAllTags();
+    if (tagsArray.length === 0) {
+      delete all[repoId];
+    } else {
+      all[repoId] = tagsArray;
+    }
+    GM_setValue('stars_tags', all);
+  }
+
+  function getTags(repoId) {
+    const all = loadAllTags();
+    return all[repoId] || [];
+  }
+
+  // ====== 标签渲染 ======
+  function renderTags(tagsContainer) {
+    const repoId = tagsContainer.dataset.repoId;
+    if (!repoId) return;
+
+    const tags = getTags(repoId);
+    tagsContainer.innerHTML = '';
+
+    tags.forEach((tag, idx) => {
+      const span = document.createElement('span');
+      span.className = 'stars-tag';
+      span.textContent = tag;
+
+      const del = document.createElement('span');
+      del.className = 'stars-tag-del';
+      del.textContent = '×';
+      del.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const current = getTags(repoId);
+        current.splice(idx, 1);
+        saveTags(repoId, current);
+        renderTags(tagsContainer);
+      });
+
+      span.appendChild(del);
+      tagsContainer.appendChild(span);
+    });
+
+    const addBtn = document.createElement('span');
+    addBtn.className = 'stars-tag-add';
+    addBtn.title = '添加标签';
+    addBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const name = prompt('输入标签名');
+      if (name && name.trim()) {
+        const current = getTags(repoId);
+        current.push(name.trim());
+        saveTags(repoId, current);
+        renderTags(tagsContainer);
+      }
+    });
+    tagsContainer.appendChild(addBtn);
   }
 
   function transformStarsList() {
@@ -255,7 +406,22 @@
       const card = document.createElement('div');
       card.className = 'stars-grid-card';
 
+      // 提取 repoId
+      const toggleEl = item.querySelector('[data-toggle-for*="details-user-list-"]');
+      let repoId = '';
+      if (toggleEl) {
+        const match = toggleEl.getAttribute('data-toggle-for').match(/details-user-list-(\d+)/);
+        if (match) repoId = match[1];
+      }
+      if (repoId) card.dataset.repoId = repoId;
+
+      // 提取 repoName（href）
       const h3 = item.querySelector('h3');
+      if (h3) {
+        const repoLink = h3.querySelector('a');
+        if (repoLink) card.dataset.repoName = repoLink.getAttribute('href') || '';
+      }
+
       const descP = item.querySelector('p[itemprop="description"]');
       const metaDiv = item.querySelector('.f6.color-fg-muted');
 
@@ -268,6 +434,9 @@
       } else {
         cardHTML += '<p class="stars-card-desc" style="opacity:0.5;font-style:italic;">No description</p>';
       }
+
+      // 标签容器
+      cardHTML += `<div class="stars-card-tags" data-repo-id="${repoId}"></div>`;
 
       if (metaDiv) {
         // 将元信息分为两组：主信息（语言+star+fork）和更新时间
@@ -302,6 +471,10 @@
       card.innerHTML = cardHTML;
       gridContainer.appendChild(card);
       item.classList.add('stars-original-hidden');
+
+      // 渲染标签
+      const tagsContainer = card.querySelector('.stars-card-tags');
+      if (tagsContainer) renderTags(tagsContainer);
     });
 
     // 分页器
