@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GitHub Stars Grid View
 // @namespace    https://github.com/YsLtr
-// @version      2.0
+// @version      2.1
 // @description  将 GitHub Stars 页面的列表视图改为卡片网格视图，缩小左侧个人资料栏，最大化仓库展示空间（仅桌面端生效）
 // @author       YsLtr
 // @match        https://github.com/*tab=stars*
@@ -37,6 +37,57 @@
     const all = loadRepoCache();
     all[repoId] = Object.assign({}, all[repoId] || {}, data, { ts: Date.now() });
     saveRepoCache(all);
+  }
+
+  // ====== 待删除区（pending delete） ======
+  function loadPendingDelete() {
+    return GM_getValue('stars_pending_delete', {});
+  }
+  function savePendingDelete(all) {
+    GM_setValue('stars_pending_delete', all);
+  }
+
+  function markRepoUnstarred(repoId) {
+    const cache = loadRepoCache();
+    if (!cache[repoId]) return;
+    const pending = loadPendingDelete();
+    pending[repoId] = Object.assign({}, cache[repoId], {
+      unstarredAt: Date.now(),
+      _tags: getTags(repoId)
+    });
+    savePendingDelete(pending);
+    delete cache[repoId];
+    saveRepoCache(cache);
+    saveTags(repoId, []);
+  }
+
+  function markRepoStarred(repoId) {
+    const pending = loadPendingDelete();
+    if (!pending[repoId]) return;
+    const entry = pending[repoId];
+    const tags = entry._tags || [];
+    delete entry.unstarredAt;
+    delete entry._tags;
+    const cache = loadRepoCache();
+    cache[repoId] = entry;
+    saveRepoCache(cache);
+    if (tags.length > 0) saveTags(repoId, tags);
+    delete pending[repoId];
+    savePendingDelete(pending);
+  }
+
+  function cleanupExpiredUnstarred() {
+    const pending = loadPendingDelete();
+    const GRACE_PERIOD = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    let changed = false;
+    for (const repoId in pending) {
+      if (pending[repoId].unstarredAt && (now - pending[repoId].unstarredAt) > GRACE_PERIOD) {
+        delete pending[repoId];
+        changed = true;
+      }
+    }
+    if (changed) savePendingDelete(pending);
   }
 
   // ====== 每用户标签存储 ======
@@ -84,6 +135,13 @@
     if (!repoIdMeta) return;
     const repoId = repoIdMeta.getAttribute('content');
     if (!repoId) return;
+
+    // Don't cache repos the current user hasn't starred
+    const toggler = document.querySelector('.js-toggler-container.starring-container');
+    if (toggler) {
+      const starredDiv = toggler.querySelector('.starred');
+      if (starredDiv && getComputedStyle(starredDiv).display === 'none') return;
+    }
 
     const nwoMeta = document.querySelector('meta[name="octolytics-dimension-repository_nwo"]');
     const name = nwoMeta ? nwoMeta.getAttribute('content') : '';
@@ -151,7 +209,16 @@
 
   // 仓库详情页只做缓存，不修改 DOM
   if (isRepoDetailPage) {
+    cleanupExpiredUnstarred();
     extractAndCacheRepoFromDetailPage();
+    // 监听 unstar 表单提交，清除缓存数据
+    const unstarForm = document.querySelector('.starred form[action$="/unstar"]');
+    if (unstarForm) {
+      unstarForm.addEventListener('submit', () => {
+        const repoId = repoIdMeta.getAttribute('content');
+        if (repoId) markRepoUnstarred(repoId);
+      });
+    }
     return;
   }
 
@@ -278,7 +345,7 @@
       /* 卡片标题 */
       .stars-grid-card .stars-card-header h3 {
         font-size: 14px !important;
-        margin: 0 0 8px 0 !important;
+        margin: 0 !important;
         font-weight: 600 !important;
         white-space: nowrap !important;
         overflow: hidden !important;
@@ -510,6 +577,42 @@
         color: #ffffff !important;
       }
 
+      /* ===== 星星按钮 ===== */
+      .stars-card-header {
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        margin-bottom: 8px !important;
+      }
+      .stars-card-header h3 {
+        flex: 1 !important;
+        min-width: 0 !important;
+      }
+      .stars-star-btn {
+        flex-shrink: 0;
+        cursor: pointer;
+        background: none;
+        border: none;
+        padding: 2px;
+        line-height: 0;
+        opacity: 0;
+        transition: opacity 0.15s;
+        color: var(--fgColor-muted, #656d76);
+      }
+      .stars-grid-card:hover .stars-star-btn {
+        opacity: 1;
+      }
+      .stars-star-btn.starred {
+        color: #e3b341;
+      }
+      .stars-star-btn.unstarred {
+        opacity: 1;
+        color: var(--fgColor-muted, #656d76);
+      }
+      .stars-star-btn:hover {
+        opacity: 1 !important;
+      }
+
     } /* end @media */
   `);
 
@@ -520,6 +623,7 @@
 
   // ====== 迁移旧数据 ======
   migrateTagsIfNeeded();
+  cleanupExpiredUnstarred();
 
   // ====== 标签筛选状态 ======
   let activeFilterTags = [];
@@ -536,6 +640,13 @@
   // ====== Stars 页面：从卡片 DOM 提取数据并缓存 ======
   function extractAndCacheRepoFromCard(item, repoId) {
     if (!repoId) return;
+
+    // Don't cache repos the current user hasn't starred
+    const toggler = item.querySelector('.js-toggler-container.starring-container');
+    if (toggler) {
+      const starredDiv = toggler.querySelector('.starred');
+      if (starredDiv && getComputedStyle(starredDiv).display === 'none') return;
+    }
 
     // Name
     const h3 = item.querySelector('h3');
@@ -682,6 +793,169 @@
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+  }
+
+  // ====== Star/Unstar 表单提交 ======
+  function submitStarForm(formEl) {
+    const action = formEl.getAttribute('action');
+    const token = formEl.querySelector('input[name="authenticity_token"]').value;
+    const context = formEl.querySelector('input[name="context"]');
+    const body = new URLSearchParams();
+    body.append('authenticity_token', token);
+    if (context) body.append('context', context.value);
+    return fetch(action, {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      body: body,
+      credentials: 'same-origin'
+    });
+  }
+
+  // ====== SVG 常量 ======
+  const STAR_FILL_SVG = '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" class="octicon octicon-star-fill"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"></path></svg>';
+  const STAR_EMPTY_SVG = '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" class="octicon octicon-star"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Zm0 2.445L6.615 5.5a.75.75 0 0 1-.564.41l-3.097.45 2.24 2.184a.75.75 0 0 1 .216.664l-.528 3.084 2.769-1.456a.75.75 0 0 1 .698 0l2.77 1.456-.53-3.084a.75.75 0 0 1 .216-.664l2.24-2.183-3.096-.45a.75.75 0 0 1-.564-.41L8 2.694Z"></path></svg>';
+
+  // ====== 创建星星按钮（当前页卡片） ======
+  function createStarButton(card, item) {
+    const toggler = item.querySelector('.js-toggler-container.starring-container');
+    if (!toggler) return;
+
+    const starredDiv = toggler.querySelector('.starred');
+    const isStarred = starredDiv && getComputedStyle(starredDiv).display !== 'none';
+
+    const btn = document.createElement('button');
+    btn.className = 'stars-star-btn' + (isStarred ? ' starred' : ' unstarred');
+    btn.type = 'button';
+    btn.title = isStarred ? 'Unstar' : 'Star';
+    btn.innerHTML = isStarred ? STAR_FILL_SVG : STAR_EMPTY_SVG;
+
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      if (btn.disabled) return;
+      btn.disabled = true;
+
+      const currentlyStarred = btn.classList.contains('starred');
+      const formSelector = currentlyStarred
+        ? '.starred form[action$="/unstar"]'
+        : '.unstarred form[action$="/star"]';
+      const formEl = toggler.querySelector(formSelector);
+      if (!formEl) { btn.disabled = false; return; }
+
+      try {
+        const resp = await submitStarForm(formEl);
+        if (!resp.ok) { btn.disabled = false; return; }
+
+        // Toggle original DOM visibility
+        const starredEl = toggler.querySelector('.starred');
+        const unstarredEl = toggler.querySelector('.unstarred');
+        if (currentlyStarred) {
+          // Was starred → now unstarred
+          if (starredEl) starredEl.style.display = 'none';
+          if (unstarredEl) unstarredEl.style.display = '';
+          btn.classList.remove('starred');
+          btn.classList.add('unstarred');
+          btn.innerHTML = STAR_EMPTY_SVG;
+          btn.title = 'Star';
+          // Mark as unstarred (delayed cleanup)
+          const repoId = card.dataset.repoId;
+          if (repoId) markRepoUnstarred(repoId);
+        } else {
+          // Was unstarred → now starred
+          if (unstarredEl) unstarredEl.style.display = 'none';
+          if (starredEl) starredEl.style.display = '';
+          btn.classList.remove('unstarred');
+          btn.classList.add('starred');
+          btn.innerHTML = STAR_FILL_SVG;
+          btn.title = 'Unstar';
+          // Remove unstarred mark if re-starred
+          const repoId = card.dataset.repoId;
+          if (repoId) markRepoStarred(repoId);
+        }
+      } catch (_) {
+        // Network error — do nothing
+      }
+      btn.disabled = false;
+    });
+
+    const header = card.querySelector('.stars-card-header');
+    if (header) header.appendChild(btn);
+  }
+
+  // ====== 创建星星按钮（缓存卡片） ======
+  function createStarButtonForCached(card, data) {
+    if (!data.name) return;
+
+    const isStarred = !data.unstarredAt;
+    const btn = document.createElement('button');
+    btn.className = 'stars-star-btn' + (isStarred ? ' starred' : ' unstarred');
+    btn.type = 'button';
+    btn.title = isStarred ? 'Unstar' : 'Star';
+    btn.innerHTML = isStarred ? STAR_FILL_SVG : STAR_EMPTY_SVG;
+
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      if (btn.disabled) return;
+      btn.disabled = true;
+
+      const currentlyStarred = btn.classList.contains('starred');
+
+      try {
+        // Fetch the repo detail page to get a valid CSRF token
+        const pageResp = await fetch('/' + data.name, { credentials: 'same-origin' });
+        if (!pageResp.ok) { btn.disabled = false; return; }
+        const pageHtml = await pageResp.text();
+        const doc = new DOMParser().parseFromString(pageHtml, 'text/html');
+
+        // Pick the correct form: starred→unstar, unstarred→star
+        const formSelector = currentlyStarred
+          ? '.starred form[action$="/unstar"]'
+          : '.unstarred form[action$="/star"]';
+        const formEl = doc.querySelector(formSelector);
+        if (!formEl) { btn.disabled = false; return; }
+
+        const token = formEl.querySelector('input[name="authenticity_token"]');
+        if (!token) { btn.disabled = false; return; }
+
+        const action = formEl.getAttribute('action');
+        const contextInput = formEl.querySelector('input[name="context"]');
+
+        const body = new URLSearchParams();
+        body.append('authenticity_token', token.value);
+        if (contextInput) body.append('context', contextInput.value);
+
+        const resp = await fetch(action, {
+          method: 'POST',
+          headers: { 'X-Requested-With': 'XMLHttpRequest' },
+          body: body,
+          credentials: 'same-origin'
+        });
+        if (!resp.ok) { btn.disabled = false; return; }
+
+        if (currentlyStarred) {
+          btn.classList.remove('starred');
+          btn.classList.add('unstarred');
+          btn.innerHTML = STAR_EMPTY_SVG;
+          btn.title = 'Star';
+          const repoId = card.dataset.repoId;
+          if (repoId) markRepoUnstarred(repoId);
+        } else {
+          btn.classList.remove('unstarred');
+          btn.classList.add('starred');
+          btn.innerHTML = STAR_FILL_SVG;
+          btn.title = 'Unstar';
+          const repoId = card.dataset.repoId;
+          if (repoId) markRepoStarred(repoId);
+        }
+      } catch (_) {
+        // Network error — do nothing
+      }
+      btn.disabled = false;
+    });
+
+    const header = card.querySelector('.stars-card-header');
+    if (header) header.appendChild(btn);
   }
 
   // ====== 筛选栏 UI ======
@@ -831,6 +1105,9 @@
       } else {
         gridContainer.appendChild(cachedCard);
       }
+
+      // 星星按钮
+      createStarButtonForCached(cachedCard, repoData);
 
       // 7. 渲染标签
       const tagsContainer = cachedCard.querySelector('.stars-card-tags');
@@ -1020,6 +1297,9 @@
 
       // 缓存仓库数据
       extractAndCacheRepoFromCard(item, repoId);
+
+      // 星星按钮
+      createStarButton(card, item);
 
       // 渲染标签
       const tagsContainer = card.querySelector('.stars-card-tags');
