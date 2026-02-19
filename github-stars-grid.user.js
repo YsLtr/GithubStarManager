@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         GitHub Stars Grid View
 // @namespace    https://github.com/YsLtr
-// @version      1.7
+// @version      2.0
 // @description  将 GitHub Stars 页面的列表视图改为卡片网格视图，缩小左侧个人资料栏，最大化仓库展示空间（仅桌面端生效）
 // @author       YsLtr
 // @match        https://github.com/*tab=stars*
+// @match        https://github.com/*/*
 // @grant        GM_addStyle
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -13,6 +14,151 @@
 
 (function () {
   'use strict';
+
+  // ====== 判断页面类型 ======
+  const isStarsPage = /[?&]tab=stars/.test(location.search);
+  const repoIdMeta = document.querySelector('meta[name="octolytics-dimension-repository_id"]');
+  const isRepoDetailPage = !isStarsPage && !!repoIdMeta;
+
+  // ====== 仓库缓存（全局共享） ======
+  function loadRepoCache() {
+    return GM_getValue('stars_repo_cache', {});
+  }
+
+  function saveRepoCache(all) {
+    GM_setValue('stars_repo_cache', all);
+  }
+
+  function getRepoData(repoId) {
+    return loadRepoCache()[repoId] || null;
+  }
+
+  function saveRepoData(repoId, data) {
+    const all = loadRepoCache();
+    all[repoId] = Object.assign({}, all[repoId] || {}, data, { ts: Date.now() });
+    saveRepoCache(all);
+  }
+
+  // ====== 每用户标签存储 ======
+  function getStarsUserId() {
+    const meta = document.querySelector('meta[name="octolytics-dimension-user_id"]');
+    return meta ? meta.getAttribute('content') : '';
+  }
+
+  function loadAllTags() {
+    const userId = getStarsUserId();
+    if (!userId) return GM_getValue('stars_tags', {});
+    return GM_getValue('stars_tags_' + userId, {});
+  }
+
+  function saveTags(repoId, tagsArray) {
+    const userId = getStarsUserId();
+    const key = userId ? 'stars_tags_' + userId : 'stars_tags';
+    const all = GM_getValue(key, {});
+    if (tagsArray.length === 0) {
+      delete all[repoId];
+    } else {
+      all[repoId] = tagsArray;
+    }
+    GM_setValue(key, all);
+  }
+
+  function getTags(repoId) {
+    return loadAllTags()[repoId] || [];
+  }
+
+  // ====== 迁移旧标签数据 ======
+  function migrateTagsIfNeeded() {
+    const userId = getStarsUserId();
+    if (!userId) return;
+    const oldData = GM_getValue('stars_tags', null);
+    const newKey = 'stars_tags_' + userId;
+    const newData = GM_getValue(newKey, null);
+    if (oldData && !newData) {
+      GM_setValue(newKey, oldData);
+    }
+  }
+
+  // ====== 仓库详情页：提取并缓存数据 ======
+  function extractAndCacheRepoFromDetailPage() {
+    if (!repoIdMeta) return;
+    const repoId = repoIdMeta.getAttribute('content');
+    if (!repoId) return;
+
+    const nwoMeta = document.querySelector('meta[name="octolytics-dimension-repository_nwo"]');
+    const name = nwoMeta ? nwoMeta.getAttribute('content') : '';
+
+    // Description
+    const descEl = document.querySelector('.BorderGrid-cell p');
+    const desc = descEl ? descEl.textContent.trim() : '';
+
+    // Primary language + color
+    let lang = '';
+    let langColor = '';
+    const langItems = document.querySelectorAll('.list-style-none li');
+    if (langItems.length > 0) {
+      const firstLangSpan = langItems[0].querySelector('span');
+      if (firstLangSpan) lang = firstLangSpan.textContent.trim();
+    }
+    const progressItems = document.querySelectorAll('.Progress-item');
+    // First Progress-item with a real background-color
+    for (const pi of progressItems) {
+      const bg = pi.style.backgroundColor;
+      if (bg) {
+        langColor = bg;
+        break;
+      }
+    }
+
+    // Stars (precise number)
+    let stars = 0;
+    const starCounter = document.querySelector('#repo-stars-counter-star') ||
+                        document.querySelector('#repo-stars-counter-unstar');
+    if (starCounter) {
+      const ariaLabel = starCounter.getAttribute('aria-label') || '';
+      const ariaMatch = ariaLabel.match(/([\d,]+)\s+users?\s+starred/);
+      if (ariaMatch) {
+        stars = parseInt(ariaMatch[1].replace(/,/g, ''), 10);
+      } else {
+        const titleAttr = starCounter.getAttribute('title') || '';
+        stars = parseInt(titleAttr.replace(/,/g, ''), 10) || 0;
+      }
+    }
+
+    // Forks (precise number)
+    let forks = 0;
+    const forkCounter = document.querySelector('#repo-network-counter');
+    if (forkCounter) {
+      const titleAttr = forkCounter.getAttribute('title') || '';
+      forks = parseInt(titleAttr.replace(/,/g, ''), 10) || 0;
+    }
+
+    // Updated (relative time from shadow DOM)
+    let updated = '';
+    const relTime = document.querySelector('.BorderGrid-cell relative-time');
+    if (relTime && relTime.shadowRoot) {
+      const shadowText = relTime.shadowRoot.textContent.trim();
+      if (shadowText) updated = 'Updated ' + shadowText;
+    }
+    if (!updated && relTime) {
+      // Fallback: use datetime attribute to construct something
+      const dt = relTime.getAttribute('datetime');
+      if (dt) updated = 'Updated ' + relTime.textContent.trim();
+    }
+
+    saveRepoData(repoId, { name, desc, lang, langColor, stars, forks, updated });
+  }
+
+  // 仓库详情页只做缓存，不修改 DOM
+  if (isRepoDetailPage) {
+    extractAndCacheRepoFromDetailPage();
+    return;
+  }
+
+  // 非 Stars 页面且非仓库详情页，不执行
+  if (!isStarsPage) return;
+
+  // ====== 以下仅在 Stars 页面执行 ======
 
   const MOBILE_BREAKPOINT = 768;
 
@@ -217,6 +363,7 @@
         background: var(--bgColor-accent-muted, #ddf4ff);
         color: var(--fgColor-accent, #0969da);
         white-space: nowrap;
+        cursor: pointer;
       }
 
       /* 标签删除按钮 — 悬浮标签时显示 */
@@ -291,6 +438,78 @@
         display: none !important;
       }
 
+      /* 标签筛选隐藏卡片 */
+      .stars-tag-filtered {
+        display: none !important;
+      }
+
+      /* ===== 筛选栏 Tags 按钮 ===== */
+      .stars-tag-filter {
+        position: relative;
+      }
+      /* 有选中标签时按钮高亮 */
+      .stars-tag-filter .has-active {
+        border-color: var(--fgColor-accent, #0969da) !important;
+        color: var(--fgColor-accent, #0969da) !important;
+      }
+
+      /* 下拉面板 */
+      .stars-tag-filter-dropdown {
+        display: none;
+        position: absolute;
+        top: calc(100% + 4px);
+        left: 0;
+        z-index: 100;
+        min-width: 200px;
+        max-height: 300px;
+        overflow-y: auto;
+        background: var(--bgColor-default, #ffffff);
+        border: 1px solid var(--borderColor-default, #d1d9e0);
+        border-radius: 6px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+        padding: 4px 0;
+      }
+      .stars-tag-filter-dropdown.open {
+        display: block;
+      }
+
+      /* 下拉项 */
+      .stars-tag-filter-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 16px;
+        cursor: pointer;
+        font-size: 13px;
+        white-space: nowrap;
+      }
+      .stars-tag-filter-item:hover {
+        background: var(--bgColor-muted, #f6f8fa);
+      }
+
+      /* 清除按钮 */
+      .stars-tag-filter-clear {
+        display: block;
+        width: 100%;
+        padding: 6px 16px;
+        border: none;
+        border-top: 1px solid var(--borderColor-default, #d1d9e0);
+        background: transparent;
+        color: var(--fgColor-accent, #0969da);
+        font-size: 13px;
+        cursor: pointer;
+        text-align: left;
+      }
+      .stars-tag-filter-clear:hover {
+        background: var(--bgColor-muted, #f6f8fa);
+      }
+
+      /* 卡片标签 pill 选中态 */
+      .stars-tag-active {
+        background: var(--fgColor-accent, #0969da) !important;
+        color: #ffffff !important;
+      }
+
     } /* end @media */
   `);
 
@@ -299,24 +518,335 @@
     return window.innerWidth >= MOBILE_BREAKPOINT;
   }
 
-  // ====== 标签存储 ======
-  function loadAllTags() {
-    return GM_getValue('stars_tags', {});
-  }
+  // ====== 迁移旧数据 ======
+  migrateTagsIfNeeded();
 
-  function saveTags(repoId, tagsArray) {
+  // ====== 标签筛选状态 ======
+  let activeFilterTags = [];
+
+  function getAllUniqueTags() {
     const all = loadAllTags();
-    if (tagsArray.length === 0) {
-      delete all[repoId];
-    } else {
-      all[repoId] = tagsArray;
+    const set = new Set();
+    for (const repoId in all) {
+      all[repoId].forEach((t) => set.add(t));
     }
-    GM_setValue('stars_tags', all);
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
   }
 
-  function getTags(repoId) {
-    const all = loadAllTags();
-    return all[repoId] || [];
+  // ====== Stars 页面：从卡片 DOM 提取数据并缓存 ======
+  function extractAndCacheRepoFromCard(item, repoId) {
+    if (!repoId) return;
+
+    // Name
+    const h3 = item.querySelector('h3');
+    let name = '';
+    if (h3) {
+      const repoLink = h3.querySelector('a');
+      if (repoLink) {
+        const href = repoLink.getAttribute('href') || '';
+        name = href.startsWith('/') ? href.substring(1) : href;
+      }
+    }
+
+    // Description
+    const descP = item.querySelector('p[itemprop="description"]');
+    const desc = descP ? descP.textContent.trim() : '';
+
+    // Language
+    const metaDiv = item.querySelector('.f6.color-fg-muted');
+    let lang = '';
+    let langColor = '';
+    let stars = 0;
+    let forks = 0;
+    let updated = '';
+
+    if (metaDiv) {
+      // Language name
+      const langNameEl = metaDiv.querySelector('span[itemprop="programmingLanguage"]');
+      if (langNameEl) lang = langNameEl.textContent.trim();
+
+      // Language color
+      const langColorEl = metaDiv.querySelector('span.repo-language-color');
+      if (langColorEl) langColor = langColorEl.getAttribute('style') || '';
+      // Extract just the color value from style like "background-color: #3178c6;"
+      const colorMatch = langColor.match(/background-color:\s*([^;]+)/);
+      langColor = colorMatch ? colorMatch[1].trim() : '';
+
+      // Stars (full number on Stars page, e.g., "29,208")
+      const starLink = metaDiv.querySelector('a[href*="/stargazers"]');
+      if (starLink) {
+        const starText = starLink.textContent.replace(/[^\d]/g, '');
+        stars = parseInt(starText, 10) || 0;
+      }
+
+      // Forks (full number)
+      const forkLink = metaDiv.querySelector('a[href*="/forks"]');
+      if (forkLink) {
+        const forkText = forkLink.textContent.replace(/[^\d]/g, '');
+        forks = parseInt(forkText, 10) || 0;
+      }
+
+      // Updated text
+      const allNodes = Array.from(metaDiv.childNodes);
+      let foundUpdated = false;
+      let updatedParts = [];
+      for (const node of allNodes) {
+        if (node.nodeType === Node.TEXT_NODE && node.textContent.includes('Updated')) {
+          foundUpdated = true;
+        }
+        if (foundUpdated) {
+          if (node.nodeType === Node.TEXT_NODE) {
+            updatedParts.push(node.textContent.trim());
+          } else if (node.tagName === 'RELATIVE-TIME' && node.shadowRoot) {
+            const shadowText = node.shadowRoot.textContent.trim();
+            if (shadowText) updatedParts.push(shadowText);
+          } else if (node.tagName === 'RELATIVE-TIME') {
+            updatedParts.push(node.textContent.trim());
+          }
+        }
+      }
+      if (updatedParts.length > 0) {
+        updated = updatedParts.join(' ').replace(/\s+/g, ' ').trim();
+      }
+    }
+
+    saveRepoData(repoId, { name, desc, lang, langColor, stars, forks, updated });
+  }
+
+  // ====== 从缓存构建卡片 ======
+  function buildCardFromCache(repoId, data) {
+    const card = document.createElement('div');
+    card.className = 'stars-grid-card stars-grid-card-cached';
+    card.dataset.repoId = repoId;
+
+    const repoHref = '/' + (data.name || '');
+    card.dataset.repoName = '/' + (data.name || '');
+
+    // Split owner/repo for header (match page card: <span class="text-normal">owner / </span>repo)
+    const nameParts = (data.name || '').split('/');
+    const owner = nameParts[0] || '';
+    const repo = nameParts[1] || data.name || 'Unknown';
+
+    let cardHTML = '<div class="stars-card-header">';
+    cardHTML += `<h3><a href="${repoHref}"><span class="text-normal">${escapeHtml(owner)} / </span>${escapeHtml(repo)}</a></h3>`;
+    cardHTML += '</div>';
+
+    if (data.desc) {
+      cardHTML += `<p class="stars-card-desc">${escapeHtml(data.desc)}</p>`;
+    } else {
+      cardHTML += '<p class="stars-card-desc" style="opacity:0.5;font-style:italic;">No description</p>';
+    }
+
+    // Tags container
+    cardHTML += `<div class="stars-card-tags" data-repo-id="${repoId}"></div>`;
+
+    // Meta
+    cardHTML += '<div class="stars-card-meta">';
+
+    let mainParts = '';
+
+    // Language (match page card: <span class="ml-0 mr-3"> + <span itemprop="programmingLanguage">)
+    if (data.lang) {
+      const colorStyle = data.langColor ? `background-color: ${data.langColor}` : '';
+      mainParts += `<span class="ml-0 mr-3">` +
+        `<span class="repo-language-color" style="${colorStyle}"></span> ` +
+        `<span itemprop="programmingLanguage">${escapeHtml(data.lang)}</span></span>`;
+    }
+
+    // Stars SVG (exact copy from GitHub Stars page)
+    const starSvg = '<svg aria-label="star" role="img" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-star">' +
+      '<path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Zm0 2.445L6.615 5.5a.75.75 0 0 1-.564.41l-3.097.45 2.24 2.184a.75.75 0 0 1 .216.664l-.528 3.084 2.769-1.456a.75.75 0 0 1 .698 0l2.77 1.456-.53-3.084a.75.75 0 0 1 .216-.664l2.24-2.183-3.096-.45a.75.75 0 0 1-.564-.41L8 2.694Z"></path></svg>';
+    if (data.stars !== undefined) {
+      const starsFormatted = Number(data.stars).toLocaleString();
+      mainParts += `<a class="Link--muted mr-3" href="/${data.name}/stargazers">${starSvg} ${starsFormatted}</a>`;
+    }
+
+    // Forks SVG (exact copy from GitHub Stars page)
+    const forkSvg = '<svg aria-label="fork" role="img" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-repo-forked">' +
+      '<path d="M5 5.372v.878c0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75v-.878a2.25 2.25 0 1 1 1.5 0v.878a2.25 2.25 0 0 1-2.25 2.25h-1.5v2.128a2.251 2.251 0 1 1-1.5 0V8.5h-1.5A2.25 2.25 0 0 1 3.5 6.25v-.878a2.25 2.25 0 1 1 1.5 0ZM5 3.25a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Zm6.75.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm-3 8.75a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z"></path></svg>';
+    if (data.forks !== undefined && data.forks > 0) {
+      const forksFormatted = Number(data.forks).toLocaleString();
+      mainParts += `<a class="Link--muted mr-3" href="/${data.name}/forks">${forkSvg} ${forksFormatted}</a>`;
+    }
+
+    if (mainParts) cardHTML += `<span class="stars-meta-main">${mainParts}</span>`;
+    if (data.updated) cardHTML += `<span class="stars-meta-updated">${escapeHtml(data.updated)}</span>`;
+
+    cardHTML += '</div>';
+
+    card.innerHTML = cardHTML;
+    return card;
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  // ====== 筛选栏 UI ======
+  function renderTagFilterBar() {
+    const toolbar = document.querySelector(
+      '.Layout-main .d-flex.flex-column.flex-lg-row.flex-items-center.mt-5'
+    );
+    const filterRow = toolbar
+      ? toolbar.querySelector('.d-flex.flex-justify-end')
+      : null;
+    if (!filterRow) return;
+
+    const existing = filterRow.querySelector('.stars-tag-filter');
+    if (existing) existing.remove();
+
+    const allTags = getAllUniqueTags();
+    if (allTags.length === 0 && activeFilterTags.length === 0) return;
+
+    const container = document.createElement('div');
+    container.className = 'stars-tag-filter mb-1 mb-lg-0 mr-2';
+
+    // 使用 GitHub Primer Button 结构
+    const btnLabel = activeFilterTags.length > 0
+      ? `Tags: ${activeFilterTags.length} selected`
+      : 'Tags';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'Button--secondary Button--medium Button';
+    if (activeFilterTags.length > 0) btn.classList.add('has-active');
+    btn.innerHTML =
+      '<span class="Button-content"><span class="Button-label"></span></span>' +
+      '<span class="Button-visual Button-trailingAction">' +
+        '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" width="16" class="octicon octicon-triangle-down">' +
+          '<path d="m4.427 7.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 7H4.604a.25.25 0 0 0-.177.427Z"></path>' +
+        '</svg>' +
+      '</span>';
+    btn.querySelector('.Button-label').textContent = btnLabel;
+
+    // 下拉面板
+    const dropdown = document.createElement('div');
+    dropdown.className = 'stars-tag-filter-dropdown';
+
+    allTags.forEach((tag) => {
+      const label = document.createElement('label');
+      label.className = 'stars-tag-filter-item';
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = activeFilterTags.includes(tag);
+
+      const text = document.createTextNode(tag);
+      label.appendChild(cb);
+      label.appendChild(text);
+
+      label.addEventListener('click', (e) => {
+        e.preventDefault();
+        const idx = activeFilterTags.indexOf(tag);
+        if (idx >= 0) {
+          activeFilterTags.splice(idx, 1);
+        } else {
+          activeFilterTags.push(tag);
+        }
+        applyTagFilter();
+        renderTagFilterBar();
+        refreshTagPillStates();
+      });
+
+      dropdown.appendChild(label);
+    });
+
+    // 清除按钮
+    if (activeFilterTags.length > 0) {
+      const clearBtn = document.createElement('button');
+      clearBtn.className = 'stars-tag-filter-clear';
+      clearBtn.textContent = '清除筛选';
+      clearBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        activeFilterTags = [];
+        applyTagFilter();
+        renderTagFilterBar();
+        refreshTagPillStates();
+      });
+      dropdown.appendChild(clearBtn);
+    }
+
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dropdown.classList.toggle('open');
+    });
+
+    container.appendChild(btn);
+    container.appendChild(dropdown);
+
+    document.addEventListener('click', function closeDropdown(e) {
+      if (!container.contains(e.target)) {
+        dropdown.classList.remove('open');
+      }
+    });
+
+    filterRow.insertBefore(container, filterRow.firstChild);
+  }
+
+  // ====== 筛选逻辑（重写：使用缓存代替 API） ======
+  function applyTagFilter() {
+    // 1. 移除之前的缓存卡片
+    document.querySelectorAll('.stars-grid-card-cached').forEach((el) => el.remove());
+
+    const cards = document.querySelectorAll('.stars-grid-card:not(.stars-grid-card-cached)');
+
+    // 2. 如果无筛选标签，显示所有当前页卡片
+    if (activeFilterTags.length === 0) {
+      cards.forEach((card) => card.classList.remove('stars-tag-filtered'));
+      return;
+    }
+
+    // 3. 筛选当前页卡片
+    const currentPageIds = new Set();
+    cards.forEach((card) => {
+      const repoId = card.dataset.repoId;
+      if (repoId) currentPageIds.add(repoId);
+      const tags = repoId ? getTags(repoId) : [];
+      const match = activeFilterTags.every((ft) => tags.includes(ft));
+      card.classList.toggle('stars-tag-filtered', !match);
+    });
+
+    // 4. 从标签数据库查找其他页面中符合条件的仓库
+    const allTags = loadAllTags();
+    const gridContainer = document.querySelector('.stars-grid-container');
+    if (!gridContainer) return;
+
+    const paginator = gridContainer.querySelector('.paginate-container');
+
+    for (const repoId in allTags) {
+      if (currentPageIds.has(repoId)) continue;
+      const tags = allTags[repoId];
+      if (!activeFilterTags.every((ft) => tags.includes(ft))) continue;
+
+      // 5. 从缓存获取仓库数据
+      const repoData = getRepoData(repoId);
+      if (!repoData) continue; // 无缓存数据则跳过
+
+      // 6. 构建卡片
+      const cachedCard = buildCardFromCache(repoId, repoData);
+
+      if (paginator) {
+        gridContainer.insertBefore(cachedCard, paginator);
+      } else {
+        gridContainer.appendChild(cachedCard);
+      }
+
+      // 7. 渲染标签
+      const tagsContainer = cachedCard.querySelector('.stars-card-tags');
+      if (tagsContainer) renderTags(tagsContainer);
+    }
+  }
+
+  function refreshTagPillStates() {
+    document.querySelectorAll('.stars-card-tags .stars-tag').forEach((pill) => {
+      const tagText = pill.childNodes[0].textContent;
+      if (activeFilterTags.includes(tagText)) {
+        pill.classList.add('stars-tag-active');
+      } else {
+        pill.classList.remove('stars-tag-active');
+      }
+    });
   }
 
   // ====== 标签渲染 ======
@@ -330,7 +860,23 @@
     tags.forEach((tag, idx) => {
       const span = document.createElement('span');
       span.className = 'stars-tag';
+      if (activeFilterTags.includes(tag)) {
+        span.classList.add('stars-tag-active');
+      }
       span.textContent = tag;
+
+      span.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const fidx = activeFilterTags.indexOf(tag);
+        if (fidx >= 0) {
+          activeFilterTags.splice(fidx, 1);
+        } else {
+          activeFilterTags.push(tag);
+        }
+        applyTagFilter();
+        renderTagFilterBar();
+        refreshTagPillStates();
+      });
 
       const del = document.createElement('span');
       del.className = 'stars-tag-del';
@@ -341,6 +887,8 @@
         current.splice(idx, 1);
         saveTags(repoId, current);
         renderTags(tagsContainer);
+        renderTagFilterBar();
+        applyTagFilter();
       });
 
       span.appendChild(del);
@@ -358,11 +906,14 @@
         current.push(name.trim());
         saveTags(repoId, current);
         renderTags(tagsContainer);
+        renderTagFilterBar();
+        applyTagFilter();
       }
     });
     tagsContainer.appendChild(addBtn);
   }
 
+  // ====== DOM 转换 ======
   function transformStarsList() {
     if (!isDesktop()) return false;
 
@@ -374,11 +925,9 @@
 
     const repoItems = colLg9.querySelectorAll('.col-12.d-block.width-full.py-4.border-bottom:not(.stars-original-hidden)');
     if (repoItems.length === 0) {
-      // 可能已经转换过
       return !!colLg9.querySelector('.stars-grid-container');
     }
 
-    // 如果已经转换过，跳过
     if (colLg9.querySelector('.stars-grid-container')) return true;
 
     // 隐藏 Lists 区域（JS 兜底）
@@ -398,7 +947,6 @@
       }
     }
 
-    // 创建网格容器
     const gridContainer = document.createElement('div');
     gridContainer.className = 'stars-grid-container';
 
@@ -439,7 +987,6 @@
       cardHTML += `<div class="stars-card-tags" data-repo-id="${repoId}"></div>`;
 
       if (metaDiv) {
-        // 将元信息分为两组：主信息（语言+star+fork）和更新时间
         const langSpan = metaDiv.querySelector('span.ml-0, span:has(.repo-language-color)');
         const starLink = metaDiv.querySelector('a[href*="/stargazers"]');
         const forkLink = metaDiv.querySelector('a[href*="/forks"]');
@@ -449,7 +996,6 @@
         if (starLink) mainParts += starLink.outerHTML;
         if (forkLink) mainParts += forkLink.outerHTML;
 
-        // 更新时间：剩余的文本节点 "Updated" + <relative-time> 或纯文本
         let updatedHTML = '';
         const allNodes = Array.from(metaDiv.childNodes);
         let foundUpdated = false;
@@ -472,6 +1018,9 @@
       gridContainer.appendChild(card);
       item.classList.add('stars-original-hidden');
 
+      // 缓存仓库数据
+      extractAndCacheRepoFromCard(item, repoId);
+
       // 渲染标签
       const tagsContainer = card.querySelector('.stars-card-tags');
       if (tagsContainer) renderTags(tagsContainer);
@@ -484,8 +1033,11 @@
       paginator.classList.add('stars-original-hidden');
     }
 
-    // 插入到 colLg9 内部末尾
     colLg9.appendChild(gridContainer);
+
+    // 渲染筛选栏并应用筛选
+    renderTagFilterBar();
+    applyTagFilter();
 
     return true;
   }
