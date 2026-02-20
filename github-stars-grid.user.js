@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GitHub Stars Grid View
 // @namespace    https://github.com/YsLtr
-// @version      2.1
+// @version      2.2
 // @description  将 GitHub Stars 页面的列表视图改为卡片网格视图，缩小左侧个人资料栏，最大化仓库展示空间（仅桌面端生效）
 // @author       YsLtr
 // @match        https://github.com/*tab=stars*
@@ -276,10 +276,29 @@
         display: block !important;
       }
 
-      /* 侧边栏内容自适应窄宽度 */
-      .Layout-sidebar .h-card,
+      /* 头像状态 emoji 移至头像右下角，防止被裁切 */
       .Layout-sidebar .js-profile-editable-replace {
+        overflow: visible !important;
+      }
+      .Layout-sidebar .user-status-container.position-relative {
+        position: static !important;
+      }
+      .Layout-sidebar .user-status-circle-badge-container {
+        position: absolute !important;
+        top: 86px !important;
+        left: 86px !important;
+        right: auto !important;
+        bottom: auto !important;
+        margin: 0 !important;
+        z-index: 100 !important;
+      }
+
+      /* 侧边栏内容自适应窄宽度 */
+      .Layout-sidebar .h-card {
         overflow: hidden !important;
+        word-wrap: break-word !important;
+      }
+      .Layout-sidebar .js-profile-editable-replace {
         word-wrap: break-word !important;
       }
 
@@ -520,20 +539,19 @@
         color: var(--fgColor-accent, #0969da) !important;
       }
 
-      /* 下拉面板 */
+      /* 下拉面板 — 匹配 GitHub Overlay 样式 */
       .stars-tag-filter-dropdown {
         display: none;
         position: absolute;
         top: calc(100% + 4px);
-        left: 0;
+        right: 0;
         z-index: 100;
         min-width: 200px;
         max-height: 300px;
         overflow-y: auto;
-        background: var(--bgColor-default, #ffffff);
-        border: 1px solid var(--borderColor-default, #d1d9e0);
-        border-radius: 6px;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+        background: var(--overlay-bgColor, var(--bgColor-default, #ffffff));
+        border-radius: 12px;
+        box-shadow: 0 0 0 1px var(--borderColor-default, #d1d9e0), 0 6px 12px -3px rgba(0,0,0,0.15), 0 6px 18px 0 rgba(0,0,0,0.1);
         padding: 4px 0;
       }
       .stars-tag-filter-dropdown.open {
@@ -959,6 +977,27 @@
   }
 
   // ====== 筛选栏 UI ======
+
+  // 关闭 GitHub 原生 action-menu 弹窗
+  function closeNativeMenus() {
+    document.querySelectorAll('anchored-position[popover]').forEach((el) => {
+      try { el.hidePopover(); } catch (_) {}
+    });
+  }
+
+  // 更新 Tags 按钮文字和高亮状态（不重建整个下拉）
+  function updateTagFilterButton() {
+    const btn = document.querySelector('.stars-tag-filter .Button');
+    if (!btn) return;
+    const label = btn.querySelector('.Button-label');
+    if (label) {
+      label.textContent = activeFilterTags.length > 0
+        ? `Tags: ${activeFilterTags.length} selected`
+        : 'Tags';
+    }
+    btn.classList.toggle('has-active', activeFilterTags.length > 0);
+  }
+
   function renderTagFilterBar() {
     const toolbar = document.querySelector(
       '.Layout-main .d-flex.flex-column.flex-lg-row.flex-items-center.mt-5'
@@ -1012,14 +1051,17 @@
 
       label.addEventListener('click', (e) => {
         e.preventDefault();
+        e.stopPropagation();
         const idx = activeFilterTags.indexOf(tag);
         if (idx >= 0) {
           activeFilterTags.splice(idx, 1);
+          cb.checked = false;
         } else {
           activeFilterTags.push(tag);
+          cb.checked = true;
         }
+        updateTagFilterButton();
         applyTagFilter();
-        renderTagFilterBar();
         refreshTagPillStates();
       });
 
@@ -1034,6 +1076,7 @@
       clearBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         activeFilterTags = [];
+        dropdown.classList.remove('open');
         applyTagFilter();
         renderTagFilterBar();
         refreshTagPillStates();
@@ -1043,17 +1086,27 @@
 
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
+      const willOpen = !dropdown.classList.contains('open');
+      if (willOpen) closeNativeMenus();
       dropdown.classList.toggle('open');
     });
 
     container.appendChild(btn);
     container.appendChild(dropdown);
 
-    document.addEventListener('click', function closeDropdown(e) {
+    // 点击外部关闭
+    document.addEventListener('click', (e) => {
       if (!container.contains(e.target)) {
         dropdown.classList.remove('open');
       }
     });
+
+    // 监听 GitHub 原生菜单打开时关闭 Tags 下拉
+    document.addEventListener('toggle', (e) => {
+      if (e.target.matches && e.target.matches('anchored-position[popover]') && e.newState === 'open') {
+        dropdown.classList.remove('open');
+      }
+    }, true);
 
     filterRow.insertBefore(container, filterRow.firstChild);
   }
