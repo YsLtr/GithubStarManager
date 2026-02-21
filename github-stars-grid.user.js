@@ -627,6 +627,27 @@
         border-color: var(--fgColor-accent, #0969da);
       }
 
+      /* 内联标签输入框 */
+      .stars-tag-input {
+        display: inline-flex;
+        align-items: center;
+        height: 22px;
+        padding: 0 8px;
+        border-radius: 12px;
+        border: 1px solid var(--fgColor-accent, #0969da);
+        background: var(--bgColor-default, #ffffff);
+        color: var(--fgColor-default, #1f2328);
+        font-size: 12px;
+        line-height: 1.4;
+        outline: none;
+        width: 80px;
+        box-sizing: border-box;
+      }
+      .stars-tag-input::placeholder {
+        color: var(--fgColor-muted, #656d76);
+        opacity: 0.7;
+      }
+
       /* 分页器占满整行 */
       .stars-grid-container .paginate-container {
         grid-column: 1 / -1 !important;
@@ -1211,15 +1232,36 @@
     addBtn.title = '添加标签';
     addBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const name = prompt('输入标签名');
-      if (name && name.trim()) {
-        const current = getTags(repoId);
-        current.push(name.trim());
-        saveTags(repoId, current);
-        renderTags(tagsContainer);
-        renderTagFilterBar();
-        applyTagFilter();
+      if (tagsContainer.querySelector('.stars-tag-input')) return;
+
+      addBtn.style.display = 'none';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'stars-tag-input';
+      input.placeholder = '标签名';
+      tagsContainer.appendChild(input);
+      input.focus();
+
+      function commit() {
+        const val = input.value.trim();
+        if (val) {
+          const current = getTags(repoId);
+          current.push(val);
+          saveTags(repoId, current);
+          renderTags(tagsContainer);
+          renderTagFilterBar();
+          applyTagFilter();
+        } else {
+          input.remove();
+          addBtn.style.display = '';
+        }
       }
+
+      input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+        if (ev.key === 'Escape') { input.remove(); addBtn.style.display = ''; }
+      });
+      input.addEventListener('blur', () => commit());
     });
     tagsContainer.appendChild(addBtn);
   }
