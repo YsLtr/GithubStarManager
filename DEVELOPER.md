@@ -16,13 +16,13 @@
 
 | 分区 | 名称 | 功能 | 行号范围 |
 |------|------|------|----------|
-| 0 | Constants | 全局常量集中声明 | 18-32 |
+| 0 | Constants | 全局常量集中声明（`MOBILE_BREAKPOINT`、`WIDE_BREAKPOINT`、SVG 图标等） | 18-32 |
 | 1 | Utilities | `escapeHtml`, `isDesktop` | 34-46 |
 | 2 | Storage — Repo Cache | 仓库缓存 CRUD | 48-68 |
 | 3 | Storage — Pending Delete | 待删除区（unstar/restar 宽限期，含标签和备注备份） | 70-121 |
 | 4 | Storage — Tags | 标签存储 + 备注存储 + 迁移 + 聚合查询 | 123-172 |
 | 5 | Data Extraction | DOM 数据提取并写入缓存 | 174-338 |
-| 6 | Styles | CSS 注入（`injectStyles()` 函数） | 340-749 |
+| 6 | Styles | CSS 注入（`injectStyles()` 函数），含三栏响应式布局（768px / 1200px 双断点） | 340-749 |
 | 7 | Cards & Star Buttons | 卡片构建 + 星星按钮 + 共享 helper | 751-960 |
 | 8 | Tag UI | 标签筛选栏 + 筛选逻辑 + 标签渲染 + 备注渲染 | 962-1225 |
 | 9 | DOM Transform | `transformStarsList` 主函数 | 1227-1360 |
@@ -180,5 +180,6 @@ GitHub DOM
 - **单文件**: 整个脚本必须保持在一个 `.user.js` 文件中（用户脚本规范限制）
 - **无构建系统**: 不使用 bundler、transpiler 或任何构建工具
 - **仅桌面端**: 所有 CSS 包裹在 `@media (min-width: 768px)` 中，`transformStarsList` 首先检查 `isDesktop()`
+- **三栏响应式布局**: 768px ~ 1199px 隐藏左右侧边栏仅显示主内容区；≥ 1200px 显示左侧资料栏 (180px) + 中间卡片网格 + 右侧 Starred Topics (220px)
 - **无外部依赖**: 不引入任何第三方库，仅使用浏览器原生 API + Tampermonkey API (`GM_addStyle`, `GM_setValue`, `GM_getValue`)
 - **变量作用域**: 所有代码包裹在 IIFE 中，`function` 声明在 IIFE 内提升至作用域顶部，`const`/`let` 按声明顺序初始化（Section 0 的 `const` 最先，Section 10 的 `let activeFilterTags` 在函数调用前）

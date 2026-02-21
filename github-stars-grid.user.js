@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GitHub Stars Grid View
 // @namespace    https://github.com/YsLtr
-// @version      2.3
+// @version      2.4
 // @description  将 GitHub Stars 页面的列表视图改为卡片网格视图，缩小左侧个人资料栏，最大化仓库展示空间（仅桌面端生效）
 // @author       YsLtr
 // @match        https://github.com/*tab=stars*
@@ -20,6 +20,7 @@
    * ================================================================ */
 
   const MOBILE_BREAKPOINT = 768;
+  const WIDE_BREAKPOINT = 1200;
   const GRACE_PERIOD = 24 * 60 * 60 * 1000;
 
   const STAR_FILL_SVG = '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" class="octicon octicon-star-fill"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"></path></svg>';
@@ -454,12 +455,14 @@
       /* ===== 3. 扩大主内容区域 ===== */
       .Layout-main {
         flex: 1 1 0% !important;
-        max-width: calc(100% - 200px) !important;
+        max-width: 100% !important;
       }
 
       /* 移除内部 3/9 分栏，col-lg-9 占满 */
       turbo-frame#user-starred-repos .d-lg-flex.gutter-lg {
         display: block !important;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
       }
       turbo-frame#user-starred-repos .col-lg-9 {
         width: 100% !important;
@@ -467,11 +470,6 @@
         padding-left: 0 !important;
         padding-right: 0 !important;
       }
-      /* 隐藏右侧 Starred topics */
-      turbo-frame#user-starred-repos .col-lg-3 {
-        display: none !important;
-      }
-
       /* ===== 4. 隐藏 Lists 区域 ===== */
       turbo-frame#user-profile-frame > div > .my-3.d-flex.flex-justify-between.flex-items-center:has(h2.f3-light),
       turbo-frame#user-profile-frame > div > #profile-lists-container {
@@ -836,7 +834,60 @@
         opacity: 1 !important;
       }
 
+      /* 隐藏原始 Starred topics 列（内容已被 JS 移走） */
+      turbo-frame#user-starred-repos .col-lg-3 {
+        display: none !important;
+      }
+
+      /* ===== 中等桌面屏幕：隐藏左右侧边栏，主内容全宽 ===== */
+      .Layout-sidebar {
+        display: none !important;
+      }
+      .stars-right-sidebar {
+        display: none !important;
+      }
+      .Layout.Layout--sidebarPosition-start {
+        grid-template-columns: 1fr !important;
+      }
+      .Layout-main {
+        grid-column: 1 !important;
+        max-width: none !important;
+      }
+
     } /* end @media */
+
+    @media (min-width: ${WIDE_BREAKPOINT}px) {
+      .Layout-sidebar {
+        display: block !important;
+        grid-column: 1 !important;
+      }
+      .Layout.Layout--sidebarPosition-start {
+        grid-template-columns: 180px 1fr 220px !important;
+      }
+      .Layout-main {
+        grid-column: 2 !important;
+        max-width: none !important;
+      }
+      .stars-right-sidebar {
+        grid-column: 3 !important;
+        display: block !important;
+        width: 220px !important;
+        min-width: 220px !important;
+        padding-top: 32px !important;
+        overflow: hidden !important;
+        word-wrap: break-word !important;
+      }
+      .stars-right-sidebar h2 {
+        font-size: 16px !important;
+        margin-bottom: 12px !important;
+      }
+      .stars-right-sidebar article {
+        margin-bottom: 8px !important;
+      }
+      .stars-right-sidebar article h1 {
+        font-size: 14px !important;
+      }
+    }
   `);
   }
 
@@ -1526,6 +1577,22 @@
     }
 
     colLg9.appendChild(gridContainer);
+
+    // 将 Starred topics 移到右侧边栏
+    const colLg3 = turboFrame.querySelector('.col-lg-3');
+    const layoutEl = document.querySelector('.Layout.Layout--sidebarPosition-start');
+    if (colLg3 && layoutEl) {
+      let rightSidebar = layoutEl.querySelector('.stars-right-sidebar');
+      if (!rightSidebar) {
+        rightSidebar = document.createElement('div');
+        rightSidebar.className = 'stars-right-sidebar';
+        layoutEl.appendChild(rightSidebar);
+      }
+      rightSidebar.innerHTML = '';
+      while (colLg3.firstChild) {
+        rightSidebar.appendChild(colLg3.firstChild);
+      }
+    }
 
     // 渲染筛选栏并应用筛选
     renderTagFilterBar();
