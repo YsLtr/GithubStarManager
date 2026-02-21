@@ -305,7 +305,7 @@
     const desc = descP ? descP.textContent.trim() : '';
 
     // Language
-    const metaDiv = item.querySelector('.f6.color-fg-muted');
+    const metaDiv = item.querySelector('div.f6.color-fg-muted');
     let lang = '';
     let langColor = '';
     let stars = 0;
@@ -1484,7 +1484,7 @@
       }
 
       const descP = item.querySelector('p[itemprop="description"]');
-      const metaDiv = item.querySelector('.f6.color-fg-muted');
+      const metaDiv = item.querySelector('div.f6.color-fg-muted');
 
       let cardHTML = '<div class="stars-card-header">';
       if (h3) cardHTML += `<h3>${h3.innerHTML}</h3>`;
