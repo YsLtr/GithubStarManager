@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GitHub Stars Grid View
 // @namespace    https://github.com/YsLtr
-// @version      2.2
+// @version      2.3
 // @description  将 GitHub Stars 页面的列表视图改为卡片网格视图，缩小左侧个人资料栏，最大化仓库展示空间（仅桌面端生效）
 // @author       YsLtr
 // @match        https://github.com/*tab=stars*
@@ -1323,6 +1323,7 @@
         const val = input.value.trim();
         if (val) {
           const current = getTags(repoId);
+          if (current.includes(val)) { input.remove(); addBtn.style.display = ''; return; }
           current.push(val);
           saveTags(repoId, current);
           renderTags(tagsContainer);
