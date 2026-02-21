@@ -733,63 +733,16 @@
       }
 
       /* ===== 筛选栏 Tags 按钮 ===== */
-      .stars-tag-filter {
-        position: relative;
-      }
       /* 有选中标签时按钮高亮 */
       .stars-tag-filter .has-active {
         border-color: var(--fgColor-accent, #0969da) !important;
         color: var(--fgColor-accent, #0969da) !important;
       }
-
-      /* 下拉面板 — 匹配 GitHub Overlay 样式 */
-      .stars-tag-filter-dropdown {
-        display: none;
-        position: absolute;
-        top: calc(100% + 4px);
-        right: 0;
-        z-index: 100;
+      /* 下拉列表滚动约束 */
+      .stars-tag-filter .ActionListWrap {
         min-width: 200px;
         max-height: 300px;
         overflow-y: auto;
-        background: var(--overlay-bgColor, var(--bgColor-default, #ffffff));
-        border-radius: 12px;
-        box-shadow: 0 0 0 1px var(--borderColor-default, #d1d9e0), 0 6px 12px -3px rgba(0,0,0,0.15), 0 6px 18px 0 rgba(0,0,0,0.1);
-        padding: 4px 0;
-      }
-      .stars-tag-filter-dropdown.open {
-        display: block;
-      }
-
-      /* 下拉项 */
-      .stars-tag-filter-item {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 6px 16px;
-        cursor: pointer;
-        font-size: 13px;
-        white-space: nowrap;
-      }
-      .stars-tag-filter-item:hover {
-        background: var(--bgColor-muted, #f6f8fa);
-      }
-
-      /* 清除按钮 */
-      .stars-tag-filter-clear {
-        display: block;
-        width: 100%;
-        padding: 6px 16px;
-        border: none;
-        border-top: 1px solid var(--borderColor-default, #d1d9e0);
-        background: transparent;
-        color: var(--fgColor-accent, #0969da);
-        font-size: 13px;
-        cursor: pointer;
-        text-align: left;
-      }
-      .stars-tag-filter-clear:hover {
-        background: var(--bgColor-muted, #f6f8fa);
       }
 
       /* 卡片标签 pill 选中态 */
@@ -1108,12 +1061,6 @@
    *  SECTION 8: TAG UI
    * ================================================================ */
 
-  function closeNativeMenus() {
-    document.querySelectorAll('anchored-position[popover]').forEach((el) => {
-      try { el.hidePopover(); } catch (_) {}
-    });
-  }
-
   function updateTagFilterButton() {
     const btn = document.querySelector('.stars-tag-filter .Button');
     if (!btn) return;
@@ -1144,12 +1091,16 @@
     const container = document.createElement('div');
     container.className = 'stars-tag-filter mb-1 mb-lg-0 mr-2';
 
-    // 使用 GitHub Primer Button 结构
+    // 使用 GitHub Primer Button 结构 + popovertarget
     const btnLabel = activeFilterTags.length > 0
       ? `Tags: ${activeFilterTags.length} selected`
       : 'Tags';
     const btn = document.createElement('button');
     btn.type = 'button';
+    btn.id = 'stars-tag-filter-button';
+    btn.setAttribute('popovertarget', 'stars-tag-filter-overlay');
+    btn.setAttribute('aria-controls', 'stars-tag-filter-list');
+    btn.setAttribute('aria-haspopup', 'true');
     btn.className = 'Button--secondary Button--medium Button';
     if (activeFilterTags.length > 0) btn.classList.add('has-active');
     btn.innerHTML =
@@ -1161,80 +1112,108 @@
       '</span>';
     btn.querySelector('.Button-label').textContent = btnLabel;
 
-    // 下拉面板
-    const dropdown = document.createElement('div');
-    dropdown.className = 'stars-tag-filter-dropdown';
+    // anchored-position overlay (popover="auto")
+    const overlay = document.createElement('anchored-position');
+    overlay.id = 'stars-tag-filter-overlay';
+    overlay.setAttribute('anchor', 'stars-tag-filter-button');
+    overlay.setAttribute('align', 'start');
+    overlay.setAttribute('side', 'outside-bottom');
+    overlay.setAttribute('anchor-offset', 'normal');
+    overlay.setAttribute('popover', 'auto');
+
+    const overlayInner = document.createElement('div');
+    overlayInner.className = 'Overlay Overlay--size-auto';
+    const overlayBody = document.createElement('div');
+    overlayBody.className = 'Overlay-body Overlay-body--paddingNone';
+
+    // 菜单列表容器 — 使用原生 ActionList 结构
+    const menuList = document.createElement('ul');
+    menuList.id = 'stars-tag-filter-list';
+    menuList.className = 'ActionListWrap--inset ActionListWrap';
+    menuList.setAttribute('role', 'menu');
 
     allTags.forEach((tag) => {
-      const label = document.createElement('label');
-      label.className = 'stars-tag-filter-item';
+      const li = document.createElement('li');
+      li.className = 'ActionListItem';
+      li.setAttribute('role', 'none');
 
+      const content = document.createElement('label');
+      content.className = 'ActionListContent';
+      content.setAttribute('role', 'menuitemcheckbox');
+      content.setAttribute('aria-checked', String(activeFilterTags.includes(tag)));
+
+      const visual = document.createElement('span');
+      visual.className = 'ActionListItem-visual ActionListItem-action--leading';
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.checked = activeFilterTags.includes(tag);
+      visual.appendChild(cb);
 
-      const text = document.createTextNode(tag);
-      label.appendChild(cb);
-      label.appendChild(text);
+      const labelSpan = document.createElement('span');
+      labelSpan.className = 'ActionListItem-label';
+      labelSpan.textContent = tag;
 
-      label.addEventListener('click', (e) => {
+      content.appendChild(visual);
+      content.appendChild(labelSpan);
+
+      content.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
         const idx = activeFilterTags.indexOf(tag);
         if (idx >= 0) {
           activeFilterTags.splice(idx, 1);
           cb.checked = false;
+          content.setAttribute('aria-checked', 'false');
         } else {
           activeFilterTags.push(tag);
           cb.checked = true;
+          content.setAttribute('aria-checked', 'true');
         }
         updateTagFilterButton();
         applyTagFilter();
         refreshTagPillStates();
       });
 
-      dropdown.appendChild(label);
+      li.appendChild(content);
+      menuList.appendChild(li);
     });
 
     // 清除按钮
     if (activeFilterTags.length > 0) {
-      const clearBtn = document.createElement('button');
-      clearBtn.className = 'stars-tag-filter-clear';
-      clearBtn.textContent = '清除筛选';
-      clearBtn.addEventListener('click', (e) => {
+      const dividerLi = document.createElement('li');
+      dividerLi.className = 'ActionList-sectionDivider';
+      dividerLi.setAttribute('role', 'separator');
+      menuList.appendChild(dividerLi);
+
+      const clearLi = document.createElement('li');
+      clearLi.className = 'ActionListItem';
+      clearLi.setAttribute('role', 'none');
+      const clearContent = document.createElement('button');
+      clearContent.className = 'ActionListContent';
+      clearContent.setAttribute('role', 'menuitem');
+      const clearLabel = document.createElement('span');
+      clearLabel.className = 'ActionListItem-label';
+      clearLabel.style.color = 'var(--fgColor-accent, #0969da)';
+      clearLabel.textContent = '清除筛选';
+      clearContent.appendChild(clearLabel);
+      clearContent.addEventListener('click', (e) => {
         e.stopPropagation();
         activeFilterTags = [];
-        dropdown.classList.remove('open');
+        overlay.hidePopover();
         applyTagFilter();
         renderTagFilterBar();
         refreshTagPillStates();
       });
-      dropdown.appendChild(clearBtn);
+      clearLi.appendChild(clearContent);
+      menuList.appendChild(clearLi);
     }
 
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const willOpen = !dropdown.classList.contains('open');
-      if (willOpen) closeNativeMenus();
-      dropdown.classList.toggle('open');
-    });
+    overlayBody.appendChild(menuList);
+    overlayInner.appendChild(overlayBody);
+    overlay.appendChild(overlayInner);
 
     container.appendChild(btn);
-    container.appendChild(dropdown);
-
-    // 点击外部关闭
-    document.addEventListener('click', (e) => {
-      if (!container.contains(e.target)) {
-        dropdown.classList.remove('open');
-      }
-    });
-
-    // 监听 GitHub 原生菜单打开时关闭 Tags 下拉
-    document.addEventListener('toggle', (e) => {
-      if (e.target.matches && e.target.matches('anchored-position[popover]') && e.newState === 'open') {
-        dropdown.classList.remove('open');
-      }
-    }, true);
+    container.appendChild(overlay);
 
     filterRow.insertBefore(container, filterRow.firstChild);
   }
