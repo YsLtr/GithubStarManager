@@ -19,12 +19,12 @@
 | 0 | Constants | 全局常量集中声明 | 18-32 |
 | 1 | Utilities | `escapeHtml`, `isDesktop` | 34-46 |
 | 2 | Storage — Repo Cache | 仓库缓存 CRUD | 48-68 |
-| 3 | Storage — Pending Delete | 待删除区（unstar/restar 宽限期） | 70-121 |
-| 4 | Storage — Tags | 标签存储 + 迁移 + 聚合查询 | 123-172 |
+| 3 | Storage — Pending Delete | 待删除区（unstar/restar 宽限期，含标签和备注备份） | 70-121 |
+| 4 | Storage — Tags | 标签存储 + 备注存储 + 迁移 + 聚合查询 | 123-172 |
 | 5 | Data Extraction | DOM 数据提取并写入缓存 | 174-338 |
 | 6 | Styles | CSS 注入（`injectStyles()` 函数） | 340-749 |
 | 7 | Cards & Star Buttons | 卡片构建 + 星星按钮 + 共享 helper | 751-960 |
-| 8 | Tag UI | 标签筛选栏 + 筛选逻辑 + 标签渲染 | 962-1225 |
+| 8 | Tag UI | 标签筛选栏 + 筛选逻辑 + 标签渲染 + 备注渲染 | 962-1225 |
 | 9 | DOM Transform | `transformStarsList` 主函数 | 1227-1360 |
 | 10 | Init & Events | 页面检测 + 初始化 + 事件绑定 | 1362-1415 |
 
@@ -93,7 +93,8 @@ GitHub DOM
   "123456": {
     // ... 与 repo cache 相同的字段
     "unstarredAt": 1708000000000,  // unstar 时间戳
-    "_tags": ["tag1", "tag2"]      // 备份的标签
+    "_tags": ["tag1", "tag2"],     // 备份的标签
+    "_note": "备注文本"             // 备份的备注
   }
 }
 ```
@@ -111,15 +112,26 @@ GitHub DOM
 
 > 历史遗留：旧版使用 `stars_tags`（无用户隔离），`migrateTagsIfNeeded()` 负责迁移。
 
+### `stars_notes_<userId>`
+
+每用户备注数据，按 GitHub 用户 ID 隔离。
+
+```jsonc
+{
+  "123456": "这是一条备注",    // repoId → 备注文本
+  "789012": "另一条备注"
+}
+```
+
 ## 5. 核心机制
 
 ### 待删除区宽限期
 
-当用户 unstar 一个仓库时，数据不会立即删除，而是移入 `stars_pending_delete` 并记录 `unstarredAt` 时间戳。如果用户在 24 小时内重新 star，数据和标签会自动恢复。超过 24 小时的条目在下次脚本加载时由 `cleanupExpiredUnstarred()` 清理。
+当用户 unstar 一个仓库时，数据不会立即删除，而是移入 `stars_pending_delete` 并记录 `unstarredAt` 时间戳。如果用户在 24 小时内重新 star，数据、标签和备注会自动恢复。超过 24 小时的条目在下次脚本加载时由 `cleanupExpiredUnstarred()` 清理。
 
 ### 每用户标签隔离
 
-标签存储键包含用户 ID（`stars_tags_<userId>`），因此同一浏览器下不同 GitHub 账号的标签互不干扰。
+标签存储键包含用户 ID（`stars_tags_<userId>`），因此同一浏览器下不同 GitHub 账号的标签互不干扰。备注存储同理（`stars_notes_<userId>`）。
 
 ### 缓存卡片跨页筛选
 

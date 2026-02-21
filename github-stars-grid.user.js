@@ -84,12 +84,14 @@
     const pending = loadPendingDelete();
     pending[repoId] = Object.assign({}, cache[repoId], {
       unstarredAt: Date.now(),
-      _tags: getTags(repoId)
+      _tags: getTags(repoId),
+      _note: getNote(repoId)
     });
     savePendingDelete(pending);
     delete cache[repoId];
     saveRepoCache(cache);
     saveTags(repoId, []);
+    saveNote(repoId, '');
   }
 
   function markRepoStarred(repoId) {
@@ -97,12 +99,15 @@
     if (!pending[repoId]) return;
     const entry = pending[repoId];
     const tags = entry._tags || [];
+    const note = entry._note || '';
     delete entry.unstarredAt;
     delete entry._tags;
+    delete entry._note;
     const cache = loadRepoCache();
     cache[repoId] = entry;
     saveRepoCache(cache);
     if (tags.length > 0) saveTags(repoId, tags);
+    if (note) saveNote(repoId, note);
     delete pending[repoId];
     savePendingDelete(pending);
   }
@@ -158,6 +163,28 @@
       all[repoId].forEach((t) => set.add(t));
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }
+
+  function loadAllNotes() {
+    const userId = getStarsUserId();
+    if (!userId) return GM_getValue('stars_notes', {});
+    return GM_getValue('stars_notes_' + userId, {});
+  }
+
+  function saveNote(repoId, text) {
+    const userId = getStarsUserId();
+    const key = userId ? 'stars_notes_' + userId : 'stars_notes';
+    const all = GM_getValue(key, {});
+    if (!text) {
+      delete all[repoId];
+    } else {
+      all[repoId] = text;
+    }
+    GM_setValue(key, all);
+  }
+
+  function getNote(repoId) {
+    return loadAllNotes()[repoId] || '';
   }
 
   function migrateTagsIfNeeded() {
@@ -648,6 +675,50 @@
         opacity: 0.7;
       }
 
+      /* 备注区域 — 位于元信息下方，虚线分隔 */
+      .stars-card-notes {
+        border-top: 1px dashed var(--borderColor-default, #d1d9e0);
+        margin-top: 10px;
+        padding-top: 8px;
+        min-height: 20px;
+        cursor: text;
+      }
+      .stars-card-notes-text {
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--fgColor-muted, #656d76);
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 60px;
+        overflow-y: auto;
+      }
+      .stars-card-notes-placeholder {
+        font-size: 12px;
+        color: var(--fgColor-muted, #656d76);
+        opacity: 0;
+        font-style: italic;
+        transition: opacity 0.15s;
+      }
+      .stars-grid-card:hover .stars-card-notes-placeholder {
+        opacity: 0.5;
+      }
+      .stars-card-notes-edit {
+        width: 100%;
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--fgColor-default, #1f2328);
+        background: var(--bgColor-default, #ffffff);
+        border: 1px solid var(--fgColor-accent, #0969da);
+        border-radius: 4px;
+        padding: 4px 6px;
+        outline: none;
+        resize: vertical;
+        min-height: 40px;
+        max-height: 120px;
+        box-sizing: border-box;
+        font-family: inherit;
+      }
+
       /* 分页器占满整行 */
       .stars-grid-container .paginate-container {
         grid-column: 1 / -1 !important;
@@ -843,6 +914,8 @@
     if (data.updated) cardHTML += `<span class="stars-meta-updated">${escapeHtml(data.updated)}</span>`;
 
     cardHTML += '</div>';
+
+    cardHTML += `<div class="stars-card-notes" data-repo-id="${repoId}"></div>`;
 
     card.innerHTML = cardHTML;
     return card;
@@ -1168,6 +1241,10 @@
       // 7. 渲染标签
       const tagsContainer = cachedCard.querySelector('.stars-card-tags');
       if (tagsContainer) renderTags(tagsContainer);
+
+      // 渲染备注
+      const notesContainer = cachedCard.querySelector('.stars-card-notes');
+      if (notesContainer) renderNotes(notesContainer);
     }
   }
 
@@ -1264,6 +1341,55 @@
       input.addEventListener('blur', () => commit());
     });
     tagsContainer.appendChild(addBtn);
+  }
+
+  function renderNotes(notesContainer) {
+    const repoId = notesContainer.dataset.repoId;
+    if (!repoId) return;
+
+    const note = getNote(repoId);
+    notesContainer.innerHTML = '';
+
+    if (note) {
+      const textEl = document.createElement('div');
+      textEl.className = 'stars-card-notes-text';
+      textEl.textContent = note;
+      notesContainer.appendChild(textEl);
+    } else {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'stars-card-notes-placeholder';
+      placeholder.textContent = '添加备注…';
+      notesContainer.appendChild(placeholder);
+    }
+
+    notesContainer.addEventListener('click', function onEdit(e) {
+      e.stopPropagation();
+      if (notesContainer.querySelector('.stars-card-notes-edit')) return;
+
+      notesContainer.removeEventListener('click', onEdit);
+      notesContainer.innerHTML = '';
+
+      const textarea = document.createElement('textarea');
+      textarea.className = 'stars-card-notes-edit';
+      textarea.value = getNote(repoId);
+      textarea.placeholder = '输入备注…';
+      notesContainer.appendChild(textarea);
+      textarea.focus();
+
+      let cancelled = false;
+
+      function commit() {
+        if (cancelled) return;
+        const val = textarea.value.trim();
+        saveNote(repoId, val);
+        renderNotes(notesContainer);
+      }
+
+      textarea.addEventListener('blur', () => commit());
+      textarea.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape') { cancelled = true; renderNotes(notesContainer); }
+      });
+    });
   }
 
   /* ================================================================
@@ -1370,6 +1496,8 @@
         cardHTML += '</div>';
       }
 
+      cardHTML += `<div class="stars-card-notes" data-repo-id="${repoId}"></div>`;
+
       card.innerHTML = cardHTML;
       gridContainer.appendChild(card);
       item.classList.add('stars-original-hidden');
@@ -1383,6 +1511,10 @@
       // 渲染标签
       const tagsContainer = card.querySelector('.stars-card-tags');
       if (tagsContainer) renderTags(tagsContainer);
+
+      // 渲染备注
+      const notesContainer = card.querySelector('.stars-card-notes');
+      if (notesContainer) renderNotes(notesContainer);
     });
 
     // 分页器
