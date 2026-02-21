@@ -15,12 +15,40 @@
 (function () {
   'use strict';
 
-  // ====== 判断页面类型 ======
-  const isStarsPage = /[?&]tab=stars/.test(location.search);
-  const repoIdMeta = document.querySelector('meta[name="octolytics-dimension-repository_id"]');
-  const isRepoDetailPage = !isStarsPage && !!repoIdMeta;
+  /* ================================================================
+   *  SECTION 0: CONSTANTS
+   * ================================================================ */
 
-  // ====== 仓库缓存（全局共享） ======
+  const MOBILE_BREAKPOINT = 768;
+  const GRACE_PERIOD = 24 * 60 * 60 * 1000;
+
+  const STAR_FILL_SVG = '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" class="octicon octicon-star-fill"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"></path></svg>';
+  const STAR_EMPTY_SVG = '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" class="octicon octicon-star"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Zm0 2.445L6.615 5.5a.75.75 0 0 1-.564.41l-3.097.45 2.24 2.184a.75.75 0 0 1 .216.664l-.528 3.084 2.769-1.456a.75.75 0 0 1 .698 0l2.77 1.456-.53-3.084a.75.75 0 0 1 .216-.664l2.24-2.183-3.096-.45a.75.75 0 0 1-.564-.41L8 2.694Z"></path></svg>';
+
+  const STAR_META_SVG = '<svg aria-label="star" role="img" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-star">' +
+    '<path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Zm0 2.445L6.615 5.5a.75.75 0 0 1-.564.41l-3.097.45 2.24 2.184a.75.75 0 0 1 .216.664l-.528 3.084 2.769-1.456a.75.75 0 0 1 .698 0l2.77 1.456-.53-3.084a.75.75 0 0 1 .216-.664l2.24-2.183-3.096-.45a.75.75 0 0 1-.564-.41L8 2.694Z"></path></svg>';
+
+  const FORK_META_SVG = '<svg aria-label="fork" role="img" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-repo-forked">' +
+    '<path d="M5 5.372v.878c0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75v-.878a2.25 2.25 0 1 1 1.5 0v.878a2.25 2.25 0 0 1-2.25 2.25h-1.5v2.128a2.251 2.251 0 1 1-1.5 0V8.5h-1.5A2.25 2.25 0 0 1 3.5 6.25v-.878a2.25 2.25 0 1 1 1.5 0ZM5 3.25a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Zm6.75.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm-3 8.75a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z"></path></svg>';
+
+  /* ================================================================
+   *  SECTION 1: UTILITIES
+   * ================================================================ */
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  function isDesktop() {
+    return window.innerWidth >= MOBILE_BREAKPOINT;
+  }
+
+  /* ================================================================
+   *  SECTION 2: STORAGE — REPO CACHE
+   * ================================================================ */
+
   function loadRepoCache() {
     return GM_getValue('stars_repo_cache', {});
   }
@@ -39,7 +67,10 @@
     saveRepoCache(all);
   }
 
-  // ====== 待删除区（pending delete） ======
+  /* ================================================================
+   *  SECTION 3: STORAGE — PENDING DELETE
+   * ================================================================ */
+
   function loadPendingDelete() {
     return GM_getValue('stars_pending_delete', {});
   }
@@ -78,7 +109,6 @@
 
   function cleanupExpiredUnstarred() {
     const pending = loadPendingDelete();
-    const GRACE_PERIOD = 24 * 60 * 60 * 1000;
     const now = Date.now();
     let changed = false;
     for (const repoId in pending) {
@@ -90,7 +120,10 @@
     if (changed) savePendingDelete(pending);
   }
 
-  // ====== 每用户标签存储 ======
+  /* ================================================================
+   *  SECTION 4: STORAGE — TAGS
+   * ================================================================ */
+
   function getStarsUserId() {
     const meta = document.querySelector('meta[name="octolytics-dimension-user_id"]');
     return meta ? meta.getAttribute('content') : '';
@@ -118,7 +151,15 @@
     return loadAllTags()[repoId] || [];
   }
 
-  // ====== 迁移旧标签数据 ======
+  function getAllUniqueTags() {
+    const all = loadAllTags();
+    const set = new Set();
+    for (const repoId in all) {
+      all[repoId].forEach((t) => set.add(t));
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }
+
   function migrateTagsIfNeeded() {
     const userId = getStarsUserId();
     if (!userId) return;
@@ -130,7 +171,10 @@
     }
   }
 
-  // ====== 仓库详情页：提取并缓存数据 ======
+  /* ================================================================
+   *  SECTION 5: DATA EXTRACTION
+   * ================================================================ */
+
   function extractAndCacheRepoFromDetailPage() {
     if (!repoIdMeta) return;
     const repoId = repoIdMeta.getAttribute('content');
@@ -207,29 +251,98 @@
     saveRepoData(repoId, { name, desc, lang, langColor, stars, forks, updated });
   }
 
-  // 仓库详情页只做缓存，不修改 DOM
-  if (isRepoDetailPage) {
-    cleanupExpiredUnstarred();
-    extractAndCacheRepoFromDetailPage();
-    // 监听 unstar 表单提交，清除缓存数据
-    const unstarForm = document.querySelector('.starred form[action$="/unstar"]');
-    if (unstarForm) {
-      unstarForm.addEventListener('submit', () => {
-        const repoId = repoIdMeta.getAttribute('content');
-        if (repoId) markRepoUnstarred(repoId);
-      });
+  function extractAndCacheRepoFromCard(item, repoId) {
+    if (!repoId) return;
+
+    // Don't cache repos the current user hasn't starred
+    const toggler = item.querySelector('.js-toggler-container.starring-container');
+    if (toggler) {
+      const starredDiv = toggler.querySelector('.starred');
+      if (starredDiv && getComputedStyle(starredDiv).display === 'none') return;
     }
-    return;
+
+    // Name
+    const h3 = item.querySelector('h3');
+    let name = '';
+    if (h3) {
+      const repoLink = h3.querySelector('a');
+      if (repoLink) {
+        const href = repoLink.getAttribute('href') || '';
+        name = href.startsWith('/') ? href.substring(1) : href;
+      }
+    }
+
+    // Description
+    const descP = item.querySelector('p[itemprop="description"]');
+    const desc = descP ? descP.textContent.trim() : '';
+
+    // Language
+    const metaDiv = item.querySelector('.f6.color-fg-muted');
+    let lang = '';
+    let langColor = '';
+    let stars = 0;
+    let forks = 0;
+    let updated = '';
+
+    if (metaDiv) {
+      // Language name
+      const langNameEl = metaDiv.querySelector('span[itemprop="programmingLanguage"]');
+      if (langNameEl) lang = langNameEl.textContent.trim();
+
+      // Language color
+      const langColorEl = metaDiv.querySelector('span.repo-language-color');
+      if (langColorEl) langColor = langColorEl.getAttribute('style') || '';
+      // Extract just the color value from style like "background-color: #3178c6;"
+      const colorMatch = langColor.match(/background-color:\s*([^;]+)/);
+      langColor = colorMatch ? colorMatch[1].trim() : '';
+
+      // Stars (full number on Stars page, e.g., "29,208")
+      const starLink = metaDiv.querySelector('a[href*="/stargazers"]');
+      if (starLink) {
+        const starText = starLink.textContent.replace(/[^\d]/g, '');
+        stars = parseInt(starText, 10) || 0;
+      }
+
+      // Forks (full number)
+      const forkLink = metaDiv.querySelector('a[href*="/forks"]');
+      if (forkLink) {
+        const forkText = forkLink.textContent.replace(/[^\d]/g, '');
+        forks = parseInt(forkText, 10) || 0;
+      }
+
+      // Updated text
+      const allNodes = Array.from(metaDiv.childNodes);
+      let foundUpdated = false;
+      let updatedParts = [];
+      for (const node of allNodes) {
+        if (node.nodeType === Node.TEXT_NODE && node.textContent.includes('Updated')) {
+          foundUpdated = true;
+        }
+        if (foundUpdated) {
+          if (node.nodeType === Node.TEXT_NODE) {
+            updatedParts.push(node.textContent.trim());
+          } else if (node.tagName === 'RELATIVE-TIME' && node.shadowRoot) {
+            const shadowText = node.shadowRoot.textContent.trim();
+            if (shadowText) updatedParts.push(shadowText);
+          } else if (node.tagName === 'RELATIVE-TIME') {
+            updatedParts.push(node.textContent.trim());
+          }
+        }
+      }
+      if (updatedParts.length > 0) {
+        updated = updatedParts.join(' ').replace(/\s+/g, ' ').trim();
+      }
+    }
+
+    saveRepoData(repoId, { name, desc, lang, langColor, stars, forks, updated });
   }
 
-  // 非 Stars 页面且非仓库详情页，不执行
-  if (!isStarsPage) return;
+  /* ================================================================
+   *  SECTION 6: STYLES
+   * ================================================================ */
 
-  // ====== 以下仅在 Stars 页面执行 ======
-
-  const MOBILE_BREAKPOINT = 768;
-
-  GM_addStyle(`
+  function injectStyles() {
+    GM_addStyle(`
     /* ========================================
        所有样式仅在桌面端（>= 768px）生效
        ======================================== */
@@ -633,116 +746,27 @@
 
     } /* end @media */
   `);
-
-  // ====== DOM 重构逻辑 ======
-  function isDesktop() {
-    return window.innerWidth >= MOBILE_BREAKPOINT;
   }
 
-  // ====== 迁移旧数据 ======
-  migrateTagsIfNeeded();
-  cleanupExpiredUnstarred();
+  /* ================================================================
+   *  SECTION 7: CARDS & STAR BUTTONS
+   * ================================================================ */
 
-  // ====== 标签筛选状态 ======
-  let activeFilterTags = [];
-
-  function getAllUniqueTags() {
-    const all = loadAllTags();
-    const set = new Set();
-    for (const repoId in all) {
-      all[repoId].forEach((t) => set.add(t));
-    }
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  function submitStarForm(formEl) {
+    const action = formEl.getAttribute('action');
+    const token = formEl.querySelector('input[name="authenticity_token"]').value;
+    const context = formEl.querySelector('input[name="context"]');
+    const body = new URLSearchParams();
+    body.append('authenticity_token', token);
+    if (context) body.append('context', context.value);
+    return fetch(action, {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      body: body,
+      credentials: 'same-origin'
+    });
   }
 
-  // ====== Stars 页面：从卡片 DOM 提取数据并缓存 ======
-  function extractAndCacheRepoFromCard(item, repoId) {
-    if (!repoId) return;
-
-    // Don't cache repos the current user hasn't starred
-    const toggler = item.querySelector('.js-toggler-container.starring-container');
-    if (toggler) {
-      const starredDiv = toggler.querySelector('.starred');
-      if (starredDiv && getComputedStyle(starredDiv).display === 'none') return;
-    }
-
-    // Name
-    const h3 = item.querySelector('h3');
-    let name = '';
-    if (h3) {
-      const repoLink = h3.querySelector('a');
-      if (repoLink) {
-        const href = repoLink.getAttribute('href') || '';
-        name = href.startsWith('/') ? href.substring(1) : href;
-      }
-    }
-
-    // Description
-    const descP = item.querySelector('p[itemprop="description"]');
-    const desc = descP ? descP.textContent.trim() : '';
-
-    // Language
-    const metaDiv = item.querySelector('.f6.color-fg-muted');
-    let lang = '';
-    let langColor = '';
-    let stars = 0;
-    let forks = 0;
-    let updated = '';
-
-    if (metaDiv) {
-      // Language name
-      const langNameEl = metaDiv.querySelector('span[itemprop="programmingLanguage"]');
-      if (langNameEl) lang = langNameEl.textContent.trim();
-
-      // Language color
-      const langColorEl = metaDiv.querySelector('span.repo-language-color');
-      if (langColorEl) langColor = langColorEl.getAttribute('style') || '';
-      // Extract just the color value from style like "background-color: #3178c6;"
-      const colorMatch = langColor.match(/background-color:\s*([^;]+)/);
-      langColor = colorMatch ? colorMatch[1].trim() : '';
-
-      // Stars (full number on Stars page, e.g., "29,208")
-      const starLink = metaDiv.querySelector('a[href*="/stargazers"]');
-      if (starLink) {
-        const starText = starLink.textContent.replace(/[^\d]/g, '');
-        stars = parseInt(starText, 10) || 0;
-      }
-
-      // Forks (full number)
-      const forkLink = metaDiv.querySelector('a[href*="/forks"]');
-      if (forkLink) {
-        const forkText = forkLink.textContent.replace(/[^\d]/g, '');
-        forks = parseInt(forkText, 10) || 0;
-      }
-
-      // Updated text
-      const allNodes = Array.from(metaDiv.childNodes);
-      let foundUpdated = false;
-      let updatedParts = [];
-      for (const node of allNodes) {
-        if (node.nodeType === Node.TEXT_NODE && node.textContent.includes('Updated')) {
-          foundUpdated = true;
-        }
-        if (foundUpdated) {
-          if (node.nodeType === Node.TEXT_NODE) {
-            updatedParts.push(node.textContent.trim());
-          } else if (node.tagName === 'RELATIVE-TIME' && node.shadowRoot) {
-            const shadowText = node.shadowRoot.textContent.trim();
-            if (shadowText) updatedParts.push(shadowText);
-          } else if (node.tagName === 'RELATIVE-TIME') {
-            updatedParts.push(node.textContent.trim());
-          }
-        }
-      }
-      if (updatedParts.length > 0) {
-        updated = updatedParts.join(' ').replace(/\s+/g, ' ').trim();
-      }
-    }
-
-    saveRepoData(repoId, { name, desc, lang, langColor, stars, forks, updated });
-  }
-
-  // ====== 从缓存构建卡片 ======
   function buildCardFromCache(repoId, data) {
     const card = document.createElement('div');
     card.className = 'stars-grid-card stars-grid-card-cached';
@@ -782,20 +806,16 @@
         `<span itemprop="programmingLanguage">${escapeHtml(data.lang)}</span></span>`;
     }
 
-    // Stars SVG (exact copy from GitHub Stars page)
-    const starSvg = '<svg aria-label="star" role="img" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-star">' +
-      '<path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Zm0 2.445L6.615 5.5a.75.75 0 0 1-.564.41l-3.097.45 2.24 2.184a.75.75 0 0 1 .216.664l-.528 3.084 2.769-1.456a.75.75 0 0 1 .698 0l2.77 1.456-.53-3.084a.75.75 0 0 1 .216-.664l2.24-2.183-3.096-.45a.75.75 0 0 1-.564-.41L8 2.694Z"></path></svg>';
+    // Stars
     if (data.stars !== undefined) {
       const starsFormatted = Number(data.stars).toLocaleString();
-      mainParts += `<a class="Link--muted mr-3" href="/${data.name}/stargazers">${starSvg} ${starsFormatted}</a>`;
+      mainParts += `<a class="Link--muted mr-3" href="/${data.name}/stargazers">${STAR_META_SVG} ${starsFormatted}</a>`;
     }
 
-    // Forks SVG (exact copy from GitHub Stars page)
-    const forkSvg = '<svg aria-label="fork" role="img" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-repo-forked">' +
-      '<path d="M5 5.372v.878c0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75v-.878a2.25 2.25 0 1 1 1.5 0v.878a2.25 2.25 0 0 1-2.25 2.25h-1.5v2.128a2.251 2.251 0 1 1-1.5 0V8.5h-1.5A2.25 2.25 0 0 1 3.5 6.25v-.878a2.25 2.25 0 1 1 1.5 0ZM5 3.25a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Zm6.75.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm-3 8.75a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z"></path></svg>';
+    // Forks
     if (data.forks !== undefined && data.forks > 0) {
       const forksFormatted = Number(data.forks).toLocaleString();
-      mainParts += `<a class="Link--muted mr-3" href="/${data.name}/forks">${forkSvg} ${forksFormatted}</a>`;
+      mainParts += `<a class="Link--muted mr-3" href="/${data.name}/forks">${FORK_META_SVG} ${forksFormatted}</a>`;
     }
 
     if (mainParts) cardHTML += `<span class="stars-meta-main">${mainParts}</span>`;
@@ -807,33 +827,33 @@
     return card;
   }
 
-  function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+  function createStarButtonElement(isStarred) {
+    const btn = document.createElement('button');
+    btn.className = 'stars-star-btn' + (isStarred ? ' starred' : ' unstarred');
+    btn.type = 'button';
+    btn.title = isStarred ? 'Unstar' : 'Star';
+    btn.innerHTML = isStarred ? STAR_FILL_SVG : STAR_EMPTY_SVG;
+    return btn;
   }
 
-  // ====== Star/Unstar 表单提交 ======
-  function submitStarForm(formEl) {
-    const action = formEl.getAttribute('action');
-    const token = formEl.querySelector('input[name="authenticity_token"]').value;
-    const context = formEl.querySelector('input[name="context"]');
-    const body = new URLSearchParams();
-    body.append('authenticity_token', token);
-    if (context) body.append('context', context.value);
-    return fetch(action, {
-      method: 'POST',
-      headers: { 'X-Requested-With': 'XMLHttpRequest' },
-      body: body,
-      credentials: 'same-origin'
-    });
+  function toggleStarButtonState(btn, card, nowStarred) {
+    if (nowStarred) {
+      btn.classList.remove('unstarred');
+      btn.classList.add('starred');
+      btn.innerHTML = STAR_FILL_SVG;
+      btn.title = 'Unstar';
+      const repoId = card.dataset.repoId;
+      if (repoId) markRepoStarred(repoId);
+    } else {
+      btn.classList.remove('starred');
+      btn.classList.add('unstarred');
+      btn.innerHTML = STAR_EMPTY_SVG;
+      btn.title = 'Star';
+      const repoId = card.dataset.repoId;
+      if (repoId) markRepoUnstarred(repoId);
+    }
   }
 
-  // ====== SVG 常量 ======
-  const STAR_FILL_SVG = '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" class="octicon octicon-star-fill"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"></path></svg>';
-  const STAR_EMPTY_SVG = '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" class="octicon octicon-star"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Zm0 2.445L6.615 5.5a.75.75 0 0 1-.564.41l-3.097.45 2.24 2.184a.75.75 0 0 1 .216.664l-.528 3.084 2.769-1.456a.75.75 0 0 1 .698 0l2.77 1.456-.53-3.084a.75.75 0 0 1 .216-.664l2.24-2.183-3.096-.45a.75.75 0 0 1-.564-.41L8 2.694Z"></path></svg>';
-
-  // ====== 创建星星按钮（当前页卡片） ======
   function createStarButton(card, item) {
     const toggler = item.querySelector('.js-toggler-container.starring-container');
     if (!toggler) return;
@@ -841,11 +861,7 @@
     const starredDiv = toggler.querySelector('.starred');
     const isStarred = starredDiv && getComputedStyle(starredDiv).display !== 'none';
 
-    const btn = document.createElement('button');
-    btn.className = 'stars-star-btn' + (isStarred ? ' starred' : ' unstarred');
-    btn.type = 'button';
-    btn.title = isStarred ? 'Unstar' : 'Star';
-    btn.innerHTML = isStarred ? STAR_FILL_SVG : STAR_EMPTY_SVG;
+    const btn = createStarButtonElement(isStarred);
 
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -868,28 +884,14 @@
         const starredEl = toggler.querySelector('.starred');
         const unstarredEl = toggler.querySelector('.unstarred');
         if (currentlyStarred) {
-          // Was starred → now unstarred
           if (starredEl) starredEl.style.display = 'none';
           if (unstarredEl) unstarredEl.style.display = '';
-          btn.classList.remove('starred');
-          btn.classList.add('unstarred');
-          btn.innerHTML = STAR_EMPTY_SVG;
-          btn.title = 'Star';
-          // Mark as unstarred (delayed cleanup)
-          const repoId = card.dataset.repoId;
-          if (repoId) markRepoUnstarred(repoId);
         } else {
-          // Was unstarred → now starred
           if (unstarredEl) unstarredEl.style.display = 'none';
           if (starredEl) starredEl.style.display = '';
-          btn.classList.remove('unstarred');
-          btn.classList.add('starred');
-          btn.innerHTML = STAR_FILL_SVG;
-          btn.title = 'Unstar';
-          // Remove unstarred mark if re-starred
-          const repoId = card.dataset.repoId;
-          if (repoId) markRepoStarred(repoId);
         }
+
+        toggleStarButtonState(btn, card, !currentlyStarred);
       } catch (_) {
         // Network error — do nothing
       }
@@ -900,16 +902,11 @@
     if (header) header.appendChild(btn);
   }
 
-  // ====== 创建星星按钮（缓存卡片） ======
   function createStarButtonForCached(card, data) {
     if (!data.name) return;
 
     const isStarred = !data.unstarredAt;
-    const btn = document.createElement('button');
-    btn.className = 'stars-star-btn' + (isStarred ? ' starred' : ' unstarred');
-    btn.type = 'button';
-    btn.title = isStarred ? 'Unstar' : 'Star';
-    btn.innerHTML = isStarred ? STAR_FILL_SVG : STAR_EMPTY_SVG;
+    const btn = createStarButtonElement(isStarred);
 
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -951,21 +948,7 @@
         });
         if (!resp.ok) { btn.disabled = false; return; }
 
-        if (currentlyStarred) {
-          btn.classList.remove('starred');
-          btn.classList.add('unstarred');
-          btn.innerHTML = STAR_EMPTY_SVG;
-          btn.title = 'Star';
-          const repoId = card.dataset.repoId;
-          if (repoId) markRepoUnstarred(repoId);
-        } else {
-          btn.classList.remove('unstarred');
-          btn.classList.add('starred');
-          btn.innerHTML = STAR_FILL_SVG;
-          btn.title = 'Unstar';
-          const repoId = card.dataset.repoId;
-          if (repoId) markRepoStarred(repoId);
-        }
+        toggleStarButtonState(btn, card, !currentlyStarred);
       } catch (_) {
         // Network error — do nothing
       }
@@ -976,16 +959,16 @@
     if (header) header.appendChild(btn);
   }
 
-  // ====== 筛选栏 UI ======
+  /* ================================================================
+   *  SECTION 8: TAG UI
+   * ================================================================ */
 
-  // 关闭 GitHub 原生 action-menu 弹窗
   function closeNativeMenus() {
     document.querySelectorAll('anchored-position[popover]').forEach((el) => {
       try { el.hidePopover(); } catch (_) {}
     });
   }
 
-  // 更新 Tags 按钮文字和高亮状态（不重建整个下拉）
   function updateTagFilterButton() {
     const btn = document.querySelector('.stars-tag-filter .Button');
     if (!btn) return;
@@ -1111,7 +1094,6 @@
     filterRow.insertBefore(container, filterRow.firstChild);
   }
 
-  // ====== 筛选逻辑（重写：使用缓存代替 API） ======
   function applyTagFilter() {
     // 1. 移除之前的缓存卡片
     document.querySelectorAll('.stars-grid-card-cached').forEach((el) => el.remove());
@@ -1179,7 +1161,6 @@
     });
   }
 
-  // ====== 标签渲染 ======
   function renderTags(tagsContainer) {
     const repoId = tagsContainer.dataset.repoId;
     if (!repoId) return;
@@ -1243,7 +1224,10 @@
     tagsContainer.appendChild(addBtn);
   }
 
-  // ====== DOM 转换 ======
+  /* ================================================================
+   *  SECTION 9: DOM TRANSFORM
+   * ================================================================ */
+
   function transformStarsList() {
     if (!isDesktop()) return false;
 
@@ -1375,7 +1359,38 @@
     return true;
   }
 
-  // ====== 执行转换 ======
+  /* ================================================================
+   *  SECTION 10: INIT & EVENTS
+   * ================================================================ */
+
+  // 页面类型检测
+  const isStarsPage = /[?&]tab=stars/.test(location.search);
+  const repoIdMeta = document.querySelector('meta[name="octolytics-dimension-repository_id"]');
+  const isRepoDetailPage = !isStarsPage && !!repoIdMeta;
+
+  // 仓库详情页：缓存 + 监听 unstar + 提前返回
+  if (isRepoDetailPage) {
+    cleanupExpiredUnstarred();
+    extractAndCacheRepoFromDetailPage();
+    const unstarForm = document.querySelector('.starred form[action$="/unstar"]');
+    if (unstarForm) {
+      unstarForm.addEventListener('submit', () => {
+        const repoId = repoIdMeta.getAttribute('content');
+        if (repoId) markRepoUnstarred(repoId);
+      });
+    }
+    return;
+  }
+
+  if (!isStarsPage) return;
+
+  // Stars 页面初始化
+  injectStyles();
+  migrateTagsIfNeeded();
+  cleanupExpiredUnstarred();
+  let activeFilterTags = [];
+
+  // 执行转换 + MutationObserver + Turbo 事件
   if (!transformStarsList()) {
     const observer = new MutationObserver((mutations, obs) => {
       if (transformStarsList()) {
@@ -1386,7 +1401,6 @@
     setTimeout(() => observer.disconnect(), 10000);
   }
 
-  // 监听 Turbo Frame 导航（翻页等）
   document.addEventListener('turbo:frame-render', (event) => {
     if (event.target.id === 'user-starred-repos') {
       setTimeout(transformStarsList, 100);
