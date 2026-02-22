@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GitHub Stars Grid View
 // @namespace    https://github.com/YsLtr
-// @version      2.5
+// @version      2.6
 // @description  将 GitHub Stars 页面的列表视图改为卡片网格视图，缩小左侧个人资料栏，最大化仓库展示空间（仅桌面端生效）
 // @author       YsLtr
 // @match        https://github.com/*tab=stars*
@@ -1185,7 +1185,7 @@
           content.setAttribute('aria-checked', 'true');
         }
         updateTagFilterButton();
-        applyTagFilter();
+        applyFilters();
         refreshTagPillStates();
       });
 
@@ -1229,6 +1229,55 @@
     return results;
   }
 
+  function searchCacheRepos(query, ignoreLang) {
+    const cache = loadRepoCache();
+    const allTags = loadAllTags();
+    const allNotes = loadAllNotes();
+    const terms = query.toLowerCase().split(/\s+/).filter(t => t.length > 0);
+    if (terms.length === 0) return [];
+
+    let results = [];
+    for (const repoId in cache) {
+      const data = cache[repoId];
+      const name = (data.name || '').toLowerCase();
+      const [author, repo] = name.split('/');
+      const desc = (data.desc || '').toLowerCase();
+      const lang = (data.lang || '').toLowerCase();
+      const tags = (allTags[repoId] || []).map(t => t.toLowerCase());
+      const note = (allNotes[repoId] || '').toLowerCase();
+
+      // 每个词都必须至少命中一个字段
+      const allMatch = terms.every(term =>
+        (author || '').includes(term) ||
+        (repo || '').includes(term) ||
+        desc.includes(term) ||
+        lang.includes(term) ||
+        tags.some(t => t.includes(term)) ||
+        note.includes(term)
+      );
+      if (!allMatch) continue;
+
+      // Tags 联动：如有激活的 tag 筛选，须同时满足
+      if (activeFilterTags.length > 0) {
+        const repoTags = allTags[repoId] || [];
+        if (!activeFilterTags.every(ft => repoTags.includes(ft))) continue;
+      }
+      // Language 联动
+      if (!ignoreLang && activeFilterLang &&
+          (data.lang || '').toLowerCase() !== activeFilterLang.toLowerCase()) continue;
+
+      results.push({ repoId, data });
+    }
+
+    // 排序
+    if (activeFilterSort === 'stars') {
+      results.sort((a, b) => (b.data.stars || 0) - (a.data.stars || 0));
+    } else {
+      results.sort((a, b) => (b.data.updatedAt || '').localeCompare(a.data.updatedAt || ''));
+    }
+    return results;
+  }
+
   function inheritNativeFilters() {
     // Read current Language from native button text
     const langBtn = document.querySelector('#stars-language-filter-menu-button');
@@ -1252,11 +1301,111 @@
     }
   }
 
-  function renderTagFilterInfoBar(count) {
+  function interceptSearchForm() {
+    const searchInput = document.querySelector(
+      'input[placeholder*="Search starred"]'
+    );
+    if (!searchInput) return;
+
+    const form = searchInput.closest('form');
+    if (form) {
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        activateSearch(searchInput.value.trim());
+      });
+    }
+
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        activateSearch(searchInput.value.trim());
+      }
+    });
+
+    // 页面带 ?q= 参数时自动激活搜索
+    const existingQ = new URLSearchParams(location.search).get('q');
+    if (existingQ) {
+      searchInput.value = existingQ;
+      setTimeout(() => activateSearch(existingQ), 50);
+    }
+  }
+
+  function activateSearch(query) {
+    if (!query) { clearSearch(); return; }
+
+    activeSearchQuery = query;
+    searchModeActive = true;
+    nativeSearchResults = [];
+
+    // 首次进入自定义模式时继承原生筛选
+    if (!tagModeActive) {
+      inheritNativeFilters();
+    }
+
+    applyFilters();                        // 立即渲染缓存搜索结果
+    fetchNativeSearchResults(query);       // 异步补充原始结果
+  }
+
+  function clearSearch() {
+    activeSearchQuery = '';
+    searchModeActive = false;
+    nativeSearchResults = [];
+
+    const searchInput = document.querySelector('input[placeholder*="Search starred"]');
+    if (searchInput) searchInput.value = '';
+
+    applyFilters();    // tags 仍激活则保持 tag 模式，否则退出自定义模式
+    renderTagFilterBar();
+    refreshTagPillStates();
+  }
+
+  async function fetchNativeSearchResults(query) {
+    if (nativeSearchFetching) return;
+    nativeSearchFetching = true;
+
+    try {
+      const currentQ = new URLSearchParams(location.search).get('q');
+      let doc;
+      if (currentQ === query) {
+        // 当前页面已是搜索结果页，直接使用
+        doc = document;
+      } else {
+        const url = location.pathname + '?tab=stars&q=' + encodeURIComponent(query);
+        const resp = await fetch(url, { credentials: 'same-origin' });
+        if (!resp.ok) { nativeSearchFetching = false; return; }
+        doc = new DOMParser().parseFromString(await resp.text(), 'text/html');
+      }
+
+      const items = doc.querySelectorAll('.col-12.d-block.width-full.py-4.border-bottom');
+      const newIds = [];
+      items.forEach(item => {
+        const toggleEl = item.querySelector('[data-toggle-for*="details-user-list-"]');
+        if (!toggleEl) return;
+        const m = toggleEl.getAttribute('data-toggle-for').match(/details-user-list-(\d+)/);
+        if (!m) return;
+        const repoId = m[1];
+        extractAndCacheRepoFromCard(item, repoId);
+        newIds.push(repoId);
+      });
+
+      nativeSearchResults = newIds;
+
+      // 仍在同一次搜索 → 重新渲染（缓存已更新，补充结果会出现）
+      if (searchModeActive && activeSearchQuery === query) {
+        applyFilters();
+      }
+    } catch (_) { /* 网络错误，仅展示缓存结果 */ }
+
+    nativeSearchFetching = false;
+  }
+
+  function renderFilterInfoBar(count) {
     // Remove old info bar
     document.querySelectorAll('.stars-tag-info-bar').forEach(el => el.remove());
 
-    if (activeFilterTags.length === 0) return;
+    if (!activeSearchQuery && activeFilterTags.length === 0) return;
 
     const colLg9 = document.querySelector('turbo-frame#user-starred-repos .col-lg-9');
     if (!colLg9) return;
@@ -1276,8 +1425,13 @@
     infoSpan.setAttribute('role', 'status');
 
     // Build filter description
-    let desc = '<strong>' + count + '</strong> repos matching tags: ';
-    desc += activeFilterTags.map(t => '<strong>' + escapeHtml(t) + '</strong>').join(', ');
+    let desc = '<strong>' + count + '</strong> repos';
+    if (activeSearchQuery) {
+      desc += ' matching "<strong>' + escapeHtml(activeSearchQuery) + '</strong>"';
+    }
+    if (activeFilterTags.length > 0) {
+      desc += ' with tags: ' + activeFilterTags.map(t => '<strong>' + escapeHtml(t) + '</strong>').join(', ');
+    }
     if (activeFilterLang) {
       desc += ' · language: <strong>' + escapeHtml(activeFilterLang) + '</strong>';
     }
@@ -1287,7 +1441,7 @@
     const clearLink = document.createElement('a');
     clearLink.className = 'issues-reset-query text-normal TableObject-item text-right';
     clearLink.href = '#';
-    clearLink.innerHTML = '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" class="octicon octicon-x v-align-text-bottom"><path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"></path></svg> Clear filter';
+    clearLink.innerHTML = '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-x issues-reset-query-icon mt-1"><path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"></path></svg> Clear filter';
     clearLink.addEventListener('click', (e) => {
       e.preventDefault();
       // Navigate to clean stars page — clears all filters including pre-existing native ones
@@ -1301,7 +1455,7 @@
     colLg9.insertBefore(bar, gridContainer);
   }
 
-  function applyTagFilter() {
+  function applyFilters() {
     // 1. Remove old cached cards
     document.querySelectorAll('.stars-grid-card-cached').forEach((el) => el.remove());
 
@@ -1309,10 +1463,13 @@
     const gridContainer = document.querySelector('.stars-grid-container');
     const paginator = gridContainer ? gridContainer.querySelector('.paginate-container') : null;
 
-    // 2. When no filter tags — exit tags mode, apply Language/Sort back to page URL
-    if (activeFilterTags.length === 0) {
-      if (tagModeActive) {
-        // Build URL preserving the Language/Sort chosen during tags mode
+    const hasSearch = activeSearchQuery.length > 0;
+    const hasTags = activeFilterTags.length > 0;
+
+    // 2. 无任何自定义筛选 → 退出自定义模式
+    if (!hasTags && !hasSearch) {
+      if (tagModeActive || searchModeActive) {
+        // 保留 Language/Sort 写回 URL
         const baseUrl = new URL(location.href);
         const targetParams = new URLSearchParams();
         targetParams.set('tab', 'stars');
@@ -1328,6 +1485,8 @@
         activeFilterLang = '';
         activeFilterSort = 'stars';
         tagModeActive = false;
+        searchModeActive = false;
+        activeSearchQuery = '';
 
         // Navigate — this reloads the page with the correct server-side filters
         location.href = baseUrl.pathname + '?' + targetParams.toString();
@@ -1348,18 +1507,39 @@
       return;
     }
 
-    // 3. Entering tags mode for the first time — inherit native filters
-    if (!tagModeActive) {
+    // 3. 首次进入自定义模式 → 继承原生筛选
+    if (!tagModeActive && !searchModeActive) {
       inheritNativeFilters();
-      tagModeActive = true;
     }
+    if (hasTags) tagModeActive = true;
+    if (hasSearch) searchModeActive = true;
 
-    // 4. Tags mode active — hide all original page cards
+    // 4. 隐藏原始卡片和分页器
     cards.forEach((card) => card.classList.add('stars-tag-filtered'));
     if (paginator) paginator.style.display = 'none';
 
-    // 5. Get sorted/filtered repos from cache
-    const results = getTagFilteredRepos(false);
+    // 5. 获取结果
+    let results;
+    if (hasSearch) {
+      results = searchCacheRepos(activeSearchQuery, false);
+      // 补充原生搜索结果中未命中缓存搜索的仓库
+      const cacheIds = new Set(results.map(r => r.repoId));
+      const cache = loadRepoCache();
+      nativeSearchResults.forEach(rid => {
+        if (cacheIds.has(rid)) return;
+        const data = cache[rid];
+        if (!data) return;
+        if (activeFilterLang && (data.lang || '').toLowerCase() !== activeFilterLang.toLowerCase()) return;
+        if (hasTags) {
+          const tags = getTags(rid);
+          if (!activeFilterTags.every(ft => tags.includes(ft))) return;
+        }
+        results.push({ repoId: rid, data });
+      });
+    } else {
+      results = getTagFilteredRepos(false);
+    }
+
     if (!gridContainer) return;
 
     // 6. Build cached cards for each result
@@ -1380,7 +1560,7 @@
     });
 
     // 7. Show info bar with count and clear link
-    renderTagFilterInfoBar(results.length);
+    renderFilterInfoBar(results.length);
 
     // 8. Switch filter bar to custom Language/Sort
     updateNativeFilters(true);
@@ -1417,8 +1597,21 @@
       const langContainer = document.createElement('div');
       langContainer.className = 'stars-custom-filter mb-1 mb-lg-0';
 
-      // Collect unique languages from tag-filtered repos (ignoring language filter)
-      const allResults = getTagFilteredRepos(true);
+      // Collect unique languages from filtered repos (ignoring language filter)
+      const allResults = activeSearchQuery
+        ? searchCacheRepos(activeSearchQuery, true)
+        : getTagFilteredRepos(true);
+      // 补充原生搜索结果的语言
+      if (activeSearchQuery && nativeSearchResults.length > 0) {
+        const cache = loadRepoCache();
+        const existingIds = new Set(allResults.map(r => r.repoId));
+        nativeSearchResults.forEach(rid => {
+          if (!existingIds.has(rid)) {
+            const data = cache[rid];
+            if (data) allResults.push({ repoId: rid, data });
+          }
+        });
+      }
       const langSet = new Set();
       allResults.forEach(({ data }) => { if (data.lang) langSet.add(data.lang); });
       const languages = Array.from(langSet).sort((a, b) => a.localeCompare(b));
@@ -1472,7 +1665,7 @@
         e.preventDefault();
         activeFilterLang = '';
         langOverlay.hidePopover();
-        applyTagFilter();
+        applyFilters();
         renderTagFilterBar();
         refreshTagPillStates();
       });
@@ -1495,7 +1688,7 @@
           e.preventDefault();
           activeFilterLang = lang;
           langOverlay.hidePopover();
-          applyTagFilter();
+          applyFilters();
           renderTagFilterBar();
           refreshTagPillStates();
         });
@@ -1565,7 +1758,7 @@
           e.preventDefault();
           activeFilterSort = opt.key;
           sortOverlay.hidePopover();
-          applyTagFilter();
+          applyFilters();
           renderTagFilterBar();
           refreshTagPillStates();
         });
@@ -1632,7 +1825,7 @@
         } else {
           activeFilterTags.push(tag);
         }
-        applyTagFilter();
+        applyFilters();
         renderTagFilterBar();
         refreshTagPillStates();
       });
@@ -1647,7 +1840,7 @@
         saveTags(repoId, current);
         renderTags(tagsContainer);
         renderTagFilterBar();
-        applyTagFilter();
+        applyFilters();
       });
 
       span.appendChild(del);
@@ -1678,7 +1871,7 @@
           saveTags(repoId, current);
           renderTags(tagsContainer);
           renderTagFilterBar();
-          applyTagFilter();
+          applyFilters();
         } else {
           input.remove();
           addBtn.style.display = '';
@@ -1895,7 +2088,8 @@
 
     // 渲染筛选栏并应用筛选
     renderTagFilterBar();
-    applyTagFilter();
+    interceptSearchForm();
+    applyFilters();
 
     return true;
   }
@@ -1933,6 +2127,10 @@
   let activeFilterLang = '';      // '' = all languages
   let activeFilterSort = 'stars'; // 'updated' | 'stars'
   let tagModeActive = false;      // tracks whether we're currently in tags mode
+  let activeSearchQuery = '';       // 当前搜索关键词，'' = 无搜索
+  let searchModeActive = false;     // 是否处于搜索模式
+  let nativeSearchResults = [];     // GitHub 原生搜索返回的 repoId 列表
+  let nativeSearchFetching = false; // 防止重复 fetch
 
   // 执行转换 + MutationObserver + Turbo 事件
   if (!transformStarsList()) {
@@ -1962,6 +2160,12 @@
     const link = e.target.closest('a.issues-reset-query');
     if (!link) return;
     e.preventDefault();
+    // 重置搜索状态
+    activeSearchQuery = '';
+    searchModeActive = false;
+    nativeSearchResults = [];
+    activeFilterTags = [];
+    tagModeActive = false;
     const baseUrl = new URL(location.href);
     location.href = baseUrl.pathname + '?tab=stars';
   });
