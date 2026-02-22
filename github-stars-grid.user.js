@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GitHub Stars Grid View
 // @namespace    https://github.com/YsLtr
-// @version      2.4
+// @version      2.5
 // @description  将 GitHub Stars 页面的列表视图改为卡片网格视图，缩小左侧个人资料栏，最大化仓库展示空间（仅桌面端生效）
 // @author       YsLtr
 // @match        https://github.com/*tab=stars*
@@ -311,6 +311,7 @@
     let stars = 0;
     let forks = 0;
     let updated = '';
+    let updatedAt = '';
 
     if (metaDiv) {
       // Language name
@@ -338,7 +339,7 @@
         forks = parseInt(forkText, 10) || 0;
       }
 
-      // Updated text
+      // Updated text + updatedAt ISO timestamp
       const allNodes = Array.from(metaDiv.childNodes);
       let foundUpdated = false;
       let updatedParts = [];
@@ -349,11 +350,14 @@
         if (foundUpdated) {
           if (node.nodeType === Node.TEXT_NODE) {
             updatedParts.push(node.textContent.trim());
-          } else if (node.tagName === 'RELATIVE-TIME' && node.shadowRoot) {
-            const shadowText = node.shadowRoot.textContent.trim();
-            if (shadowText) updatedParts.push(shadowText);
           } else if (node.tagName === 'RELATIVE-TIME') {
-            updatedParts.push(node.textContent.trim());
+            if (!updatedAt) updatedAt = node.getAttribute('datetime') || '';
+            if (node.shadowRoot) {
+              const shadowText = node.shadowRoot.textContent.trim();
+              if (shadowText) updatedParts.push(shadowText);
+            } else {
+              updatedParts.push(node.textContent.trim());
+            }
           }
         }
       }
@@ -362,7 +366,7 @@
       }
     }
 
-    saveRepoData(repoId, { name, desc, lang, langColor, stars, forks, updated });
+    saveRepoData(repoId, { name, desc, lang, langColor, stars, forks, updated, updatedAt });
   }
 
   /* ================================================================
@@ -749,6 +753,17 @@
       .stars-tag-active {
         background: var(--fgColor-accent, #0969da) !important;
         color: #ffffff !important;
+      }
+
+      /* ===== 自定义 Language / Sort 筛选按钮 ===== */
+      .stars-custom-filter .has-active {
+        border-color: var(--fgColor-accent, #0969da) !important;
+        color: var(--fgColor-accent, #0969da) !important;
+      }
+      .stars-custom-filter .ActionListWrap {
+        min-width: 180px;
+        max-height: 300px;
+        overflow-y: auto;
       }
 
       /* ===== 星星按钮 ===== */
@@ -1178,36 +1193,6 @@
       menuList.appendChild(li);
     });
 
-    // 清除按钮
-    if (activeFilterTags.length > 0) {
-      const dividerLi = document.createElement('li');
-      dividerLi.className = 'ActionList-sectionDivider';
-      dividerLi.setAttribute('role', 'separator');
-      menuList.appendChild(dividerLi);
-
-      const clearLi = document.createElement('li');
-      clearLi.className = 'ActionListItem';
-      clearLi.setAttribute('role', 'none');
-      const clearContent = document.createElement('button');
-      clearContent.className = 'ActionListContent';
-      clearContent.setAttribute('role', 'menuitem');
-      const clearLabel = document.createElement('span');
-      clearLabel.className = 'ActionListItem-label';
-      clearLabel.style.color = 'var(--fgColor-accent, #0969da)';
-      clearLabel.textContent = '清除筛选';
-      clearContent.appendChild(clearLabel);
-      clearContent.addEventListener('click', (e) => {
-        e.stopPropagation();
-        activeFilterTags = [];
-        overlay.hidePopover();
-        applyTagFilter();
-        renderTagFilterBar();
-        refreshTagPillStates();
-      });
-      clearLi.appendChild(clearContent);
-      menuList.appendChild(clearLi);
-    }
-
     overlayBody.appendChild(menuList);
     overlayInner.appendChild(overlayBody);
     overlay.appendChild(overlayInner);
@@ -1218,63 +1203,398 @@
     filterRow.insertBefore(container, filterRow.firstChild);
   }
 
+  function getTagFilteredRepos(ignoreLang) {
+    const allTags = loadAllTags();
+    const cache = loadRepoCache();
+    let results = [];
+
+    for (const repoId in allTags) {
+      const tags = allTags[repoId];
+      if (!activeFilterTags.every(ft => tags.includes(ft))) continue;
+      const data = cache[repoId];
+      if (!data) continue;
+      // Language filter (skip when ignoreLang=true, used for building language list)
+      if (!ignoreLang && activeFilterLang && (data.lang || '').toLowerCase() !== activeFilterLang.toLowerCase()) continue;
+      results.push({ repoId, data });
+    }
+
+    // Sort
+    if (activeFilterSort === 'stars') {
+      results.sort((a, b) => (b.data.stars || 0) - (a.data.stars || 0));
+    } else {
+      // updated — sort by updatedAt ISO descending, missing values last
+      results.sort((a, b) => (b.data.updatedAt || '').localeCompare(a.data.updatedAt || ''));
+    }
+
+    return results;
+  }
+
+  function inheritNativeFilters() {
+    // Read current Language from native button text
+    const langBtn = document.querySelector('#stars-language-filter-menu-button');
+    if (langBtn) {
+      const text = langBtn.textContent.trim();
+      const match = text.match(/Language:\s*(.+)/);
+      if (match && match[1].trim().toLowerCase() !== 'all') {
+        activeFilterLang = match[1].trim();
+      }
+    }
+    // Read current Sort from native button text
+    const sortBtn = document.querySelector('#stars-sort-menu-button');
+    if (sortBtn) {
+      const text = sortBtn.textContent.trim();
+      if (text.includes('Most stars')) {
+        activeFilterSort = 'stars';
+      } else if (text.includes('Recently active')) {
+        activeFilterSort = 'updated';
+      }
+      // "Recently starred" → default to 'stars' since cache has no starred-at time
+    }
+  }
+
+  function renderTagFilterInfoBar(count) {
+    // Remove old info bar
+    document.querySelectorAll('.stars-tag-info-bar').forEach(el => el.remove());
+
+    if (activeFilterTags.length === 0) return;
+
+    const colLg9 = document.querySelector('turbo-frame#user-starred-repos .col-lg-9');
+    if (!colLg9) return;
+    const gridContainer = colLg9.querySelector('.stars-grid-container');
+    if (!gridContainer) return;
+
+    // Hide native clear filter bar if present
+    const nativeBar = colLg9.querySelector('.TableObject.border-bottom:not(.stars-tag-info-bar)');
+    if (nativeBar) nativeBar.style.display = 'none';
+
+    const bar = document.createElement('div');
+    bar.className = 'stars-tag-info-bar TableObject border-bottom color-border-muted py-3';
+
+    const infoDiv = document.createElement('div');
+    infoDiv.className = 'TableObject-item TableObject-item--primary';
+    const infoSpan = document.createElement('span');
+    infoSpan.setAttribute('role', 'status');
+
+    // Build filter description
+    let desc = '<strong>' + count + '</strong> repos matching tags: ';
+    desc += activeFilterTags.map(t => '<strong>' + escapeHtml(t) + '</strong>').join(', ');
+    if (activeFilterLang) {
+      desc += ' · language: <strong>' + escapeHtml(activeFilterLang) + '</strong>';
+    }
+    infoSpan.innerHTML = desc;
+    infoDiv.appendChild(infoSpan);
+
+    const clearLink = document.createElement('a');
+    clearLink.className = 'issues-reset-query text-normal TableObject-item text-right';
+    clearLink.href = '#';
+    clearLink.innerHTML = '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" class="octicon octicon-x v-align-text-bottom"><path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"></path></svg> Clear filter';
+    clearLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      // Navigate to clean stars page — clears all filters including pre-existing native ones
+      const baseUrl = new URL(location.href);
+      location.href = baseUrl.pathname + '?tab=stars';
+    });
+
+    bar.appendChild(infoDiv);
+    bar.appendChild(clearLink);
+
+    colLg9.insertBefore(bar, gridContainer);
+  }
+
   function applyTagFilter() {
-    // 1. 移除之前的缓存卡片
+    // 1. Remove old cached cards
     document.querySelectorAll('.stars-grid-card-cached').forEach((el) => el.remove());
 
     const cards = document.querySelectorAll('.stars-grid-card:not(.stars-grid-card-cached)');
+    const gridContainer = document.querySelector('.stars-grid-container');
+    const paginator = gridContainer ? gridContainer.querySelector('.paginate-container') : null;
 
-    // 2. 如果无筛选标签，显示所有当前页卡片
+    // 2. When no filter tags — exit tags mode, apply Language/Sort back to page URL
     if (activeFilterTags.length === 0) {
+      if (tagModeActive) {
+        // Build URL preserving the Language/Sort chosen during tags mode
+        const baseUrl = new URL(location.href);
+        const targetParams = new URLSearchParams();
+        targetParams.set('tab', 'stars');
+        if (activeFilterLang) {
+          targetParams.set('language', activeFilterLang.toLowerCase());
+        }
+        if (activeFilterSort === 'updated') {
+          targetParams.set('sort', 'updated');
+        } else if (activeFilterSort === 'stars') {
+          targetParams.set('sort', 'stars');
+        }
+
+        activeFilterLang = '';
+        activeFilterSort = 'stars';
+        tagModeActive = false;
+
+        // Navigate — this reloads the page with the correct server-side filters
+        location.href = baseUrl.pathname + '?' + targetParams.toString();
+        return;
+      }
+
       cards.forEach((card) => card.classList.remove('stars-tag-filtered'));
+      if (paginator) paginator.style.display = '';
+      updateNativeFilters(false);
+
+      // Remove info bar and restore native clear filter bar
+      document.querySelectorAll('.stars-tag-info-bar').forEach(el => el.remove());
+      const colLg9 = document.querySelector('turbo-frame#user-starred-repos .col-lg-9');
+      if (colLg9) {
+        const nativeBar = colLg9.querySelector('.TableObject.border-bottom:not(.stars-tag-info-bar)');
+        if (nativeBar) nativeBar.style.display = '';
+      }
       return;
     }
 
-    // 3. 筛选当前页卡片
-    const currentPageIds = new Set();
-    cards.forEach((card) => {
-      const repoId = card.dataset.repoId;
-      if (repoId) currentPageIds.add(repoId);
-      const tags = repoId ? getTags(repoId) : [];
-      const match = activeFilterTags.every((ft) => tags.includes(ft));
-      card.classList.toggle('stars-tag-filtered', !match);
-    });
+    // 3. Entering tags mode for the first time — inherit native filters
+    if (!tagModeActive) {
+      inheritNativeFilters();
+      tagModeActive = true;
+    }
 
-    // 4. 从标签数据库查找其他页面中符合条件的仓库
-    const allTags = loadAllTags();
-    const gridContainer = document.querySelector('.stars-grid-container');
+    // 4. Tags mode active — hide all original page cards
+    cards.forEach((card) => card.classList.add('stars-tag-filtered'));
+    if (paginator) paginator.style.display = 'none';
+
+    // 5. Get sorted/filtered repos from cache
+    const results = getTagFilteredRepos(false);
     if (!gridContainer) return;
 
-    const paginator = gridContainer.querySelector('.paginate-container');
+    // 6. Build cached cards for each result
+    results.forEach(({ repoId, data }) => {
+      const cachedCard = buildCardFromCache(repoId, data);
+      gridContainer.appendChild(cachedCard);
 
-    for (const repoId in allTags) {
-      if (currentPageIds.has(repoId)) continue;
-      const tags = allTags[repoId];
-      if (!activeFilterTags.every((ft) => tags.includes(ft))) continue;
+      // Star button
+      createStarButtonForCached(cachedCard, data);
 
-      // 5. 从缓存获取仓库数据
-      const repoData = getRepoData(repoId);
-      if (!repoData) continue; // 无缓存数据则跳过
-
-      // 6. 构建卡片
-      const cachedCard = buildCardFromCache(repoId, repoData);
-
-      if (paginator) {
-        gridContainer.insertBefore(cachedCard, paginator);
-      } else {
-        gridContainer.appendChild(cachedCard);
-      }
-
-      // 星星按钮
-      createStarButtonForCached(cachedCard, repoData);
-
-      // 7. 渲染标签
+      // Tags
       const tagsContainer = cachedCard.querySelector('.stars-card-tags');
       if (tagsContainer) renderTags(tagsContainer);
 
-      // 渲染备注
+      // Notes
       const notesContainer = cachedCard.querySelector('.stars-card-notes');
       if (notesContainer) renderNotes(notesContainer);
+    });
+
+    // 7. Show info bar with count and clear link
+    renderTagFilterInfoBar(results.length);
+
+    // 8. Switch filter bar to custom Language/Sort
+    updateNativeFilters(true);
+  }
+
+  function updateNativeFilters(tagMode) {
+    const typeBtn = document.querySelector('#stars-type-filter-menu-button');
+    const langBtn = document.querySelector('#stars-language-filter-menu-button');
+    const sortBtn = document.querySelector('#stars-sort-menu-button');
+
+    const typeMenu = typeBtn ? typeBtn.closest('action-menu') : null;
+    const langMenu = langBtn ? langBtn.closest('action-menu') : null;
+    const sortMenu = sortBtn ? sortBtn.closest('action-menu') : null;
+
+    if (tagMode) {
+      // Hide native Type / Language / Sort action-menus
+      if (typeMenu) typeMenu.style.display = 'none';
+      if (langMenu) langMenu.style.display = 'none';
+      if (sortMenu) sortMenu.style.display = 'none';
+
+      // Remove old custom buttons if any
+      document.querySelectorAll('.stars-custom-filter').forEach(el => el.remove());
+
+      // Find insertion point: after the Tags filter button
+      const filterRow = document.querySelector(
+        '.Layout-main .d-flex.flex-column.flex-lg-row.flex-items-center.mt-5 .d-flex.flex-justify-end'
+      );
+      if (!filterRow) return;
+
+      const tagFilter = filterRow.querySelector('.stars-tag-filter');
+      const insertAfter = tagFilter || filterRow.firstChild;
+
+      // --- Custom Language button ---
+      const langContainer = document.createElement('div');
+      langContainer.className = 'stars-custom-filter mb-1 mb-lg-0';
+
+      // Collect unique languages from tag-filtered repos (ignoring language filter)
+      const allResults = getTagFilteredRepos(true);
+      const langSet = new Set();
+      allResults.forEach(({ data }) => { if (data.lang) langSet.add(data.lang); });
+      const languages = Array.from(langSet).sort((a, b) => a.localeCompare(b));
+
+      const langBtnLabel = activeFilterLang ? 'Language: ' + activeFilterLang : 'Language';
+      const langBtnEl = document.createElement('button');
+      langBtnEl.type = 'button';
+      langBtnEl.id = 'stars-custom-lang-button';
+      langBtnEl.setAttribute('popovertarget', 'stars-custom-lang-overlay');
+      langBtnEl.setAttribute('aria-haspopup', 'true');
+      langBtnEl.className = 'Button--secondary Button--medium Button';
+      if (activeFilterLang) langBtnEl.classList.add('has-active');
+      langBtnEl.innerHTML =
+        '<span class="Button-content"><span class="Button-label"></span></span>' +
+        '<span class="Button-visual Button-trailingAction">' +
+          '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" width="16" class="octicon octicon-triangle-down">' +
+            '<path d="m4.427 7.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 7H4.604a.25.25 0 0 0-.177.427Z"></path>' +
+          '</svg>' +
+        '</span>';
+      langBtnEl.querySelector('.Button-label').textContent = langBtnLabel;
+
+      const langOverlay = document.createElement('anchored-position');
+      langOverlay.id = 'stars-custom-lang-overlay';
+      langOverlay.setAttribute('anchor', 'stars-custom-lang-button');
+      langOverlay.setAttribute('align', 'start');
+      langOverlay.setAttribute('side', 'outside-bottom');
+      langOverlay.setAttribute('anchor-offset', 'normal');
+      langOverlay.setAttribute('popover', 'auto');
+
+      const langInner = document.createElement('div');
+      langInner.className = 'Overlay Overlay--size-auto';
+      const langBody = document.createElement('div');
+      langBody.className = 'Overlay-body Overlay-body--paddingNone';
+      const langList = document.createElement('ul');
+      langList.className = 'ActionListWrap--inset ActionListWrap';
+      langList.setAttribute('role', 'menu');
+
+      // "All languages" option
+      const allLi = document.createElement('li');
+      allLi.className = 'ActionListItem';
+      allLi.setAttribute('role', 'none');
+      const allContent = document.createElement('a');
+      allContent.className = 'ActionListContent';
+      allContent.setAttribute('role', 'menuitemradio');
+      allContent.setAttribute('aria-checked', String(!activeFilterLang));
+      const allLabel = document.createElement('span');
+      allLabel.className = 'ActionListItem-label';
+      allLabel.textContent = 'All languages';
+      allContent.appendChild(allLabel);
+      allContent.addEventListener('click', (e) => {
+        e.preventDefault();
+        activeFilterLang = '';
+        langOverlay.hidePopover();
+        applyTagFilter();
+        renderTagFilterBar();
+        refreshTagPillStates();
+      });
+      allLi.appendChild(allContent);
+      langList.appendChild(allLi);
+
+      languages.forEach((lang) => {
+        const li = document.createElement('li');
+        li.className = 'ActionListItem';
+        li.setAttribute('role', 'none');
+        const content = document.createElement('a');
+        content.className = 'ActionListContent';
+        content.setAttribute('role', 'menuitemradio');
+        content.setAttribute('aria-checked', String(activeFilterLang.toLowerCase() === lang.toLowerCase()));
+        const label = document.createElement('span');
+        label.className = 'ActionListItem-label';
+        label.textContent = lang;
+        content.appendChild(label);
+        content.addEventListener('click', (e) => {
+          e.preventDefault();
+          activeFilterLang = lang;
+          langOverlay.hidePopover();
+          applyTagFilter();
+          renderTagFilterBar();
+          refreshTagPillStates();
+        });
+        li.appendChild(content);
+        langList.appendChild(li);
+      });
+
+      langBody.appendChild(langList);
+      langInner.appendChild(langBody);
+      langOverlay.appendChild(langInner);
+      langContainer.appendChild(langBtnEl);
+      langContainer.appendChild(langOverlay);
+
+      // --- Custom Sort button ---
+      const sortContainer = document.createElement('div');
+      sortContainer.className = 'stars-custom-filter mb-1 mb-lg-0 ml-2';
+
+      const sortOptions = [
+        { key: 'stars', label: 'Most stars' },
+        { key: 'updated', label: 'Recently active' }
+      ];
+      const sortBtnLabel = 'Sort by: ' + (sortOptions.find(o => o.key === activeFilterSort) || sortOptions[0]).label;
+      const sortBtnEl = document.createElement('button');
+      sortBtnEl.type = 'button';
+      sortBtnEl.id = 'stars-custom-sort-button';
+      sortBtnEl.setAttribute('popovertarget', 'stars-custom-sort-overlay');
+      sortBtnEl.setAttribute('aria-haspopup', 'true');
+      sortBtnEl.className = 'Button--secondary Button--medium Button';
+      sortBtnEl.innerHTML =
+        '<span class="Button-content"><span class="Button-label"></span></span>' +
+        '<span class="Button-visual Button-trailingAction">' +
+          '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" width="16" class="octicon octicon-triangle-down">' +
+            '<path d="m4.427 7.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 7H4.604a.25.25 0 0 0-.177.427Z"></path>' +
+          '</svg>' +
+        '</span>';
+      sortBtnEl.querySelector('.Button-label').textContent = sortBtnLabel;
+
+      const sortOverlay = document.createElement('anchored-position');
+      sortOverlay.id = 'stars-custom-sort-overlay';
+      sortOverlay.setAttribute('anchor', 'stars-custom-sort-button');
+      sortOverlay.setAttribute('align', 'start');
+      sortOverlay.setAttribute('side', 'outside-bottom');
+      sortOverlay.setAttribute('anchor-offset', 'normal');
+      sortOverlay.setAttribute('popover', 'auto');
+
+      const sortInner = document.createElement('div');
+      sortInner.className = 'Overlay Overlay--size-auto';
+      const sortBody = document.createElement('div');
+      sortBody.className = 'Overlay-body Overlay-body--paddingNone';
+      const sortList = document.createElement('ul');
+      sortList.className = 'ActionListWrap--inset ActionListWrap';
+      sortList.setAttribute('role', 'menu');
+
+      sortOptions.forEach((opt) => {
+        const li = document.createElement('li');
+        li.className = 'ActionListItem';
+        li.setAttribute('role', 'none');
+        const content = document.createElement('a');
+        content.className = 'ActionListContent';
+        content.setAttribute('role', 'menuitemradio');
+        content.setAttribute('aria-checked', String(activeFilterSort === opt.key));
+        const label = document.createElement('span');
+        label.className = 'ActionListItem-label';
+        label.textContent = opt.label;
+        content.appendChild(label);
+        content.addEventListener('click', (e) => {
+          e.preventDefault();
+          activeFilterSort = opt.key;
+          sortOverlay.hidePopover();
+          applyTagFilter();
+          renderTagFilterBar();
+          refreshTagPillStates();
+        });
+        li.appendChild(content);
+        sortList.appendChild(li);
+      });
+
+      sortBody.appendChild(sortList);
+      sortInner.appendChild(sortBody);
+      sortOverlay.appendChild(sortInner);
+      sortContainer.appendChild(sortBtnEl);
+      sortContainer.appendChild(sortOverlay);
+
+      // Insert custom buttons into filter row after Tags
+      if (insertAfter && insertAfter.nextSibling) {
+        filterRow.insertBefore(langContainer, insertAfter.nextSibling);
+        filterRow.insertBefore(sortContainer, langContainer.nextSibling);
+      } else {
+        filterRow.appendChild(langContainer);
+        filterRow.appendChild(sortContainer);
+      }
+    } else {
+      // Restore native action-menus
+      if (typeMenu) typeMenu.style.display = '';
+      if (langMenu) langMenu.style.display = '';
+      if (sortMenu) sortMenu.style.display = '';
+
+      // Remove custom filter buttons
+      document.querySelectorAll('.stars-custom-filter').forEach(el => el.remove());
     }
   }
 
@@ -1610,6 +1930,9 @@
   migrateTagsIfNeeded();
   cleanupExpiredUnstarred();
   let activeFilterTags = [];
+  let activeFilterLang = '';      // '' = all languages
+  let activeFilterSort = 'stars'; // 'updated' | 'stars'
+  let tagModeActive = false;      // tracks whether we're currently in tags mode
 
   // 执行转换 + MutationObserver + Turbo 事件
   if (!transformStarsList()) {
@@ -1632,5 +1955,14 @@
     if (window.location.search.includes('tab=stars')) {
       setTimeout(transformStarsList, 200);
     }
+  });
+
+  // Fix GitHub native "Clear filter" — force full navigation to clean ?tab=stars
+  document.addEventListener('click', (e) => {
+    const link = e.target.closest('a.issues-reset-query');
+    if (!link) return;
+    e.preventDefault();
+    const baseUrl = new URL(location.href);
+    location.href = baseUrl.pathname + '?tab=stars';
   });
 })();
