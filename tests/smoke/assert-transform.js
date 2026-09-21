@@ -11,6 +11,20 @@
     out.rightSidebarTopics = text(document.querySelector('.stars-right-sidebar'));
     out.rightSidebarInsideLayout = !!document.querySelector('.Layout--sidebarPosition-start > .stars-right-sidebar');
     out.tagFilterBtn = !!document.getElementById('stars-tag-filter-button');
+    // Lists 区块必须整行隐藏（标题行带 d-flex，内联 display:none 会被 !important 压过）
+    const listsHeading = Array.from(document.querySelectorAll('#user-profile-frame h2.f3-light'))
+      .find((h) => (h.textContent || '').includes('Lists'));
+    const listsRow = listsHeading ? listsHeading.parentElement : null;
+    const listsContainer = document.getElementById('profile-lists-container');
+    out.listsRow = listsRow ? {
+      computedDisplay: getComputedStyle(listsRow).display,
+      height: Math.round(listsRow.getBoundingClientRect().height),
+      marked: listsRow.classList.contains('stars-lists-hidden')
+    } : null;
+    out.listsContainer = listsContainer ? {
+      computedDisplay: getComputedStyle(listsContainer).display,
+      height: Math.round(listsContainer.getBoundingClientRect().height)
+    } : null;
     out.tagFilterOptions = document.querySelectorAll('#stars-tag-filter-list .ActionListItem').length;
     out.tagPills = document.querySelectorAll('.stars-card-tags .stars-tag').length;
     out.notesPlaceholders = document.querySelectorAll('.stars-card-notes-placeholder').length;

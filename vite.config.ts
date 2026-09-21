@@ -15,7 +15,7 @@ export default defineConfig({
         author: 'YsLtr',
         match: ['https://github.com/*tab=stars*', 'https://github.com/*/*'],
         'run-at': 'document-idle',
-        // @grant 由插件根据代码里实际用到的 GM API 自动收集
+        'run-at': 'document-start',
       },
       build: {
         fileName: 'github-stars-grid.user.js',

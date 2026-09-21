@@ -31,6 +31,10 @@
     'relative-time',
     // 分组标题 / 列表开关
     'h2.f3-light',
+    // Lists 区块（2026 版标题行是 tmp-my-3，两代类名都统计）
+    'turbo-frame#user-profile-frame > div > .my-3.d-flex.flex-justify-between.flex-items-center:has(h2.f3-light)',
+    'turbo-frame#user-profile-frame > div > .tmp-my-3.d-flex.flex-justify-between.flex-items-center:has(h2.f3-light)',
+    '#profile-lists-container',
     '[data-toggle-for*="details-user-list-"]',
     '.paginate-container',
     // 原生筛选控件
@@ -47,6 +51,7 @@
     '.stars-tag-filter',
     '.stars-tag-info-bar',
     '.stars-original-hidden',
+    '.stars-lists-hidden',
   ];
   for (const s of sel) out.counts[s] = q(s);
 

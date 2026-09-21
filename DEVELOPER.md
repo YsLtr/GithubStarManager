@@ -272,6 +272,7 @@ filterState.nativeSearchFetching // 防重复 fetch
 - 断点常量（`MOBILE_BREAKPOINT = 768`、`WIDE_BREAKPOINT = 1200`）在 `constants.ts` 里，**CSS 中的 `@media` 数字是手写同步的**，改断点要同时改两处。
 - 样式必须只在 Stars 页注入：这些规则会改写 GitHub 的 `.Layout` 结构（例如把侧边栏压到 180px），在仓库详情页注入会误伤页面布局。
 - `vite.config.ts` 里显式设置了 `build.cssTarget`。esbuild 默认会按现代 baseline 把 `@media (min-width: 768px)` 压成区间语法 `(width>=768px)`（Safari 16.4+ 才支持），降低 css target 可以保留 `min-width`。
+- **隐藏 GitHub 原生区块的两个坑**（2026 改版踩过）：① GitHub 工具类带 `!important`（如 `.d-flex { display: flex !important }`），JS 里 `el.style.display = 'none'` 会被压过，必须 `el.style.setProperty('display', 'none', 'important')`；② 间距工具类加了 `tmp-` 前缀（`my-3` → `tmp-my-3`），纯类名选择器会静默失配。现成做法见 `dom.ts` 的 `hideListsSection()`：用语义特征（`h2.f3-light` + 文案）定位，打 `.stars-lists-hidden` 标记类，隐藏规则写在 `base.css` 第 4 节。
 
 ## 10. 约束
 

@@ -112,6 +112,41 @@ export function getNativeFilterBar(container: ParentNode): HTMLElement | null {
 }
 
 /* ================================================================
+ * Stars 页：隐藏与卡片网格无关的原生区块
+ * ================================================================ */
+
+/** 打上这个类就会被隐藏（对应 styles/base.css 第 4 节） */
+export const LISTS_HIDDEN_CLASS = 'stars-lists-hidden';
+
+/**
+ * 隐藏 Stars 页的 Lists 区块（标题行 + 内容区）。
+ *
+ * 两个坑：
+ * 1. 标题行容器类名已从 `my-3` 变成 `tmp-my-3`（2026 改版给间距工具类加了 `tmp-` 前缀），
+ *    所以定位用「h2.f3-light + 文案含 Lists」这个语义特征，不依赖工具类名；
+ * 2. 标题行带 `d-flex`，GitHub 的 `.d-flex { display: flex !important }` 会压过内联
+ *    `display:none` —— 内联样式必须带 important，否则设了等于没设（真机验证过）。
+ *
+ * 幂等，可重复调用（turbo-frame 重渲染后需要再调一次）。
+ */
+export function hideListsSection(): void {
+  const frame = document.getElementById('user-profile-frame');
+  const wrapper = frame ? frame.firstElementChild : null;
+  if (!wrapper) return;
+
+  Array.from(wrapper.children).forEach((child) => {
+    if (!(child instanceof HTMLElement)) return;
+
+    const heading = child.querySelector('h2.f3-light');
+    const isListsRow = !!heading && (heading.textContent || '').includes('Lists');
+    if (!isListsRow && child.id !== 'profile-lists-container') return;
+
+    child.classList.add(LISTS_HIDDEN_CLASS);
+    child.style.setProperty('display', 'none', 'important');
+  });
+}
+
+/* ================================================================
  * 仓库详情页：新版是 React 应用，数据在内嵌 JSON 里
  *
  * 侧栏类名形如 `SidebarAbout-module__socialStat__nnJPx`，哈希后缀每次部署

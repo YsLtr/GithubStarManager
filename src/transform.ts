@@ -1,4 +1,4 @@
-import { getRepoIdFromItem, getRepoItems, getStarsMainColumn } from './dom';
+import { getRepoIdFromItem, getRepoItems, getStarsMainColumn, hideListsSection } from './dom';
 import { extractAndCacheRepoFromCard } from './extract';
 import { applyFilters } from './filters';
 import { interceptSearchForm } from './search';
@@ -14,6 +14,10 @@ import { isDesktop } from './utils';
 export function transformStarsList(): boolean {
   if (!isDesktop()) return false;
 
+  // Lists 区块（标题行 + 内容）与卡片网格无关，尽早隐藏；
+  // 放在所有 early return 之前，turbo-frame 重渲染后再进来一次也不会漏。
+  hideListsSection();
+
   const turboFrame = document.getElementById('user-starred-repos');
   if (!turboFrame) return false;
 
@@ -26,23 +30,6 @@ export function transformStarsList(): boolean {
   }
 
   if (colLg9.querySelector('.stars-grid-container')) return true;
-
-  // 隐藏 Lists 区域（JS 兜底）
-  const profileFrame = document.getElementById('user-profile-frame');
-  if (profileFrame) {
-    const wrapperDiv = profileFrame.firstElementChild;
-    if (wrapperDiv) {
-      Array.from(wrapperDiv.children).forEach((child) => {
-        const h2 = child.querySelector('h2.f3-light');
-        if (h2 && (h2.textContent || '').includes('Lists')) {
-          (child as HTMLElement).style.display = 'none';
-        }
-        if (child.id === 'profile-lists-container') {
-          (child as HTMLElement).style.display = 'none';
-        }
-      });
-    }
-  }
 
   const gridContainer = document.createElement('div');
   gridContainer.className = 'stars-grid-container';

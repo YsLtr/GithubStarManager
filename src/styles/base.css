@@ -96,8 +96,16 @@
     padding-right: 0 !important;
   }
   /* ===== 4. 隐藏 Lists 区域 ===== */
-  turbo-frame#user-profile-frame > div > .my-3.d-flex.flex-justify-between.flex-items-center:has(h2.f3-light),
+  /* 主路径：JS 打标记类（transform.ts 的 hideListsSection）。
+     标题行带 `d-flex`，GitHub 的 `.d-flex{display:flex!important}` 会压过内联
+     display:none，所以 JS 那边用 setProperty(..., 'important')，这里也用 !important。 */
+  .stars-lists-hidden,
   turbo-frame#user-profile-frame > div > #profile-lists-container {
+    display: none !important;
+  }
+  /* CSS-only 兜底：脚本执行前的一瞬，容忍 my-3 / tmp-my-3 两代类名 */
+  turbo-frame#user-profile-frame > div > .my-3.d-flex.flex-justify-between.flex-items-center:has(h2.f3-light),
+  turbo-frame#user-profile-frame > div > .tmp-my-3.d-flex.flex-justify-between.flex-items-center:has(h2.f3-light) {
     display: none !important;
   }
 

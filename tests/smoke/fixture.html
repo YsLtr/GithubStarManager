@@ -33,6 +33,11 @@
     (window.__errors = window.__errors || []).push('onerror: ' + e.message);
   });
 </script>
+<!-- 复现 GitHub 的陷阱：`.d-flex` 带 !important，会压过内联 display:none -->
+<style>
+  .d-flex { display: flex !important; }
+  .f3-light { font-size: 18px; font-weight: 600; }
+</style>
 </head>
 <body>
 <!--
@@ -45,6 +50,15 @@
 <div class="Layout Layout--sidebarPosition-start">
   <div class="Layout-sidebar"><span class="p-nickname">smoke-user</span></div>
   <main class="Layout-main">
+    <turbo-frame id="user-profile-frame">
+      <div>
+        <!-- Lists 标题行：类名是 tmp-my-3（2026 版），且带 d-flex（!important 陷阱） -->
+        <div class="tmp-my-3 d-flex flex-justify-between flex-items-center">
+          <h2 class="f3-light">Lists (5)</h2>
+        </div>
+        <div id="profile-lists-container">
+          <a href="/smoke-user?tab=lists">awesome (3)</a>
+        </div>
     <div class="d-flex flex-column flex-lg-row flex-items-center tmp-mt-5">
       <form class="subnav-search ml-0 mb-1" action="/smoke-user?tab=stars">
         <input id="q" placeholder="Search starred repositories" value="">
@@ -148,6 +162,8 @@
           <h2 class="f3-light"><a href="/topics">Starred topics</a></h2>
           <article class="tmp-my-3"><h1 class="f4 text-normal">ai</h1></article>
         </div>
+      </div>
+    </turbo-frame>
       </div>
     </turbo-frame>
   </main>

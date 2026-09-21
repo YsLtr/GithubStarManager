@@ -1,7 +1,8 @@
 import { GM_addStyle } from '$';
 import baseCss from './styles/base.css?inline';
 import wideCss from './styles/wide.css?inline';
-import { getRepoIdMeta, getStarButton, isStarButtonActive } from './dom';
+import { installBootHide, isStarsPage, revealBootHide } from './boot';
+import { getRepoIdMeta, getStarButton, hideListsSection, isStarButtonActive } from './dom';
 import { extractAndCacheRepoFromDetailPage } from './extract';
 import { filterState } from './state';
 import { cleanupExpiredUnstarred, markRepoStarred, markRepoUnstarred } from './storage/pendingDelete';
@@ -62,10 +63,8 @@ function watchRepoStarState(repoId: string): void {
 
 function init(): void {
   // 页面类型检测
-  const isStarsPage = /[?&]tab=stars/.test(location.search);
   const repoIdMeta = getRepoIdMeta();
-  const isRepoDetailPage = !isStarsPage && !!repoIdMeta;
-
+  const isRepoDetailPage = !isStarsPage() && !!repoIdMeta;
   // 仓库详情页：缓存数据 + 监听 unstar + 提前返回
   if (isRepoDetailPage) {
     cleanupExpiredUnstarred();
@@ -74,27 +73,43 @@ function init(): void {
     return;
   }
 
-  if (!isStarsPage) return;
-
+  if (!isStarsPage()) return;
   // Stars 页面初始化
   injectStyles();
   migrateTagsIfNeeded();
   cleanupExpiredUnstarred();
 
   // 执行转换 + MutationObserver + Turbo 事件
-  if (!transformStarsList()) {
+  // document-start 防闪烁：转换成功才解除页面隐藏
+  let transformed = false;
+  try {
+    transformed = transformStarsList();
+  } catch (err) {
+    console.error('[github-stars-grid] transformStarsList 执行失败', err);
+  }
+  if (transformed) {
+    revealBootHide();
+  } else {
     const observer = new MutationObserver((_mutations, obs) => {
       if (transformStarsList()) {
         obs.disconnect();
+        revealBootHide();
       }
     });
     observer.observe(document.body, { childList: true, subtree: true });
-    setTimeout(() => observer.disconnect(), 10000);
+    setTimeout(() => {
+      observer.disconnect();
+      revealBootHide();
+    }, 10000);
   }
 
   document.addEventListener('turbo:frame-render', (event) => {
-    if ((event.target as Element).id === 'user-starred-repos') {
+    const frameId = (event.target as Element).id;
+    if (frameId === 'user-starred-repos') {
       setTimeout(transformStarsList, 100);
+    } else if (frameId === 'user-profile-frame') {
+      // 资料栏（含 Lists 区块）异步渲染完成后再补一刀
+      setTimeout(hideListsSection, 100);
     }
   });
 
@@ -121,4 +136,22 @@ function init(): void {
   });
 }
 
-init();
+/** document-start 时 DOM 尚未解析，等 DOM 就绪后再跑主逻辑 */
+function whenReady(fn: () => void): void {
+  if (document.readyState !== 'loading') {
+    fn();
+    return;
+  }
+  document.addEventListener('DOMContentLoaded', fn, { once: true });
+}
+
+// document-start 启动顺序：先同步藏页面（防闪烁），DOM 就绪后再跑主逻辑
+installBootHide();
+whenReady(() => {
+  try {
+    init();
+  } catch (err) {
+    console.error('[github-stars-grid] init 失败，解除防闪烁隐藏', err);
+    revealBootHide();
+  }
+});
