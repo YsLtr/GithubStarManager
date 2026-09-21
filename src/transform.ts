@@ -1,0 +1,165 @@
+import { extractAndCacheRepoFromCard } from './extract';
+import { applyFilters } from './filters';
+import { interceptSearchForm } from './search';
+import { createStarButton } from './ui/cards';
+import { renderNotes } from './ui/notes';
+import { renderTagFilterBar, renderTags } from './ui/tagFilter';
+import { isDesktop } from './utils';
+
+/**
+ * 把 Stars 列表页转换成卡片网格。
+ * @returns 是否已完成转换（或已经转换过）
+ */
+export function transformStarsList(): boolean {
+  if (!isDesktop()) return false;
+
+  const turboFrame = document.getElementById('user-starred-repos');
+  if (!turboFrame) return false;
+
+  const colLg9 = turboFrame.querySelector('.col-lg-9');
+  if (!colLg9) return false;
+
+  const repoItems = colLg9.querySelectorAll('.col-12.d-block.width-full.py-4.border-bottom:not(.stars-original-hidden)');
+  if (repoItems.length === 0) {
+    return !!colLg9.querySelector('.stars-grid-container');
+  }
+
+  if (colLg9.querySelector('.stars-grid-container')) return true;
+
+  // 隐藏 Lists 区域（JS 兜底）
+  const profileFrame = document.getElementById('user-profile-frame');
+  if (profileFrame) {
+    const wrapperDiv = profileFrame.firstElementChild;
+    if (wrapperDiv) {
+      Array.from(wrapperDiv.children).forEach((child) => {
+        const h2 = child.querySelector('h2.f3-light');
+        if (h2 && (h2.textContent || '').includes('Lists')) {
+          (child as HTMLElement).style.display = 'none';
+        }
+        if (child.id === 'profile-lists-container') {
+          (child as HTMLElement).style.display = 'none';
+        }
+      });
+    }
+  }
+
+  const gridContainer = document.createElement('div');
+  gridContainer.className = 'stars-grid-container';
+
+  repoItems.forEach((item) => {
+    const card = document.createElement('div');
+    card.className = 'stars-grid-card';
+
+    // 提取 repoId
+    const toggleEl = item.querySelector('[data-toggle-for*="details-user-list-"]');
+    let repoId = '';
+    if (toggleEl) {
+      const match = (toggleEl.getAttribute('data-toggle-for') || '').match(/details-user-list-(\d+)/);
+      if (match) repoId = match[1];
+    }
+    if (repoId) card.dataset.repoId = repoId;
+
+    // 提取 repoName（href）
+    const h3 = item.querySelector('h3');
+    if (h3) {
+      const repoLink = h3.querySelector('a');
+      if (repoLink) card.dataset.repoName = repoLink.getAttribute('href') || '';
+    }
+
+    const descP = item.querySelector('p[itemprop="description"]');
+    const metaDiv = item.querySelector('div.f6.color-fg-muted');
+
+    let cardHTML = '<div class="stars-card-header">';
+    if (h3) cardHTML += `<h3>${h3.innerHTML}</h3>`;
+    cardHTML += '</div>';
+
+    if (descP) {
+      cardHTML += `<p class="stars-card-desc">${(descP.textContent || '').trim()}</p>`;
+    } else {
+      cardHTML += '<p class="stars-card-desc" style="opacity:0.5;font-style:italic;">No description</p>';
+    }
+
+    // 标签容器
+    cardHTML += `<div class="stars-card-tags" data-repo-id="${repoId}"></div>`;
+
+    if (metaDiv) {
+      const langSpan = metaDiv.querySelector('span.ml-0, span:has(.repo-language-color)');
+      const starLink = metaDiv.querySelector('a[href*="/stargazers"]');
+      const forkLink = metaDiv.querySelector('a[href*="/forks"]');
+
+      let mainParts = '';
+      if (langSpan) mainParts += langSpan.outerHTML;
+      if (starLink) mainParts += starLink.outerHTML;
+      if (forkLink) mainParts += forkLink.outerHTML;
+
+      let updatedHTML = '';
+      const allNodes = Array.from(metaDiv.childNodes);
+      let foundUpdated = false;
+      for (const node of allNodes) {
+        if (node.nodeType === Node.TEXT_NODE && (node.textContent || '').includes('Updated')) {
+          foundUpdated = true;
+        }
+        if (foundUpdated) {
+          updatedHTML += node.nodeType === Node.TEXT_NODE ? node.textContent : (node as Element).outerHTML;
+        }
+      }
+
+      cardHTML += '<div class="stars-card-meta">';
+      if (mainParts) cardHTML += `<span class="stars-meta-main">${mainParts}</span>`;
+      if (updatedHTML.trim()) cardHTML += `<span class="stars-meta-updated">${updatedHTML.trim()}</span>`;
+      cardHTML += '</div>';
+    }
+
+    cardHTML += `<div class="stars-card-notes" data-repo-id="${repoId}"></div>`;
+
+    card.innerHTML = cardHTML;
+    gridContainer.appendChild(card);
+    item.classList.add('stars-original-hidden');
+
+    // 缓存仓库数据
+    extractAndCacheRepoFromCard(item, repoId);
+
+    // 星星按钮
+    createStarButton(card, item);
+
+    // 渲染标签
+    const tagsContainer = card.querySelector<HTMLElement>('.stars-card-tags');
+    if (tagsContainer) renderTags(tagsContainer);
+
+    // 渲染备注
+    const notesContainer = card.querySelector<HTMLElement>('.stars-card-notes');
+    if (notesContainer) renderNotes(notesContainer);
+  });
+
+  // 分页器
+  const paginator = colLg9.querySelector('.paginate-container:not(.stars-original-hidden)');
+  if (paginator) {
+    gridContainer.appendChild(paginator.cloneNode(true));
+    paginator.classList.add('stars-original-hidden');
+  }
+
+  colLg9.appendChild(gridContainer);
+
+  // 将 Starred topics 移到右侧边栏
+  const colLg3 = turboFrame.querySelector('.col-lg-3');
+  const layoutEl = document.querySelector('.Layout.Layout--sidebarPosition-start');
+  if (colLg3 && layoutEl) {
+    let rightSidebar = layoutEl.querySelector('.stars-right-sidebar');
+    if (!rightSidebar) {
+      rightSidebar = document.createElement('div');
+      rightSidebar.className = 'stars-right-sidebar';
+      layoutEl.appendChild(rightSidebar);
+    }
+    rightSidebar.innerHTML = '';
+    while (colLg3.firstChild) {
+      rightSidebar.appendChild(colLg3.firstChild);
+    }
+  }
+
+  // 渲染筛选栏并应用筛选
+  renderTagFilterBar();
+  interceptSearchForm();
+  applyFilters();
+
+  return true;
+}

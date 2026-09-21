@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>stars grid smoke fixture</title>
+<meta name="octolytics-dimension-user_id" content="999">
+<meta name="octolytics-dimension-user_login" content="smoke-user">
+<!-- GM API stubs（在待测脚本之前注入） -->
+<script>
+  window.__gmStore = {
+    stars_repo_cache: {},
+    stars_pending_delete: {},
+    'stars_tags_999': { '123': ['ai', 'tool'] },
+    'stars_notes_999': { '123': '这是备注' }
+  };
+  window.__gmLog = [];
+  window.GM_getValue = function (key, def) {
+    window.__gmLog.push('getValue:' + key);
+    return key in window.__gmStore ? window.__gmStore[key] : def;
+  };
+  window.GM_setValue = function (key, value) {
+    window.__gmLog.push('setValue:' + key);
+    window.__gmStore[key] = value;
+  };
+  window.GM_addStyle = function (css) {
+    window.__gmLog.push('addStyle:' + css.length);
+    const el = document.createElement('style');
+    el.textContent = css;
+    document.head.appendChild(el);
+    return el;
+  };
+  window.addEventListener('error', (e) => {
+    (window.__errors = window.__errors || []).push('onerror: ' + e.message);
+  });
+</script>
+</head>
+<body>
+<div class="Layout Layout--sidebarPosition-start">
+  <div class="Layout-sidebar"><span class="p-nickname">smoke-user</span></div>
+  <main class="Layout-main">
+    <div class="d-flex flex-column flex-lg-row flex-items-center mt-5">
+      <div class="d-flex flex-justify-end">
+        <button id="stars-type-filter-menu-button">All</button>
+        <action-menu><button id="stars-language-filter-menu-button">Language: All</button></action-menu>
+        <action-menu><button id="stars-sort-menu-button">Sort by: Recently starred</button></action-menu>
+      </div>
+    </div>
+    <form><input placeholder="Search starred repositories" value=""></form>
+    <turbo-frame id="user-starred-repos">
+      <div class="col-lg-9">
+        <div class="col-12 d-block width-full py-4 border-bottom">
+          <div class="js-toggler-container starring-container">
+            <div class="starred"><form action="/alpha/one/unstar"></form></div>
+            <div class="unstarred" style="display:none"><form action="/alpha/one/star"></form></div>
+          </div>
+          <h3><a href="/alpha/one"><span class="text-normal">alpha / </span>one</a></h3>
+          <p itemprop="description">第一个仓库的描述</p>
+          <div class="f6 color-fg-muted">
+            <span class="ml-0 mr-3"><span class="repo-language-color" style="background-color: #3178c6;"></span><span itemprop="programmingLanguage">TypeScript</span></span>
+            <a href="/alpha/one/stargazers">29,208</a>
+            <a href="/alpha/one/forks">1,024</a>
+            Updated <relative-time datetime="2026-09-01T00:00:00Z">3 days ago</relative-time>
+          </div>
+          <span data-toggle-for="details-user-list-123"></span>
+        </div>
+        <div class="col-12 d-block width-full py-4 border-bottom">
+          <div class="js-toggler-container starring-container">
+            <div class="starred"><form action="/beta/two/unstar"></form></div>
+            <div class="unstarred" style="display:none"><form action="/beta/two/star"></form></div>
+          </div>
+          <h3><a href="/beta/two"><span class="text-normal">beta / </span>two</a></h3>
+          <p itemprop="description">第二个仓库的 Rust 工具</p>
+          <div class="f6 color-fg-muted">
+            <span class="ml-0 mr-3"><span class="repo-language-color" style="background-color: #dea584;"></span><span itemprop="programmingLanguage">Rust</span></span>
+            <a href="/beta/two/stargazers">512</a>
+            <a href="/beta/two/forks">12</a>
+            Updated <relative-time datetime="2026-08-20T00:00:00Z">2 weeks ago</relative-time>
+          </div>
+          <span data-toggle-for="details-user-list-456"></span>
+        </div>
+        <div class="paginate-container"><a href="?page=2">2</a></div>
+      </div>
+      <div class="col-lg-3"><h2>Starred topics</h2><article><h1>ai</h1></article></div>
+    </turbo-frame>
+  </main>
+</div>
+
+<!-- 待测脚本（构建产物） -->
+<script src="../../dist/github-stars-grid.user.js"></script>
+</body>
+</html>

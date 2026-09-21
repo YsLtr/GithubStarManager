@@ -1,0 +1,446 @@
+/* 桌面端基础布局（对应 MOBILE_BREAKPOINT = 768px，见 src/constants.ts） */
+@media (min-width: 768px) {
+
+  /* ===== 1. 页面容器加宽 ===== */
+  .container-xl {
+    max-width: 1600px !important;
+  }
+
+  /* ===== 2. 缩小左侧个人资料侧边栏 ===== */
+  .Layout.Layout--sidebarPosition-start {
+    --Layout-sidebar-width: 180px !important;
+  }
+  .Layout-sidebar {
+    width: 180px !important;
+    min-width: 180px !important;
+  }
+
+  /* 缩小头像 */
+  .Layout-sidebar .avatar-user,
+  .Layout-sidebar a[href*="avatars"] img {
+    width: 120px !important;
+    height: 120px !important;
+  }
+  .Layout-sidebar a[href*="avatars"] {
+    width: 120px !important;
+    height: 120px !important;
+    display: block !important;
+  }
+
+  /* 缩小用户名字体 */
+  .Layout-sidebar .vcard-names .p-name,
+  .Layout-sidebar .vcard-names .p-nickname,
+  .Layout-sidebar h1.vcard-names {
+    font-size: 16px !important;
+  }
+  .Layout-sidebar .p-nickname {
+    font-size: 14px !important;
+  }
+
+  /* 确保侧边栏各区域正常显示 */
+  .Layout-sidebar .border-top.pt-3.mt-3.clearfix.hide-sm.hide-md {
+    display: block !important;
+  }
+
+  /* 头像状态 emoji 移至头像右下角，防止被裁切 */
+  .Layout-sidebar .js-profile-editable-replace {
+    overflow: visible !important;
+  }
+  .Layout-sidebar .user-status-container.position-relative {
+    position: static !important;
+  }
+  .Layout-sidebar .user-status-circle-badge-container {
+    position: absolute !important;
+    top: 86px !important;
+    left: 86px !important;
+    right: auto !important;
+    bottom: auto !important;
+    margin: 0 !important;
+    z-index: 100 !important;
+  }
+
+  /* 侧边栏内容自适应窄宽度 */
+  .Layout-sidebar .h-card {
+    overflow: hidden !important;
+    word-wrap: break-word !important;
+  }
+  .Layout-sidebar .js-profile-editable-replace {
+    word-wrap: break-word !important;
+  }
+
+  /* 紧凑按钮与文字 */
+  .Layout-sidebar .btn {
+    padding: 3px 10px !important;
+    font-size: 12px !important;
+  }
+  .Layout-sidebar .flex-order-2 {
+    font-size: 13px !important;
+  }
+
+  /* ===== 3. 扩大主内容区域 ===== */
+  .Layout-main {
+    flex: 1 1 0% !important;
+    max-width: 100% !important;
+  }
+
+  /* 移除内部 3/9 分栏，col-lg-9 占满 */
+  turbo-frame#user-starred-repos .d-lg-flex.gutter-lg {
+    display: block !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+  turbo-frame#user-starred-repos .col-lg-9 {
+    width: 100% !important;
+    max-width: 100% !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+  /* ===== 4. 隐藏 Lists 区域 ===== */
+  turbo-frame#user-profile-frame > div > .my-3.d-flex.flex-justify-between.flex-items-center:has(h2.f3-light),
+  turbo-frame#user-profile-frame > div > #profile-lists-container {
+    display: none !important;
+  }
+
+  /* ===== 5. 网格容器 — 自适应列数 ===== */
+  .stars-grid-container {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)) !important;
+    gap: 16px !important;
+    padding: 16px 0 !important;
+  }
+
+  /* ===== 6. 卡片样式 ===== */
+  .stars-grid-card {
+    border: 1px solid var(--borderColor-default, #d1d9e0) !important;
+    border-radius: 6px !important;
+    padding: 16px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    background: var(--bgColor-default, #ffffff) !important;
+    box-sizing: border-box !important;
+    min-width: 0 !important;
+  }
+  .stars-grid-card:hover {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  }
+
+  /* 卡片标题 */
+  .stars-grid-card .stars-card-header h3 {
+    font-size: 14px !important;
+    margin: 0 !important;
+    font-weight: 600 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    min-width: 0 !important;
+  }
+  .stars-grid-card .stars-card-header h3 a {
+    color: var(--fgColor-accent, #0969da) !important;
+  }
+
+  /* 卡片描述 */
+  .stars-grid-card .stars-card-desc {
+    font-size: 12px !important;
+    line-height: 1.5 !important;
+    color: var(--fgColor-muted, #656d76) !important;
+    display: -webkit-box !important;
+    -webkit-line-clamp: 3 !important;
+    -webkit-box-orient: vertical !important;
+    overflow: hidden !important;
+    margin: 0 0 12px 0 !important;
+    min-width: 0 !important;
+  }
+
+  /* 卡片底部元信息 — 允许 Updated 时间换行 */
+  .stars-grid-card .stars-card-meta {
+    font-size: 12px !important;
+    color: var(--fgColor-muted, #656d76) !important;
+    display: flex !important;
+    align-items: center !important;
+    flex-wrap: wrap !important;
+    gap: 4px 12px !important;
+    margin-top: auto !important;
+    min-width: 0 !important;
+  }
+  /* 语言 + star + fork 强制同一行 */
+  .stars-grid-card .stars-card-meta .stars-meta-main {
+    display: flex !important;
+    align-items: center !important;
+    flex-wrap: nowrap !important;
+    gap: 12px !important;
+    white-space: nowrap !important;
+  }
+  /* Updated 时间强制同一行 */
+  .stars-grid-card .stars-card-meta .stars-meta-updated {
+    white-space: nowrap !important;
+  }
+  .stars-grid-card .stars-card-meta a {
+    color: var(--fgColor-muted, #656d76) !important;
+    text-decoration: none !important;
+  }
+  .stars-grid-card .stars-card-meta a:hover {
+    color: var(--fgColor-accent, #0969da) !important;
+  }
+  .stars-grid-card .stars-card-meta .repo-language-color {
+    position: relative !important;
+    top: 1px !important;
+    display: inline-block !important;
+    width: 12px !important;
+    height: 12px !important;
+    border-radius: 50% !important;
+  }
+
+  /* 标签容器 — 位于描述和元信息之间 */
+  .stars-card-tags {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 8px 0;
+    min-height: 22px;
+  }
+
+  /* 单个标签 pill */
+  .stars-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    line-height: 1.4;
+    background: var(--bgColor-accent-muted, #ddf4ff);
+    color: var(--fgColor-accent, #0969da);
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  /* 标签删除按钮 — 悬浮标签时显示 */
+  .stars-tag .stars-tag-del {
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    width: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: width 0.15s, opacity 0.15s, margin 0.15s;
+  }
+  .stars-tag:hover .stars-tag-del {
+    width: 12px;
+    margin-left: 2px;
+    opacity: 0.6;
+  }
+  .stars-tag .stars-tag-del:hover {
+    opacity: 1;
+  }
+
+  /* 添加标签按钮 — 悬浮卡片时显示 */
+  .stars-tag-add {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1px dashed var(--borderColor-default, #d1d9e0);
+    color: var(--fgColor-muted, #656d76);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s;
+    background: transparent;
+  }
+  .stars-tag-add::before,
+  .stars-tag-add::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: currentColor;
+    border-radius: 1px;
+  }
+  .stars-tag-add::before {
+    width: 10px;
+    height: 1.5px;
+  }
+  .stars-tag-add::after {
+    width: 1.5px;
+    height: 10px;
+  }
+  .stars-grid-card:hover .stars-tag-add {
+    opacity: 1;
+  }
+  .stars-tag-add:hover {
+    background: var(--bgColor-accent-muted, #ddf4ff);
+    color: var(--fgColor-accent, #0969da);
+    border-color: var(--fgColor-accent, #0969da);
+  }
+
+  /* 内联标签输入框 */
+  .stars-tag-input {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 8px;
+    border-radius: 12px;
+    border: 1px solid var(--fgColor-accent, #0969da);
+    background: var(--bgColor-default, #ffffff);
+    color: var(--fgColor-default, #1f2328);
+    font-size: 12px;
+    line-height: 1.4;
+    outline: none;
+    width: 80px;
+    box-sizing: border-box;
+  }
+  .stars-tag-input::placeholder {
+    color: var(--fgColor-muted, #656d76);
+    opacity: 0.7;
+  }
+
+  /* 备注区域 — 位于元信息下方，虚线分隔 */
+  .stars-card-notes {
+    border-top: 1px dashed var(--borderColor-default, #d1d9e0);
+    margin-top: 10px;
+    padding-top: 8px;
+    min-height: 20px;
+    cursor: text;
+  }
+  .stars-card-notes-text {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--fgColor-muted, #656d76);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 60px;
+    overflow-y: auto;
+  }
+  .stars-card-notes-placeholder {
+    font-size: 12px;
+    color: var(--fgColor-muted, #656d76);
+    opacity: 0;
+    font-style: italic;
+    transition: opacity 0.15s;
+  }
+  .stars-grid-card:hover .stars-card-notes-placeholder {
+    opacity: 0.5;
+  }
+  .stars-card-notes-edit {
+    width: 100%;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--fgColor-default, #1f2328);
+    background: var(--bgColor-default, #ffffff);
+    border: 1px solid var(--fgColor-accent, #0969da);
+    border-radius: 4px;
+    padding: 4px 6px;
+    outline: none;
+    resize: vertical;
+    min-height: 40px;
+    max-height: 120px;
+    box-sizing: border-box;
+    font-family: inherit;
+  }
+
+  /* 分页器占满整行 */
+  .stars-grid-container .paginate-container {
+    grid-column: 1 / -1 !important;
+  }
+
+  /* 隐藏原始列表项 */
+  .stars-original-hidden {
+    display: none !important;
+  }
+
+  /* 标签筛选隐藏卡片 */
+  .stars-tag-filtered {
+    display: none !important;
+  }
+
+  /* ===== 筛选栏 Tags 按钮 ===== */
+  /* 有选中标签时按钮高亮 */
+  .stars-tag-filter .has-active {
+    border-color: var(--fgColor-accent, #0969da) !important;
+    color: var(--fgColor-accent, #0969da) !important;
+  }
+  /* 下拉列表滚动约束 */
+  .stars-tag-filter .ActionListWrap {
+    min-width: 200px;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  /* 卡片标签 pill 选中态 */
+  .stars-tag-active {
+    background: var(--fgColor-accent, #0969da) !important;
+    color: #ffffff !important;
+  }
+
+  /* ===== 自定义 Language / Sort 筛选按钮 ===== */
+  .stars-custom-filter .has-active {
+    border-color: var(--fgColor-accent, #0969da) !important;
+    color: var(--fgColor-accent, #0969da) !important;
+  }
+  .stars-custom-filter .ActionListWrap {
+    min-width: 180px;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  /* ===== 星星按钮 ===== */
+  .stars-card-header {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    margin-bottom: 8px !important;
+  }
+  .stars-card-header h3 {
+    flex: 1 !important;
+    min-width: 0 !important;
+  }
+  .stars-star-btn {
+    flex-shrink: 0;
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 2px;
+    line-height: 0;
+    opacity: 0;
+    transition: opacity 0.15s;
+    color: var(--fgColor-muted, #656d76);
+  }
+  .stars-grid-card:hover .stars-star-btn {
+    opacity: 1;
+  }
+  .stars-star-btn.starred {
+    color: #e3b341;
+  }
+  .stars-star-btn.unstarred {
+    opacity: 1;
+    color: var(--fgColor-muted, #656d76);
+  }
+  .stars-star-btn:hover {
+    opacity: 1 !important;
+  }
+
+  /* 隐藏原始 Starred topics 列（内容已被 JS 移走） */
+  turbo-frame#user-starred-repos .col-lg-3 {
+    display: none !important;
+  }
+
+  /* ===== 中等桌面屏幕：隐藏左右侧边栏，主内容全宽 ===== */
+  .Layout-sidebar {
+    display: none !important;
+  }
+  .stars-right-sidebar {
+    display: none !important;
+  }
+  .Layout.Layout--sidebarPosition-start {
+    grid-template-columns: 1fr !important;
+  }
+  .Layout-main {
+    grid-column: 1 !important;
+    max-width: none !important;
+  }
+
+} /* end @media */

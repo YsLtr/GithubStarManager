@@ -1,0 +1,33 @@
+/* 宽屏三栏布局（对应 WIDE_BREAKPOINT = 1200px，见 src/constants.ts） */
+@media (min-width: 1200px) {
+  .Layout-sidebar {
+    display: block !important;
+    grid-column: 1 !important;
+  }
+  .Layout.Layout--sidebarPosition-start {
+    grid-template-columns: 180px 1fr 220px !important;
+  }
+  .Layout-main {
+    grid-column: 2 !important;
+    max-width: none !important;
+  }
+  .stars-right-sidebar {
+    grid-column: 3 !important;
+    display: block !important;
+    width: 220px !important;
+    min-width: 220px !important;
+    padding-top: 32px !important;
+    overflow: hidden !important;
+    word-wrap: break-word !important;
+  }
+  .stars-right-sidebar h2 {
+    font-size: 16px !important;
+    margin-bottom: 12px !important;
+  }
+  .stars-right-sidebar article {
+    margin-bottom: 8px !important;
+  }
+  .stars-right-sidebar article h1 {
+    font-size: 14px !important;
+  }
+}

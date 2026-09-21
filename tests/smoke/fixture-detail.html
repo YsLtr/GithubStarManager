@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>repo detail smoke fixture</title>
+<meta name="octolytics-dimension-user_id" content="999">
+<meta name="octolytics-dimension-repository_id" content="123">
+<meta name="octolytics-dimension-repository_nwo" content="alpha/one">
+<script>
+  window.__gmStore = {
+    stars_repo_cache: {},
+    stars_pending_delete: {},
+    'stars_tags_999': { '123': ['ai', 'tool'] },
+    'stars_notes_999': { '123': '这是备注' }
+  };
+  window.GM_getValue = function (key, def) {
+    return key in window.__gmStore ? window.__gmStore[key] : def;
+  };
+  window.GM_setValue = function (key, value) { window.__gmStore[key] = value; };
+  window.GM_addStyle = function (css) {
+    const el = document.createElement('style');
+    el.textContent = css;
+    document.head.appendChild(el);
+    return el;
+  };
+  window.addEventListener('error', (e) => {
+    (window.__errors = window.__errors || []).push('onerror: ' + e.message);
+  });
+</script>
+</head>
+<body>
+<div class="js-toggler-container starring-container">
+  <div class="starred"><form action="/alpha/one/unstar"><input name="authenticity_token" value="tok"></form></div>
+  <div class="unstarred" style="display:none"><form action="/alpha/one/star"><input name="authenticity_token" value="tok"></form></div>
+</div>
+<div class="BorderGrid-cell">
+  <p>第一个仓库的描述</p>
+  <relative-time datetime="2026-09-01T00:00:00Z">3 days ago</relative-time>
+</div>
+<ul class="list-style-none"><li><span>TypeScript</span></li></ul>
+<div class="Progress-item" style="background-color: #3178c6;"></div>
+<span id="repo-stars-counter-star" aria-label="29,208 users starred this repository" title="29,208">29.2k</span>
+<span id="repo-network-counter" title="1,024">1k</span>
+
+<!-- 待测脚本（构建产物） -->
+<script src="../../dist/github-stars-grid.user.js"></script>
+</body>
+</html>
