@@ -22,6 +22,15 @@ export default defineConfig({
       },
     }),
   ],
+  // 固定 dev server 端口：dev 模式装进 Tampermonkey 的加载器把入口 URL 写死了，
+  // 端口漂移（5173 被占 → 5199/5201）会让已装的 dev 脚本静默失效。
+  server: {
+    port: 5173,
+    strictPort: true,
+    // Chrome 130–141 的 Private Network Access 预检要求这个响应头；
+    // 142+ 改走 Local Network Access 权限提示（首次会弹窗，必须点允许）。
+    headers: { 'Access-Control-Allow-Private-Network': 'true' },
+  },
   build: {
     // 保持与手写脚本同等的浏览器兼容性：
     // esbuild 默认会按 modern baseline 把 `min-width` 压成 `(width>=768px)` 区间语法

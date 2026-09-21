@@ -13,3 +13,157 @@ export function isStarredInToggler(root: Element): boolean {
 export function getToggler(root: ParentNode): Element | null {
   return root.querySelector('.js-toggler-container.starring-container');
 }
+
+/* ================================================================
+ * Stars 页：仓库条目与筛选行
+ *
+ * GitHub 2026 改版把 Primer 工具类从 `py-4` 换成了 `tmp-py-4`，并新增了
+ * `color-border-muted`。原来写死整串类名的选择器会整体失配（命中数 0），
+ * 所以这里改成「结构特征 + 语义属性」定位，不再依赖工具类名列表。
+ * ================================================================ */
+
+/** 仓库列表主列（turbo-frame 内的 col-lg-9） */
+export function getStarsMainColumn(): HTMLElement | null {
+  const frame = document.getElementById('user-starred-repos');
+  if (!frame) return null;
+  return frame.querySelector<HTMLElement>('.col-lg-9') ||
+    frame.querySelector<HTMLElement>('div[class*="col-lg-9"]');
+}
+
+/** 排掉我们自己生成的卡片和已隐藏的原始条目 */
+function isRepoItem(el: HTMLElement): boolean {
+  return !el.classList.contains('stars-original-hidden') &&
+    !el.classList.contains('stars-grid-card') &&
+    !el.classList.contains('stars-grid-card-cached');
+}
+
+/**
+ * 取出仓库条目列表。
+ *
+ * 首选结构特征：条目本身是 meta 行（`div.f6.color-fg-muted`）的直接父元素 ——
+ * 这个特征不随工具类改名而失效，也不会误命中条目内部的嵌套 div。
+ * 退路是旧/新两代类名都还保留的 `col-12` + `border-bottom`。
+ */
+export function getRepoItems(container: ParentNode): HTMLElement[] {
+  const selectors = [
+    'div:has(> div.f6.color-fg-muted)',
+    'div[class*="col-12"][class*="border-bottom"]',
+  ];
+  for (const sel of selectors) {
+    let found: HTMLElement[];
+    try {
+      found = Array.from(container.querySelectorAll<HTMLElement>(sel));
+    } catch {
+      continue;  // 浏览器不支持 :has() → 试下一个
+    }
+    const items = found.filter(isRepoItem);
+    if (items.length > 0) return items;
+  }
+  return [];
+}
+
+/**
+ * 条目对应的仓库数字 ID。
+ *
+ * 新版把 ID 放在语义属性 `data-repository-id` 上（`user-list-menu` / 按钮）；
+ * 旧版只有 `data-toggle-for` / `details-user-list-<id>` 形式；
+ * 最后再退回 Hydro 埋点 JSON 里的 `repository_id`。
+ */
+export function getRepoIdFromItem(item: Element): string {
+  const attrEl = item.querySelector('[data-repository-id]');
+  const attr = attrEl ? attrEl.getAttribute('data-repository-id') : null;
+  if (attr && /^\d+$/.test(attr)) return attr;
+
+  const panel = item.querySelector('[id^="details-user-list-"]');
+  const byId = panel ? (panel.id.match(/details-user-list-(\d+)/) || [])[1] : null;
+  if (byId) return byId;
+
+  const hydro = item.querySelector('[data-hydro-click*="repository_id"]');
+  const raw = hydro ? hydro.getAttribute('data-hydro-click') || '' : '';
+  const m = raw.match(/"repository_id":\s*(\d+)/);
+  return m ? m[1] : '';
+}
+
+/**
+ * 原生筛选按钮（Type / Language / Sort）所在的那一行。
+ *
+ * 以 Language 按钮的 ID 为锚点向上找 —— 该 ID 在改版中保留了下来，
+ * 而它的外层容器类名（`mt-5` → `tmp-mt-5`）已经变过一轮。
+ */
+export function getNativeFilterRow(): HTMLElement | null {
+  const langBtn = document.getElementById('stars-language-filter-menu-button');
+  const row = langBtn ? langBtn.closest('div.d-flex') : null;
+  if (row instanceof HTMLElement) return row;
+
+  return document.querySelector<HTMLElement>(
+    '.Layout-main .d-flex.flex-column.flex-lg-row.flex-items-center.tmp-mt-5 .d-flex.flex-justify-end,' +
+    '.Layout-main .d-flex.flex-column.flex-lg-row.flex-items-center.mt-5 .d-flex.flex-justify-end'
+  );
+}
+
+
+/** 原生「Clear filter」信息条（只在原生筛选生效时存在） */
+export function getNativeFilterBar(container: ParentNode): HTMLElement | null {
+  const bar = container.querySelector<HTMLElement>('.TableObject.border-bottom:not(.stars-tag-info-bar)');
+  if (bar) return bar;
+  const reset = container.querySelector('.issues-reset-query');
+  const viaReset = reset ? reset.closest('.TableObject') : null;
+  return viaReset instanceof HTMLElement ? viaReset : null;
+}
+
+/* ================================================================
+ * 仓库详情页：新版是 React 应用，数据在内嵌 JSON 里
+ *
+ * 侧栏类名形如 `SidebarAbout-module__socialStat__nnJPx`，哈希后缀每次部署
+ * 都会变，不能作为锚点；内嵌 JSON 是稳定得多的数据源。
+ * ================================================================ */
+
+/** 读取页面内嵌 JSON（React 页面的数据源） */
+export function readEmbeddedJson<T>(target: string): T | null {
+  const scripts = document.querySelectorAll<HTMLScriptElement>('script[type="application/json"]');
+  for (const s of Array.from(scripts)) {
+    if ((s.getAttribute('data-target') || '') !== target) continue;
+    try {
+      return JSON.parse(s.textContent || '') as T;
+    } catch {
+      // 结构异常，继续找下一个同名脚本
+    }
+  }
+  return null;
+}
+
+/** 详情页 About 侧栏的内嵌数据 */
+export interface SidebarAboutPayload {
+  description?: string;
+  stargazerCount?: number;
+  watcherCount?: number;
+  forksCount?: number;
+  ownerLogin?: string;
+  repoName?: string;
+  topics?: Array<{ name: string }>;
+  repo?: { license?: { spdxId?: string } | null; isArchived?: boolean } | null;
+  star?: { viewerHasStarred?: boolean } | null;
+}
+
+export function getSidebarAbout(): SidebarAboutPayload | null {
+  const data = readEmbeddedJson<{ payload?: { sidebarAbout?: SidebarAboutPayload } }>('react-app.embeddedData');
+  return (data && data.payload && data.payload.sidebarAbout) || null;
+}
+
+/**
+ * 详情页的 star 按钮（新版 React 组件）。
+ * `aria-label` 为 `Star owner/repo` / `Unstar owner/repo`，可据此判断状态。
+ */
+export function getStarButton(): HTMLButtonElement | null {
+  return document.querySelector<HTMLButtonElement>('button[data-testid="star-button"]');
+}
+
+/** star 按钮当前是否处于「已 star」态 */
+export function isStarButtonActive(btn: Element | null): boolean {
+  if (!btn) return false;
+  const label = (btn.getAttribute('aria-label') || '').trim();
+  if (/^unstar/i.test(label)) return true;
+  if (/^star\b/i.test(label)) return false;
+  // 图标兜底（侧栏那个只有图标的按钮没有 aria-label）
+  return !!btn.querySelector('.octicon-star-fill');
+}

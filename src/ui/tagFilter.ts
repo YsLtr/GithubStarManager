@@ -1,4 +1,5 @@
 import { TRIANGLE_DOWN_SVG } from '../constants';
+import { getNativeFilterRow } from '../dom';
 import { filterState } from '../state';
 import { applyFilters } from '../filters';
 import { getAllUniqueTags, getTags, saveTags } from '../storage/tags';
@@ -18,12 +19,7 @@ export function updateTagFilterButton(): void {
 
 /** 渲染 Tags 多选筛选栏（原生 Popover API + ActionList 结构） */
 export function renderTagFilterBar(): void {
-  const toolbar = document.querySelector(
-    '.Layout-main .d-flex.flex-column.flex-lg-row.flex-items-center.mt-5'
-  );
-  const filterRow = toolbar
-    ? toolbar.querySelector('.d-flex.flex-justify-end')
-    : null;
+  const filterRow = getNativeFilterRow();
   if (!filterRow) return;
 
   const existing = filterRow.querySelector('.stars-tag-filter');

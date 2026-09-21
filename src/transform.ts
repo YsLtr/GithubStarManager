@@ -1,3 +1,4 @@
+import { getRepoIdFromItem, getRepoItems, getStarsMainColumn } from './dom';
 import { extractAndCacheRepoFromCard } from './extract';
 import { applyFilters } from './filters';
 import { interceptSearchForm } from './search';
@@ -16,10 +17,10 @@ export function transformStarsList(): boolean {
   const turboFrame = document.getElementById('user-starred-repos');
   if (!turboFrame) return false;
 
-  const colLg9 = turboFrame.querySelector('.col-lg-9');
+  const colLg9 = getStarsMainColumn();
   if (!colLg9) return false;
 
-  const repoItems = colLg9.querySelectorAll('.col-12.d-block.width-full.py-4.border-bottom:not(.stars-original-hidden)');
+  const repoItems = getRepoItems(colLg9);
   if (repoItems.length === 0) {
     return !!colLg9.querySelector('.stars-grid-container');
   }
@@ -51,12 +52,7 @@ export function transformStarsList(): boolean {
     card.className = 'stars-grid-card';
 
     // 提取 repoId
-    const toggleEl = item.querySelector('[data-toggle-for*="details-user-list-"]');
-    let repoId = '';
-    if (toggleEl) {
-      const match = (toggleEl.getAttribute('data-toggle-for') || '').match(/details-user-list-(\d+)/);
-      if (match) repoId = match[1];
-    }
+    const repoId = getRepoIdFromItem(item);
     if (repoId) card.dataset.repoId = repoId;
 
     // 提取 repoName（href）

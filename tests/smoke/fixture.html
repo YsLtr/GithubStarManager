@@ -35,52 +35,120 @@
 </script>
 </head>
 <body>
+<!--
+  镜像 GitHub 2026 改版后的真实 DOM 结构：
+  - 条目类名是 tmp-py-4 + color-border-muted（不再是 py-4）
+  - repoId 来自语义属性 data-repository-id（不再是 data-toggle-for）
+  - 筛选行外层是 tmp-mt-5
+  故意保留这些新特征，旧选择器会在这里直接失配。
+-->
 <div class="Layout Layout--sidebarPosition-start">
   <div class="Layout-sidebar"><span class="p-nickname">smoke-user</span></div>
   <main class="Layout-main">
-    <div class="d-flex flex-column flex-lg-row flex-items-center mt-5">
-      <div class="d-flex flex-justify-end">
-        <button id="stars-type-filter-menu-button">All</button>
-        <action-menu><button id="stars-language-filter-menu-button">Language: All</button></action-menu>
-        <action-menu><button id="stars-sort-menu-button">Sort by: Recently starred</button></action-menu>
+    <div class="d-flex flex-column flex-lg-row flex-items-center tmp-mt-5">
+      <form class="subnav-search ml-0 mb-1" action="/smoke-user?tab=stars">
+        <input id="q" placeholder="Search starred repositories" value="">
+      </form>
+      <div class="d-flex flex-justify-end flex-wrap flex-lg-nowrap width-full">
+        <action-menu class="mb-1 tmp-mb-1 mb-lg-0">
+          <button id="stars-type-filter-menu-button" class="Button--secondary Button--medium Button">
+            <span class="Button-content"><span class="Button-label">Type: All</span></span>
+          </button>
+        </action-menu>
+        <action-menu class="ml-2 tmp-ml-2 mb-1 tmp-mb-1 mb-lg-0">
+          <button id="stars-language-filter-menu-button" class="Button--secondary Button--medium Button">
+            <span class="Button-content"><span class="Button-label">Language</span></span>
+          </button>
+        </action-menu>
+        <action-menu class="ml-2 tmp-ml-2 mb-1 tmp-mb-1 mb-lg-0">
+          <button id="stars-sort-menu-button" class="Button--secondary Button--medium Button">
+            <span class="Button-content"><span class="Button-label">Sort by: Recently starred</span></span>
+          </button>
+        </action-menu>
       </div>
     </div>
-    <form><input placeholder="Search starred repositories" value=""></form>
     <turbo-frame id="user-starred-repos">
-      <div class="col-lg-9">
-        <div class="col-12 d-block width-full py-4 border-bottom">
-          <div class="js-toggler-container starring-container">
-            <div class="starred"><form action="/alpha/one/unstar"></form></div>
-            <div class="unstarred" style="display:none"><form action="/alpha/one/star"></form></div>
+      <div class="d-lg-flex gutter-lg tmp-mt-5">
+        <div class="col-lg-9">
+          <div class="position-relative"><h2 class="f3-light mb-n1">Starred repositories</h2></div>
+          <span class="sr-only js-starred-repos-search-results">Showing results</span>
+
+          <div class="col-12 d-block width-full tmp-py-4 border-bottom color-border-muted">
+            <div class="d-inline-block mb-1">
+              <h3><a href="/alpha/one"><span class="text-normal">alpha / </span>one</a></h3>
+            </div>
+            <div class="float-right d-flex">
+              <div class="js-toggler-container js-social-container starring-container starring-container--with-list-menu on d-inline-block">
+                <div class="starred BtnGroup flex-1 ml-0 tmp-ml-0">
+                  <form class="js-social-form js-deferred-toggler-target" action="/alpha/one/unstar">
+                    <input type="hidden" name="authenticity_token" value="tok-alpha">
+                    <input type="hidden" name="context" value="user_stars">
+                  </form>
+                </div>
+                <div class="unstarred" style="display:none">
+                  <form action="/alpha/one/star">
+                    <input type="hidden" name="authenticity_token" value="tok-alpha">
+                    <input type="hidden" name="context" value="user_stars">
+                  </form>
+                </div>
+              </div>
+            </div>
+            <div class="py-1"><p itemprop="description">第一个仓库的描述</p></div>
+            <div class="f6 color-fg-muted mt-2">
+              <span class="tmp-mr-3 ml-0 tmp-ml-0"><span class="repo-language-color" style="background-color: #3178c6;"></span><span itemprop="programmingLanguage">TypeScript</span></span>
+              <a class="Link--muted tmp-mr-3" href="/alpha/one/stargazers">29,208</a>
+              <a class="Link--muted tmp-mr-3" href="/alpha/one/forks">1,024</a>
+              Updated <relative-time datetime="2026-09-01T00:00:00Z">3 days ago</relative-time>
+            </div>
+            <user-list-menu data-repository-id="123">
+              <select-panel id="details-user-list-123-starred" class="js-user-list-menu"></select-panel>
+            </user-list-menu>
           </div>
-          <h3><a href="/alpha/one"><span class="text-normal">alpha / </span>one</a></h3>
-          <p itemprop="description">第一个仓库的描述</p>
-          <div class="f6 color-fg-muted">
-            <span class="ml-0 mr-3"><span class="repo-language-color" style="background-color: #3178c6;"></span><span itemprop="programmingLanguage">TypeScript</span></span>
-            <a href="/alpha/one/stargazers">29,208</a>
-            <a href="/alpha/one/forks">1,024</a>
-            Updated <relative-time datetime="2026-09-01T00:00:00Z">3 days ago</relative-time>
+
+          <div class="col-12 d-block width-full tmp-py-4 border-bottom color-border-muted">
+            <div class="d-inline-block mb-1">
+              <h3><a href="/beta/two"><span class="text-normal">beta / </span>two</a></h3>
+            </div>
+            <div class="float-right d-flex">
+              <div class="js-toggler-container js-social-container starring-container starring-container--with-list-menu on d-inline-block">
+                <div class="starred BtnGroup flex-1 ml-0 tmp-ml-0">
+                  <form class="js-social-form js-deferred-toggler-target" action="/beta/two/unstar">
+                    <input type="hidden" name="authenticity_token" value="tok-beta">
+                    <input type="hidden" name="context" value="user_stars">
+                  </form>
+                </div>
+                <div class="unstarred" style="display:none">
+                  <form action="/beta/two/star">
+                    <input type="hidden" name="authenticity_token" value="tok-beta">
+                    <input type="hidden" name="context" value="user_stars">
+                  </form>
+                </div>
+              </div>
+            </div>
+            <div class="py-1"><p itemprop="description">第二个仓库的 Rust 工具</p></div>
+            <div class="f6 color-fg-muted mt-2">
+              <span class="tmp-mr-3 ml-0 tmp-ml-0"><span class="repo-language-color" style="background-color: #dea584;"></span><span itemprop="programmingLanguage">Rust</span></span>
+              <a class="Link--muted tmp-mr-3" href="/beta/two/stargazers">512</a>
+              <a class="Link--muted tmp-mr-3" href="/beta/two/forks">12</a>
+              Updated <relative-time datetime="2026-08-20T00:00:00Z">2 weeks ago</relative-time>
+            </div>
+            <user-list-menu data-repository-id="456">
+              <select-panel id="details-user-list-456-starred" class="js-user-list-menu"></select-panel>
+            </user-list-menu>
           </div>
-          <span data-toggle-for="details-user-list-123"></span>
+
+          <div class="paginate-container">
+            <div class="BtnGroup" data-test-selector="pagination">
+              <button class="btn BtnGroup-item" disabled="disabled">Previous</button>
+              <a rel="nofollow" class="btn BtnGroup-item" href="?page=2">Next</a>
+            </div>
+          </div>
         </div>
-        <div class="col-12 d-block width-full py-4 border-bottom">
-          <div class="js-toggler-container starring-container">
-            <div class="starred"><form action="/beta/two/unstar"></form></div>
-            <div class="unstarred" style="display:none"><form action="/beta/two/star"></form></div>
-          </div>
-          <h3><a href="/beta/two"><span class="text-normal">beta / </span>two</a></h3>
-          <p itemprop="description">第二个仓库的 Rust 工具</p>
-          <div class="f6 color-fg-muted">
-            <span class="ml-0 mr-3"><span class="repo-language-color" style="background-color: #dea584;"></span><span itemprop="programmingLanguage">Rust</span></span>
-            <a href="/beta/two/stargazers">512</a>
-            <a href="/beta/two/forks">12</a>
-            Updated <relative-time datetime="2026-08-20T00:00:00Z">2 weeks ago</relative-time>
-          </div>
-          <span data-toggle-for="details-user-list-456"></span>
+        <div class="col-lg-3 tmp-mt-6 tmp-mt-lg-0">
+          <h2 class="f3-light"><a href="/topics">Starred topics</a></h2>
+          <article class="tmp-my-3"><h1 class="f4 text-normal">ai</h1></article>
         </div>
-        <div class="paginate-container"><a href="?page=2">2</a></div>
       </div>
-      <div class="col-lg-3"><h2>Starred topics</h2><article><h1>ai</h1></article></div>
     </turbo-frame>
   </main>
 </div>

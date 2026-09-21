@@ -1,3 +1,4 @@
+import { getRepoIdFromItem, getRepoItems } from './dom';
 import { extractAndCacheRepoFromCard } from './extract';
 import { applyFilters, inheritNativeFilters } from './filters';
 import { filterState } from './state';
@@ -84,14 +85,11 @@ async function fetchNativeSearchResults(query: string): Promise<void> {
       doc = new DOMParser().parseFromString(await resp.text(), 'text/html');
     }
 
-    const items = doc.querySelectorAll('.col-12.d-block.width-full.py-4.border-bottom');
+    const items = getRepoItems(doc);
     const newIds: string[] = [];
     items.forEach(item => {
-      const toggleEl = item.querySelector('[data-toggle-for*="details-user-list-"]');
-      if (!toggleEl) return;
-      const m = (toggleEl.getAttribute('data-toggle-for') || '').match(/details-user-list-(\d+)/);
-      if (!m) return;
-      const repoId = m[1];
+      const repoId = getRepoIdFromItem(item);
+      if (!repoId) return;
       extractAndCacheRepoFromCard(item, repoId);
       newIds.push(repoId);
     });

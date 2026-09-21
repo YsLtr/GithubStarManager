@@ -32,13 +32,25 @@ pnpm check          # typecheck + build
 `pnpm dev` 启动后，插件会（首次或脚本头变化时）自动在默认浏览器打开安装页：
 
 ```
-http://127.0.0.1:<port>/__vite-plugin-monkey.install.user.js
+http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js
 ```
 
 Tampermonkey 里会多出名为 `server:GitHub Stars Grid View` 的脚本（与正式版并列，靠前缀区分）。
 它只是个 loader，实际代码通过 ESM 从 dev server 拉取，因此改代码即时生效。
 
 > 注意：dev 模式为了兼容各种运行时会把 `@grant` 放宽成 `GM.*` 全家桶，这是插件行为；正式 `build` 产物里 `@grant` 是按代码实际用到的 API 精确生成的（当前为 `GM_addStyle` / `GM_getValue` / `GM_setValue`）。
+
+
+### dev 模式在 github.com 上的两个前置条件
+
+GitHub 的 CSP 是 `script-src github.githubassets.com 'nonce-…'`，白名单里没有 `127.0.0.1`。dev 模式的 loader 要往页面里插一个 `<script type="module" src="http://127.0.0.1:5173/…">`，会被这条策略直接拒绝，控制台表现为 `Failed to fetch dynamically imported module`。**这不是本项目代码的问题，插件也绕不过去**（参见 [vite-plugin-monkey#205](https://github.com/lisonge/vite-plugin-monkey/issues/205)）。所以：
+
+1. **开发用浏览器要装一个放行 CSP 的扩展**，并只把 `github.com` 加进白名单（别全局关，风险大）：
+   - [CSP Unblock](https://chromewebstore.google.com/detail/csp-unblock/lkbelpgpclajeekijigjffllhigbhobd)（可按域名开关，推荐）
+   - [Disable Content-Security-Policy](https://chromewebstore.google.com/detail/disable-content-security/ieelmcmcagommplceebfedjlakkhpden)
+2. **放行 Local Network Access 权限提示**：Chrome 138+ 起，公网页面访问 `127.0.0.1` 需要用户授权，首次会弹「查找并连接本地网络上的设备」，必须点允许。若请求被静默拦截，可在 `chrome://flags/#local-network-access-check` 关掉该检查（仅限开发 profile）。
+
+不想折腾扩展时，退路是 `pnpm build` 后把 `dist/github-stars-grid.user.js` 重新装进 Tampermonkey —— 构建只要 ~100ms，代价是没有 HMR。
 
 ## 3. 目录结构
 

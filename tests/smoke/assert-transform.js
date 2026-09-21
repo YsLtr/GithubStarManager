@@ -20,6 +20,23 @@
     out.cacheEntry123 = window.__gmStore['stars_repo_cache']['123'];
     out.cacheEntry456 = window.__gmStore['stars_repo_cache']['456'];
 
+
+    // 字段级断言（新 DOM 下最容易回归的部分）
+    const e123 = window.__gmStore['stars_repo_cache']['123'] || {};
+    const e456 = window.__gmStore['stars_repo_cache']['456'] || {};
+    out.extracted = {
+      name123: e123.name,
+      lang123: e123.lang,
+      stars123: e123.stars,
+      forks123: e123.forks,
+      updatedAt123: e123.updatedAt,
+      updatedIsRelative: /^Updated .+ ago$/.test(e123.updated || ''),
+      name456: e456.name,
+      lang456: e456.lang,
+      stars456: e456.stars,
+      forks456: e456.forks,
+      updatedAt456: e456.updatedAt
+    };
     // 点击第一个 tag pill → 进入 tags 自定义模式
     document.querySelector('.stars-card-tags .stars-tag').click();
     out.afterTagClick = {

@@ -1,4 +1,5 @@
 import { TRIANGLE_DOWN_SVG } from './constants';
+import { getNativeFilterBar, getNativeFilterRow, getStarsMainColumn } from './dom';
 import { filterState } from './state';
 import { loadAllNotes } from './storage/notes';
 import { loadRepoCache } from './storage/repoCache';
@@ -114,13 +115,13 @@ export function renderFilterInfoBar(count: number): void {
 
   if (!filterState.searchQuery && filterState.tags.length === 0) return;
 
-  const colLg9 = document.querySelector('turbo-frame#user-starred-repos .col-lg-9');
+  const colLg9 = getStarsMainColumn();
   if (!colLg9) return;
   const gridContainer = colLg9.querySelector('.stars-grid-container');
   if (!gridContainer) return;
 
   // 隐藏原生 clear filter 条
-  const nativeBar = colLg9.querySelector<HTMLElement>('.TableObject.border-bottom:not(.stars-tag-info-bar)');
+  const nativeBar = getNativeFilterBar(colLg9);
   if (nativeBar) nativeBar.style.display = 'none';
 
   const bar = document.createElement('div');
@@ -207,9 +208,9 @@ export function applyFilters(): void {
 
     // 移除 info bar 并恢复原生 clear filter 条
     document.querySelectorAll('.stars-tag-info-bar').forEach(el => el.remove());
-    const colLg9 = document.querySelector('turbo-frame#user-starred-repos .col-lg-9');
+    const colLg9 = getStarsMainColumn();
     if (colLg9) {
-      const nativeBar = colLg9.querySelector<HTMLElement>('.TableObject.border-bottom:not(.stars-tag-info-bar)');
+      const nativeBar = getNativeFilterBar(colLg9);
       if (nativeBar) nativeBar.style.display = '';
     }
     return;
@@ -297,9 +298,7 @@ export function updateNativeFilters(tagMode: boolean): void {
     document.querySelectorAll('.stars-custom-filter').forEach(el => el.remove());
 
     // 插入点：Tags 筛选按钮之后
-    const filterRow = document.querySelector(
-      '.Layout-main .d-flex.flex-column.flex-lg-row.flex-items-center.mt-5 .d-flex.flex-justify-end'
-    );
+    const filterRow = getNativeFilterRow();
     if (!filterRow) return;
 
     const tagFilter = filterRow.querySelector('.stars-tag-filter');
