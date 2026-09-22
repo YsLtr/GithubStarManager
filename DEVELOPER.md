@@ -62,15 +62,15 @@ src/
   state.ts            筛选状态对象 filterState（唯一可变全局状态）
   utils.ts            escapeHtml / isDesktop
   dom.ts              getRepoIdMeta / getToggler / isStarredInToggler（DOM 查询小工具）
-  extract.ts          详情页与卡片的数据提取 → 写缓存
+  extract.ts          详情页数据提取 → 写缓存（4.0.0：列表卡提取已删，API 为权威源）
   transform.ts        列表 → 卡片网格转换
   filters.ts          筛选引擎：标签/语言/排序/搜索、信息条、原生筛选联动
-  search.ts           搜索表单拦截、原生搜索结果补充
+  search.ts           搜索表单拦截（4.0.0：纯本地，原生结果补充已删）
   gm.ts              GM API 兼容层（调用时判定；localStorage 兜底与迁移）
   boot.ts            document-start 防闪烁隐藏生命周期（FOUC）
-  pagination.ts      原地翻页拦截（window 捕获 + fetch 换入，不走 Turbo frame 导航）
-  starCheck.ts       外部 unstar 确认层：PAT 菜单、API 双 404、速率守卫、裁决缓存
-  snapshot.ts        到货页快照 diff + 位移挂起/结算：发现外部消失（核对候选），被挤出的到预期页结案
+  pagination.ts      本地分页拦截（4.0.0：只拦 data-gsm-page 零网络；原 fetch 换入路径已删）
+  starCheck.ts       PAT 菜单、裁决缓存、外部 unstar 宽限管线（4.0.0：双 404 核对队列已删，P4 整表即权威确认）
+  snapshot.ts        确认 unstar 后清历史快照（4.0.0：recordArrival/位移挂起链已删，仅留 purge 回调）
   fullSync.ts        P4 全量同步：Sync 按钮、整表 diff、star 时间回填（REST star+json）
   storage/
     repoCache.ts      仓库缓存 CRUD
@@ -78,7 +78,7 @@ src/
     notes.ts          备注存储
     pendingDelete.ts  待删除区（unstar 宽限期，含标签/备注备份）
   ui/
-    cards.ts          卡片构建 + 星星按钮（当前页 / 缓存双模式）
+    cards.ts          卡片构建 + API 星星按钮（4.0.0：PUT/DELETE Bearer PAT，CSRF 双模式已删）
     tagFilter.ts      标签 pill、筛选栏、pill 选中态同步
     notes.ts          备注渲染与编辑
   styles/
@@ -120,27 +120,32 @@ scripts/
 
 ## 4. 数据流
 
-```
-GitHub DOM
+GitHub API (PAT)                                GitHub DOM（无缓存 / 详情页）
+    │                                                │
+    ├─ probeAndSync() 进页 idle 自动探（ETag 304/未变免拉、超 TTL 强制整表）
+    │        │                                      ├─ 详情页 ─► extractAndCacheRepoFromDetailPage()
+    │        └─ pullAllStarred() 整表 diff          └─ 无缓存首访 ─► 原生页 + .gsm-setup-banner
+    │             │                                   （「设置 token / 立即同步」→ runFullSync → transformAndReveal）
+    │             ├─ 新增/恢复 ─► saveRepoData / markRepoStarred
+    │             ├─ 远端无本地有 ─► applyExternalUnstar（宽限管线）+ recordVerdict
+    │             └─ 交集 ─► 回填 starredAt + 刷新元数据
+    │              全程写：GM_setValue (stars_repo_cache + stars_full_sync_meta)
     │
-    ├─ 仓库详情页 ──► extractAndCacheRepoFromDetailPage() ──► GM_setValue (stars_repo_cache)
-    │
-    └─ Stars 列表页
+    └─ Stars 列表页（hasApiData() = true）
          │
-         ├─ DOM 列表项 ──► extractAndCacheRepoFromCard() ──► GM_setValue (stars_repo_cache)
+         ├─ transformStarsList() ─► 藏原生列表/原生分页器（stars-original-hidden）
+         │        │
+         │        ├─ renderBrowsePage(page) ─► buildCardFromCache() ─► 缓存卡片 DOM
+         │        │        ├─ createStarButtonForCached()（API PUT/DELETE）
+         │        │        ├─ renderTags() / renderNotes()
+         │        │        └─ updateLocalPagers()（顶/底 gsm-local-pager 同步页码与 disabled）
+         │        ├─ mountTopPager() / mountSyncButton()
+         │        └─ 渲染标签栏 + interceptSearchForm() + applyFilters()
          │
-         ├─ DOM 列表项 ──► transformStarsList() ──► 卡片网格 DOM
-         │                                              │
-         │                                              ├─ createStarButton() ──► 星星按钮
-         │                                              └─ renderTags() ──► 标签 pill
-         │
-         └─ 筛选 / 搜索（跨页）
-              │
-              ├─ getTagFilteredRepos() / searchCacheRepos() ──► buildCardFromCache() ──► 缓存卡片 DOM
-              │                                                                          ├─ createStarButtonForCached()
-              │                                                                          └─ renderTags() / renderNotes()
-              └─ 状态变化 ──► applyFilters() ──► renderFilterInfoBar() + updateNativeFilters()
-```
+         ├─ 分页：pagination.ts 拦 data-gsm-page ─► renderBrowsePage()（零网络零 Turbo）
+         ├─ 退出：exitCustomMode() ─► pushState('?tab=stars')（整页导航已删）
+         └─ 搜索：searchCacheRepos() 纯本地（原生结果补充已删）
+                  └─ applyFilters() ─► renderFilterInfoBar() + updateNativeFilters()
 
 ## 5. 存储模型
 
@@ -212,7 +217,7 @@ GitHub DOM
 { "123456": { "o": "owner", "n": "repo", "expectKey": "https://github.com/YsLtr?page=2&tab=stars", "srcKey": "https://github.com/YsLtr?tab=stars", "ts": 1780000000000 } },
 ```
 
-由 `snapshot.ts` + `starCheck.ts` 维护（`stars_shift_pending` 位移挂起由 `snapshot.ts` 独占），机制见 §6「外部 unstar 核对」。`github_pat` 仅用于 `Authorization: Bearer` 调用 `api.github.com`，不进仓库、不写日志（提示中只显示前 12 后 4 位掩码）。
+由 `snapshot.ts`（4.0.0 起仅剩确认 unstar 后的 purge 清理）+ `starCheck.ts` 维护；`stars_shift_pending` 为历史数据（4.0.0 不再产生）。**4.0.0 起 PAT 不写 localStorage 镜像**（gm.ts `SENSITIVE_KEYS`：lsWrite 跳写、gmGet 迁移时清历史镜像，XSS 防护）。`github_pat` 仅用于 `Authorization: Bearer` 调 `api.github.com`，不进仓库、不写日志（提示中只显示前 12 后 4 位掩码）。新增键 `stars_full_sync_meta` 见 §5。
 
 ## 6. 核心机制
 
@@ -220,9 +225,9 @@ GitHub DOM
 
 unstar 时数据不会立即删除，而是移入 `stars_pending_delete` 并记录 `unstarredAt`；24 小时内重新 star，数据、标签和备注会自动恢复。超期条目在下次脚本加载时由 `cleanupExpiredUnstarred()` 清理。
 
-### 外部 unstar 核对（到货快照 diff + 位移挂起 + API 双 404）
+### 外部 unstar 检测（4.0.0：P4 整表 diff 承担）
 
-每次 Stars 内容到货（直载转换 / Turbo 重渲染 / 原地翻页换入）由 `snapshot.ts` 先**结算位移挂起**（`stars_shift_pending`：挂起项在任何到货页可见 = 位移确认即清；`expectKey` 正好是本页却缺失 = 「本该在本页却没有出现」才交核对），再与上次同键到货做成员 diff。消失按**排序方式 + 页码**直接算位移模型（`expectationKey()`：`sort` 缺省/`created` 且 `direction` 缺省/`desc` → 预期下一页；`asc` → 预期上一页；`updated`/`stars` 及升序第 1 页 → 无位移模型）：有预期页 → 挂起不核对（cap 60、TTL 30d）；无模型 → 直接交 `starCheck.ts` 串行核对 `GET /user/starred/{owner}/{repo}`（单次 ≤8，>12 提示走 P4）：204 = 仍 star 只记裁决不动数据；404 需间隔 1.5s 两次才确认，随后复用 unstar 宽限管线（`markRepoUnstarred` 同款备份）+ 从全部快照与挂起中清除 + 卡片原地翻未 star。无 PAT / 401 / 403 / 网络失败一律只记日志不改数据；速率余量 <50 暂停至 reset。**位移判定不存顺序**（排序键 star 时间在页面 HTML 中不提供；预期页的成员检测与「存顺序再对齐」等价且更简单——用户决策）。PAT 权限指引与设计决策见 AGENTS.md「数据同步设计决策」。
+旧「到货快照 diff + 位移挂起 + API 双 404 逐条核对」链路（D1/D2/D4，3.0.9–3.1.0）已随 API 主模式**移除**：snapshot 的 `recordArrival`/位移/挂起全链与 starCheck 的核对队列（`enqueueVerify`/`kick`/`verifyOne`/`apiGet`）均已删除（`recordArrival` 在 API 渲染下无调用者）。星状态真相改由 **`probeAndSync()` 进页 ETag 探测 + 完整整表 diff** 权威判定——远端无本地有 → `applyExternalUnstar()`（宽限管线 + 7d 裁决），无逐条核对、无位移判定（页面位移概念随 HTML 渲染退场）；`purgeRepoFromSnapshots` 保留，用于清理存量 `stars_page_snapshots`/`stars_shift_pending`。PAT 权限指引与设计决策见 AGENTS.md「数据同步设计决策」D1–D7（D7 为现行总则，D1/D2/D4 为历史设计）。
 
 ### 每用户标签隔离
 
@@ -236,26 +241,24 @@ unstar 时数据不会立即删除，而是移入 `stars_pending_delete` 并记�
 
 用户访问仓库详情页时，脚本提取元数据写入缓存，使从未在 Stars 页浏览过的仓库也能在跨页筛选时显示完整卡片。
 
-### P4 全量同步（Sync 按钮，3.1.0）
+### P4 全量同步与进页自动探测（Sync 按钮 3.1.0；4.0.0 升 API 主模式）
 
-`fullSync.ts`：`GET /user/starred?per_page=100&page=N` + `Accept: application/vnd.github.star+json`（该 Accept 才带 `starred_at`；页间 100ms、速率余量 <10 放弃、超 200 页放弃、任一条解析失败整体放弃）。整表 diff 三向——本地有远端无 → `applyExternalUnstar()` 走待删除区宽限管线（**整表拉取即权威确认**，跳过逐条双 404，写 7d 裁决）；远端有本地无 → `saveRepoData()` 建条目 / 宽限区内 `markRepoStarred()` 恢复（标签备注连同恢复）；交集 → 回填 `starredAt` + 刷新 desc/lang/stars/forks/updatedAt（`updated` 展示文本保留旧值）；顺带结算位移挂起。触发：标题行 **Sync** 按钮（`.gsm-sync-btn`，插在顶部翻页器左侧，loading 复用 `gsm-pager-loading`；无 token 先弹 `promptForToken()`）+ `snapshot.handleMissing` 消失 >12 且已配 token（单飞 + 60s 冷却）。**完整性红线**：任何不完整信号都抛错、catch 不改任何数据——半张表会把未拉到的页全部误判为外部 unstar。
+`fullSync.ts`：`GET /user/starred?per_page=100&page=N` + `Accept: application/vnd.github.star+json`（带 `starred_at`；页间 100ms、速率余量 <10 放弃、超 200 页放弃、任一条解析失败整体放弃）。整表 diff 三向——本地有远端无 → `applyExternalUnstar()` 走待删除区宽限管线（**整表拉取即权威确认**，跳过逐条双 404，写 7d 裁决）；远端有本地无 → `saveRepoData()` 建条目 / 宽限区内 `markRepoStarred()` 恢复；交集 → 回填 `starredAt` + 刷新 desc/lang/stars/forks/updatedAt（`updated` 展示文本保留旧值）。**完整性红线**：任何不完整信号都抛错、catch 不改任何数据。
+**4.0.0 增强**：`pullAllStarred` 带 `If-None-Match` 条件请求（304 免额度免拉），元数据写 `stars_full_sync_meta`（`etag`/`lastFullSyncAt`/`count`）；transform 成功后 `probeAndSync()` 进页 idle 自动探（无变化免拉、超 TTL 强制整表）；`hasApiData()` = 有 PAT + `meta.count>0` 决定渲染模式；触发 = 标题行 **Sync** 手动（无 token 先弹 `promptForToken`）+ 进页自动 probe（原「快照消失 >12 → scheduleFullSync」入口已删）。
 
-### 星星按钮双模式
+### 星星按钮（4.0.0：纯 API）
 
-- **当前页卡片** (`createStarButton`): 直接使用原始 DOM 中的 star/unstar 表单提交 CSRF token
-- **缓存卡片** (`createStarButtonForCached`): 先 fetch 仓库详情页获取有效 CSRF token，再提交
-
-两者共享 `createStarButtonElement` / `toggleStarButtonState`。
+`createStarButtonForCached(repo)`：`PUT/DELETE https://api.github.com/user/starred/{owner}/{repo}` + `Authorization: Bearer <PAT>`（无需 CSRF）；点击即乐观翻转，失败回滚并回落原生 form 路径。旧「当前页原生表单 / 缓存卡 fetch CSRF」双模式（`createStarButton`/`submitStarForm`）与三处 unstar 检测管线已整体删除。
 
 ### 全缓存搜索与筛选联动
 
-搜索走 `searchCacheRepos()`：把关键词按空白拆词，每个词都必须至少命中作者、仓库名、描述、标签、备注之一（**语言已退出全文匹配**（3.0.11）——避免 `ASC` 子串命中 `javascript`，语言只通过下拉筛选指定）；并联动当前激活的标签与语言筛选。搜索模式下重建的结果卡片会把命中词以 `<mark class="gsm-search-hit">` 高亮（标题 / 描述 / 标签 / 备注四字段，大小写不敏感、只包文本节点、跳过输入控件）。同时 `search.ts` 会异步拉取 GitHub 原生搜索结果页，把缓存里缺失的仓库补进缓存并重渲染（`filterState.nativeSearchResults`）。
+搜索走 `searchCacheRepos()`：把关键词按空白拆词，每个词都必须至少命中作者、仓库名、描述、标签、备注之一（**语言已退出全文匹配**（3.0.11）——避免 `ASC` 子串命中 `javascript`，语言只通过下拉筛选指定）；并联动当前激活的标签与语言筛选。命中词以 `<mark class="gsm-search-hit">` 高亮（标题 / 描述 / 标签 / 备注四字段，大小写不敏感、只包文本节点、跳过输入控件）。**4.0.0 起纯本地**：原生结果补充（`fetchNativeSearchResults` / `nativeSearchResults`）已删，结果集 = 全量缓存 ∩ 关键词 ∩ 标签 ∩ 语言。
 
 自建 Sort 菜单现有三项：Most stars / Recently active / **Recently starred**（3.1.0 落地，AGENTS D5c/D6）。Recently starred 按 `starredAt` 降序（`sortResults()`：未回填的仓库沉底且保持到达序 = 原生服务端序）——`starredAt` 由 P4 Sync 回填（`fullSync.ts` 交集分支），未跑过同步时整表沉底属预期。`inheritNativeFilters()` 遇原生 Recently starred → `'created'`。
 
 ### 退出自定义模式
 
-当标签与搜索都被清空时，`applyFilters()` 会把当前 Language / Sort 写回 URL 查询串并整页导航到 `?tab=stars`，让 GitHub 服务端重新渲染原生筛选结果。
+标签与搜索都被清空时，`applyFilters()` 调 `exitCustomMode()`：重置 `filterState`（tags/search/modes 清零、page=1）并 `history.pushState('?tab=stars')` 本地渲染第 1 页——**整页导航已删**（4.0.0，原 `location.href` 整页回跳移除）；原生 Language/Sort 菜单恢复显示（`updateNativeFilters(false)`）。
 
 ## 7. 状态管理约定
 

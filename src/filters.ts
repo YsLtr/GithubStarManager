@@ -1,9 +1,9 @@
-import { TRIANGLE_DOWN_SVG } from './constants';
+import { NATIVE_PAGE_SIZE, TRIANGLE_DOWN_SVG } from './constants';
 import { getNativeFilterBar, getNativeFilterRow, getStarsMainColumn } from './dom';
 import { filterState } from './state';
 import { loadAllNotes } from './storage/notes';
 import { loadRepoCache } from './storage/repoCache';
-import { getTags, loadAllTags } from './storage/tags';
+import { loadAllTags } from './storage/tags';
 import { buildCardFromCache, createStarButtonForCached } from './ui/cards';
 import { renderNotes } from './ui/notes';
 import { refreshTagPillStates, renderTagFilterBar, renderTags } from './ui/tagFilter';
@@ -28,7 +28,53 @@ function sortResults(results: FilteredRepo[]): void {
   }
 }
 
-/** 标签（+ 语言）筛选：从缓存中取出所有命中标签的仓库 */
+/** 4.0.0 纯本地浏览态：缓存 → lang 过滤 → 排序 → 切页渲染（原生 HTML 彻底退出渲染管线） */
+export function renderBrowsePage(page: number): void {
+  const gridContainer = document.querySelector('.stars-grid-container');
+  if (!gridContainer) return;
+
+  const cache = loadRepoCache();
+  const results: FilteredRepo[] = [];
+  for (const repoId in cache) {
+    const data = cache[repoId];
+    if (filterState.lang && (data.lang || '').toLowerCase() !== filterState.lang.toLowerCase()) continue;
+    results.push({ repoId, data });
+  }
+  sortResults(results);
+
+  const totalPages = Math.max(1, Math.ceil(results.length / NATIVE_PAGE_SIZE));
+  filterState.page = Math.min(Math.max(1, page), totalPages);
+  filterState.totalPages = totalPages;
+  const start = (filterState.page - 1) * NATIVE_PAGE_SIZE;
+
+  gridContainer.innerHTML = '';
+  for (const { repoId, data } of results.slice(start, start + NATIVE_PAGE_SIZE)) {
+    const card = buildCardFromCache(repoId, data);
+    gridContainer.appendChild(card);
+    createStarButtonForCached(card, data);
+    const tagsContainer = card.querySelector<HTMLElement>('.stars-card-tags');
+    if (tagsContainer) renderTags(tagsContainer);
+    const notesContainer = card.querySelector<HTMLElement>('.stars-card-notes');
+    if (notesContainer) renderNotes(notesContainer);
+  }
+
+  updateLocalPagers();
+}
+
+/** 同步顶/底两份本地分页器：页码文字 + Previous/Next 禁用态 */
+function updateLocalPagers(): void {
+  document.querySelectorAll<HTMLElement>('.paginate-container.gsm-local-pager').forEach((pager) => {
+    const info = pager.querySelector('.gsm-page-info');
+    if (info) info.textContent = `${filterState.page} / ${filterState.totalPages}`;
+    pager
+      .querySelector('[data-gsm-page="prev"]')
+      ?.classList.toggle('disabled', filterState.page <= 1);
+    pager
+      .querySelector('[data-gsm-page="next"]')
+      ?.classList.toggle('disabled', filterState.page >= filterState.totalPages);
+  });
+}
+
 export function getTagFilteredRepos(ignoreLang: boolean): FilteredRepo[] {
   const allTags = loadAllTags();
   const cache = loadRepoCache();
@@ -226,31 +272,12 @@ export function applyFilters(): void {
   const hasSearch = filterState.searchQuery.length > 0;
   const hasTags = filterState.tags.length > 0;
 
-  // 2. 无任何自定义筛选 → 退出自定义模式
+  // 2. 无任何自定义筛选 → 纯本地浏览态（4.0.0：缓存切页，不再整页导航回服务端）
   if (!hasTags && !hasSearch) {
-    if (filterState.tagMode || filterState.searchMode) {
-      // 保留 Language/Sort 写回 URL
-      const baseUrl = new URL(location.href);
-      const targetParams = new URLSearchParams();
-      targetParams.set('tab', 'stars');
-      if (filterState.lang) {
-        targetParams.set('language', filterState.lang.toLowerCase());
-      }
-      targetParams.set('sort', filterState.sort);
-
-      filterState.lang = '';
-      filterState.sort = 'stars';
-      filterState.tagMode = false;
-      filterState.searchMode = false;
-      filterState.searchQuery = '';
-
-      // 触发导航 — 重载页面后由服务端应用正确筛选
-      location.href = baseUrl.pathname + '?' + targetParams.toString();
-      return;
-    }
-
     cards.forEach((card) => card.classList.remove('stars-tag-filtered'));
     if (paginator) paginator.style.display = '';
+    document.querySelectorAll<HTMLElement>('.gsm-top-pager').forEach(el => { el.style.display = ''; });
+    renderBrowsePage(1);
     updateNativeFilters(false);
 
     // 移除 info bar 并恢复原生 clear filter 条
@@ -273,25 +300,13 @@ export function applyFilters(): void {
   // 4. 隐藏原始卡片和分页器
   cards.forEach((card) => card.classList.add('stars-tag-filtered'));
   if (paginator) paginator.style.display = 'none';
+  // 顶部分页器同藏（筛选态平铺无分页；它在 headerRow 里，不在 gridContainer 内）
+  document.querySelectorAll<HTMLElement>('.gsm-top-pager').forEach(el => { el.style.display = 'none'; });
 
   // 5. 获取结果
   let results: FilteredRepo[];
   if (hasSearch) {
     results = searchCacheRepos(filterState.searchQuery, false);
-    // 补充原生搜索结果中未命中缓存搜索的仓库
-    const cacheIds = new Set(results.map(r => r.repoId));
-    const cache = loadRepoCache();
-    filterState.nativeSearchResults.forEach(rid => {
-      if (cacheIds.has(rid)) return;
-      const data = cache[rid];
-      if (!data) return;
-      if (filterState.lang && (data.lang || '').toLowerCase() !== filterState.lang.toLowerCase()) return;
-      if (hasTags) {
-        const tags = getTags(rid);
-        if (!filterState.tags.every(ft => tags.includes(ft))) return;
-      }
-      results.push({ repoId: rid, data });
-    });
   } else {
     results = getTagFilteredRepos(false);
   }
@@ -328,6 +343,19 @@ export function applyFilters(): void {
 
   // 8. 切换筛选栏为自定义 Language/Sort
   updateNativeFilters(true);
+}
+
+/** 退出全部自定义筛选（原生 Clear filter 本地化）：清状态 → 本地浏览页 → 干净地址栏 */
+export function exitCustomMode(): void {
+  filterState.tags = [];
+  filterState.tagMode = false;
+  filterState.searchQuery = '';
+  filterState.searchMode = false;
+  filterState.page = 1;
+  applyFilters();
+  renderTagFilterBar();
+  refreshTagPillStates();
+  history.pushState({}, '', location.pathname + '?tab=stars');
 }
 
 /**
@@ -367,17 +395,6 @@ export function updateNativeFilters(tagMode: boolean): void {
     const allResults = filterState.searchQuery
       ? searchCacheRepos(filterState.searchQuery, true)
       : getTagFilteredRepos(true);
-    // 补充原生搜索结果的语言
-    if (filterState.searchQuery && filterState.nativeSearchResults.length > 0) {
-      const cache = loadRepoCache();
-      const existingIds = new Set(allResults.map(r => r.repoId));
-      filterState.nativeSearchResults.forEach(rid => {
-        if (!existingIds.has(rid)) {
-          const data = cache[rid];
-          if (data) allResults.push({ repoId: rid, data });
-        }
-      });
-    }
     const langSet = new Set<string>();
     allResults.forEach(({ data }) => { if (data.lang) langSet.add(data.lang); });
     const languages = Array.from(langSet).sort((a, b) => a.localeCompare(b));

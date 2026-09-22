@@ -1,11 +1,8 @@
-import { getRepoIdFromItem, getRepoItems, getStarsMainColumn, hideListsSection } from './dom';
-import { extractAndCacheRepoFromCard } from './extract';
+import { getRepoItems, getStarsMainColumn, hideListsSection } from './dom';
 import { applyFilters } from './filters';
 import { interceptSearchForm } from './search';
 import { mountSyncButton } from './fullSync';
-import { createStarButton } from './ui/cards';
-import { renderNotes } from './ui/notes';
-import { renderTagFilterBar, renderTags } from './ui/tagFilter';
+import { renderTagFilterBar } from './ui/tagFilter';
 import { isDesktop } from './utils';
 
 /**
@@ -25,103 +22,22 @@ export function transformStarsList(): boolean {
   const colLg9 = getStarsMainColumn();
   if (!colLg9) return false;
 
+  // 4.0.0：原生列表不再解析（数据源 = API 缓存）；空列表 = frame 还没渲染 → 重试
   const repoItems = getRepoItems(colLg9);
-  if (repoItems.length === 0) {
-    return !!colLg9.querySelector('.stars-grid-container');
-  }
+  if (repoItems.length === 0 && !colLg9.querySelector('.stars-grid-container')) return false;
 
   if (colLg9.querySelector('.stars-grid-container')) return true;
 
   const gridContainer = document.createElement('div');
   gridContainer.className = 'stars-grid-container';
 
-  repoItems.forEach((item) => {
-    const card = document.createElement('div');
-    card.className = 'stars-grid-card';
+  // 原生列表整体隐藏：4.0.0 起卡片由缓存渲染，原生 DOM 仅作回落显示
+  repoItems.forEach((item) => item.classList.add('stars-original-hidden'));
 
-    // 提取 repoId
-    const repoId = getRepoIdFromItem(item);
-    if (repoId) card.dataset.repoId = repoId;
-
-    // 提取 repoName（href）
-    const h3 = item.querySelector('h3');
-    if (h3) {
-      const repoLink = h3.querySelector('a');
-      if (repoLink) card.dataset.repoName = repoLink.getAttribute('href') || '';
-    }
-
-    const descP = item.querySelector('p[itemprop="description"]');
-    const metaDiv = item.querySelector('div.f6.color-fg-muted');
-
-    let cardHTML = '<div class="stars-card-header">';
-    if (h3) cardHTML += `<h3>${h3.innerHTML}</h3>`;
-    cardHTML += '</div>';
-
-    if (descP) {
-      cardHTML += `<p class="stars-card-desc">${(descP.textContent || '').trim()}</p>`;
-    } else {
-      cardHTML += '<p class="stars-card-desc" style="opacity:0.5;font-style:italic;">No description</p>';
-    }
-
-    // 标签容器
-    cardHTML += `<div class="stars-card-tags" data-repo-id="${repoId}"></div>`;
-
-    if (metaDiv) {
-      const langSpan = metaDiv.querySelector('span.ml-0, span:has(.repo-language-color)');
-      const starLink = metaDiv.querySelector('a[href*="/stargazers"]');
-      const forkLink = metaDiv.querySelector('a[href*="/forks"]');
-
-      let mainParts = '';
-      if (langSpan) mainParts += langSpan.outerHTML;
-      if (starLink) mainParts += starLink.outerHTML;
-      if (forkLink) mainParts += forkLink.outerHTML;
-
-      let updatedHTML = '';
-      const allNodes = Array.from(metaDiv.childNodes);
-      let foundUpdated = false;
-      for (const node of allNodes) {
-        if (node.nodeType === Node.TEXT_NODE && (node.textContent || '').includes('Updated')) {
-          foundUpdated = true;
-        }
-        if (foundUpdated) {
-          updatedHTML += node.nodeType === Node.TEXT_NODE ? node.textContent : (node as Element).outerHTML;
-        }
-      }
-
-      cardHTML += '<div class="stars-card-meta">';
-      if (mainParts) cardHTML += `<span class="stars-meta-main">${mainParts}</span>`;
-      if (updatedHTML.trim()) cardHTML += `<span class="stars-meta-updated">${updatedHTML.trim()}</span>`;
-      cardHTML += '</div>';
-    }
-
-    cardHTML += `<div class="stars-card-notes" data-repo-id="${repoId}"></div>`;
-
-    card.innerHTML = cardHTML;
-    gridContainer.appendChild(card);
-    item.classList.add('stars-original-hidden');
-
-    // 缓存仓库数据
-    extractAndCacheRepoFromCard(item, repoId);
-
-    // 星星按钮
-    createStarButton(card, item);
-
-    // 渲染标签
-    const tagsContainer = card.querySelector<HTMLElement>('.stars-card-tags');
-    if (tagsContainer) renderTags(tagsContainer);
-
-    // 渲染备注
-    const notesContainer = card.querySelector<HTMLElement>('.stars-card-notes');
-    if (notesContainer) renderNotes(notesContainer);
-  });
-
-  // 分页器
-  const paginator = colLg9.querySelector('.paginate-container:not(.stars-original-hidden)');
-  if (paginator) {
-    gridContainer.appendChild(paginator.cloneNode(true));
-    paginator.classList.add('stars-original-hidden');
-  }
-
+  // 分页器（4.0.0）：原生藏起 + 自造本地分页器（页码/总数来自缓存；顶部分页器克隆它）
+  const nativePager = colLg9.querySelector('.paginate-container');
+  if (nativePager) nativePager.classList.add('stars-original-hidden');
+  gridContainer.appendChild(buildLocalPager());
   colLg9.appendChild(gridContainer);
   // “Starred repositories” 标题行右侧复制一份分页器（免滚动到底部才能翻页）
   const headerRow = mountTopPager(colLg9, gridContainer);
@@ -150,6 +66,38 @@ export function transformStarsList(): boolean {
   applyFilters();
 
   return true;
+}
+
+/**
+ * 自造分页器（4.0.0）：本地页码/总数；`data-gsm-page` 供 window 捕获拦截；
+ * 顶部分页器克隆它 → 两份都带 `gsm-local-pager` 类，统一被 updateLocalPagers 更新。
+ */
+function buildLocalPager(): HTMLElement {
+  const wrap = document.createElement('div');
+  wrap.className = 'paginate-container gsm-local-pager';
+
+  const group = document.createElement('div');
+  group.className = 'BtnGroup';
+
+  const prev = document.createElement('a');
+  prev.className = 'btn BtnGroup-item';
+  prev.href = '#';
+  prev.dataset.gsmPage = 'prev';
+  prev.textContent = 'Previous';
+
+  const info = document.createElement('span');
+  info.className = 'btn BtnGroup-item gsm-page-info';
+  info.textContent = '…';
+
+  const next = document.createElement('a');
+  next.className = 'btn BtnGroup-item';
+  next.href = '#';
+  next.dataset.gsmPage = 'next';
+  next.textContent = 'Next';
+
+  group.append(prev, info, next);
+  wrap.appendChild(group);
+  return wrap;
 }
 
 /**

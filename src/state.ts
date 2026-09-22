@@ -19,10 +19,10 @@ export interface FilterState {
   searchQuery: string;
   /** 是否处于搜索模式 */
   searchMode: boolean;
-  /** GitHub 原生搜索返回的 repoId 列表（用于补充缓存未命中的结果） */
-  nativeSearchResults: string[];
-  /** 防止原生搜索重复 fetch */
-  nativeSearchFetching: boolean;
+  /** 本地浏览页码（4.0.0：缓存切页，1-based） */
+  page: number;
+  /** 本地浏览总页数 = ceil(count / NATIVE_PAGE_SIZE) */
+  totalPages: number;
 }
 
 export const filterState: FilterState = {
@@ -32,6 +32,6 @@ export const filterState: FilterState = {
   tagMode: false,
   searchQuery: '',
   searchMode: false,
-  nativeSearchResults: [],
-  nativeSearchFetching: false,
+  page: 1,
+  totalPages: 1,
 };

@@ -3,12 +3,12 @@ import baseCss from './styles/base.css?inline';
 import persistentCss from './styles/persistent.css?inline';
 import wideCss from './styles/wide.css?inline';
 import { installBootHide, isStarsPage, revealBootHide, revealTurboHide } from './boot';
-import { getRepoIdMeta, getStarButton, hideListsSection, isStarButtonActive } from './dom';
+import { getRepoIdMeta, getStarButton, getStarsMainColumn, hideListsSection, isStarButtonActive } from './dom';
 import { extractAndCacheRepoFromDetailPage } from './extract';
+import { exitCustomMode } from './filters';
+import { hasApiData, runFullSync, scheduleProbeSync } from './fullSync';
 import { interceptPagination } from './pagination';
-import { recordArrival } from './snapshot';
-import { registerTokenMenu } from './starCheck';
-import { filterState } from './state';
+import { promptForToken, registerTokenMenu } from './starCheck';
 import { cleanupExpiredUnstarred, markRepoStarred, markRepoUnstarred } from './storage/pendingDelete';
 import { migrateTagsIfNeeded } from './storage/tags';
 import { transformStarsList } from './transform';
@@ -177,6 +177,14 @@ function transformAndReveal(animate: boolean, retries = 12): void {
   }
   ensureStarsSetup();
 
+  // 4.0.0 API 主模式：无全量缓存 = 不转换（揭示原生页面 + 配置横幅），避免白屏/半成品网格
+  if (!hasApiData()) {
+    starsNavPending = false;
+    revealAfterTransform(false);
+    showSetupBanner();
+    return;
+  }
+
   let done = false;
   try {
     done = transformStarsList();
@@ -186,8 +194,8 @@ function transformAndReveal(animate: boolean, retries = 12): void {
   if (done) {
     starsNavPending = false;
     revealAfterTransform(animate);
-    // 到货记录：与上次同 URL 到货 diff，消失的仓库交 API 核对（幂等，内容未变不写盘）
-    recordArrival();
+    // API 主模式：进页自动 ETag 快筛 → 变更整表（无 token 内部静默返回）
+    scheduleProbeSync();
     return;
   }
   if (!isDesktop()) {
@@ -207,7 +215,56 @@ function transformAndReveal(animate: boolean, retries = 12): void {
   revealBootHide('转换失败/重试耗尽');
 }
 
-/** 导航监听：任何匹配页都要挂（纯 profile 页点 Stars 就靠它接进来）。 */
+/**
+ * 4.0.0 配置横幅：无全量缓存（首次升级 / 未配 token）时显示在列表上方。
+ * 「设置 token」打开 TM 菜单同款输入框；「立即同步」跑 P4 全量拉取，
+ * 成功后 hasApiData 变 true → 重新 transformAndReveal 出网格。
+ */
+function showSetupBanner(): void {
+  if (document.querySelector('.gsm-setup-banner')) return;
+  const colLg9 = getStarsMainColumn();
+  const host = colLg9 || document.getElementById('user-starred-repos');
+  if (!host) return;
+
+  const bar = document.createElement('div');
+  bar.className = 'gsm-setup-banner';
+  bar.innerHTML =
+    '<span>⭐ Stars Grid 4.0 需要一次性全量同步（GitHub API）。请先配置 Token，或立即同步。</span>';
+
+  const setup = document.createElement('button');
+  setup.className = 'btn BtnGroup-item';
+  setup.type = 'button';
+  setup.textContent = '设置 Token';
+  setup.addEventListener('click', () => promptForToken());
+
+  const sync = document.createElement('button');
+  sync.className = 'btn BtnGroup-item';
+  sync.type = 'button';
+  sync.textContent = '立即同步';
+  sync.addEventListener('click', () => {
+    if (sync.disabled) return;
+    sync.disabled = true;
+    sync.classList.add('gsm-pager-loading');
+    sync.setAttribute('aria-busy', 'true');
+    void (async () => {
+      try {
+        const summary = await runFullSync('button');
+        if (summary) {
+          bar.remove();
+          transformAndReveal(false);
+        }
+      } finally {
+        sync.disabled = false;
+        sync.classList.remove('gsm-pager-loading');
+        sync.removeAttribute('aria-busy');
+      }
+    })();
+  });
+
+  bar.append(setup, sync);
+  host.prepend(bar);
+}
+
 function registerNavListeners(): void {
   // Turbo frame 替换前先藏住（标签互切、翻页都走这里），替换+转换完成后再渲染
   document.addEventListener('turbo:before-frame-render', (event) => {
@@ -306,20 +363,13 @@ function registerNavListeners(): void {
     }
   });
 
-  // 修正 GitHub 原生 "Clear filter" — 强制整页导航到干净的 ?tab=stars
+  // 修正 GitHub 原生 "Clear filter"（4.0.0）：全部本地化 — 清状态 → 本地浏览页 → 干净地址栏，不再整页导航
   document.addEventListener('click', (e) => {
     const target = e.target instanceof Element ? e.target : null;
     const link = target ? target.closest('a.issues-reset-query') : null;
     if (!link) return;
     e.preventDefault();
-    // 重置搜索状态
-    filterState.searchQuery = '';
-    filterState.searchMode = false;
-    filterState.nativeSearchResults = [];
-    filterState.tags = [];
-    filterState.tagMode = false;
-    const baseUrl = new URL(location.href);
-    location.href = baseUrl.pathname + '?tab=stars';
+    exitCustomMode();
   });
 }
 

@@ -64,3 +64,13 @@ export interface FilteredRepo {
 }
 
 export type SortKey = 'stars' | 'updated' | 'created';
+
+/** P4 全量同步元数据（4.0.0 API 主模式：ETag 条件快筛 + TTL 兜底 + 本地分页总数） */
+export interface FullSyncMeta {
+  /** 整表首页（per_page=100&page=1）响应的 ETag（含引号原样保存） */
+  etag?: string;
+  /** 上次成功整表的时间戳 */
+  lastFullSyncAt?: number;
+  /** 上次整表的 star 总数（本地分页总页数 = ceil(count/30)） */
+  count?: number;
+}

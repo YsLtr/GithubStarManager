@@ -16,7 +16,8 @@ declare const GM_setValue: ((key: string, value: unknown) => void) | undefined;
 declare const GM_registerMenuCommand: ((name: string, fn: () => void) => unknown) | undefined;
 
 const LS_PREFIX = 'github-stars-grid::';
-
+/** 敏感键：只存 GM、绝不进 localStorage 镜像（PAT 已是强制 API 的硬门槛，泄露面必须收紧） */
+const SENSITIVE_KEYS = new Set<string>(['github_pat']);
 function lsRead(key: string): unknown {
   try {
     const raw = localStorage.getItem(LS_PREFIX + key);
@@ -27,6 +28,15 @@ function lsRead(key: string): unknown {
 }
 
 function lsWrite(key: string, value: unknown): void {
+  // 敏感键拒写镜像，并顺手清理历史镜像残留
+  if (SENSITIVE_KEYS.has(key)) {
+    try {
+      localStorage.removeItem(LS_PREFIX + key);
+    } catch {
+      /* 忽略 */
+    }
+    return;
+  }
   try {
     localStorage.setItem(LS_PREFIX + key, JSON.stringify(value));
   } catch (e) {
@@ -43,6 +53,14 @@ export function gmGet<T>(key: string, defaultValue: T): T {
       if (typeof GM_setValue === 'function') {
         try {
           GM_setValue(key, lsValue);
+          // 敏感键迁移成功后立即清掉 localStorage 镜像（GM_setValue 抛错则保留镜像防丢）
+          if (SENSITIVE_KEYS.has(key)) {
+            try {
+              localStorage.removeItem(LS_PREFIX + key);
+            } catch {
+              /* 忽略 */
+            }
+          }
         } catch {
           /* 迁移失败则维持现状,不影响读取 */
         }

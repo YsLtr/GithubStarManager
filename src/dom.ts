@@ -62,27 +62,6 @@ export function getRepoItems(container: ParentNode): HTMLElement[] {
   return [];
 }
 
-/**
- * 条目对应的仓库数字 ID。
- *
- * 新版把 ID 放在语义属性 `data-repository-id` 上（`user-list-menu` / 按钮）；
- * 旧版只有 `data-toggle-for` / `details-user-list-<id>` 形式；
- * 最后再退回 Hydro 埋点 JSON 里的 `repository_id`。
- */
-export function getRepoIdFromItem(item: Element): string {
-  const attrEl = item.querySelector('[data-repository-id]');
-  const attr = attrEl ? attrEl.getAttribute('data-repository-id') : null;
-  if (attr && /^\d+$/.test(attr)) return attr;
-
-  const panel = item.querySelector('[id^="details-user-list-"]');
-  const byId = panel ? (panel.id.match(/details-user-list-(\d+)/) || [])[1] : null;
-  if (byId) return byId;
-
-  const hydro = item.querySelector('[data-hydro-click*="repository_id"]');
-  const raw = hydro ? hydro.getAttribute('data-hydro-click') || '' : '';
-  const m = raw.match(/"repository_id":\s*(\d+)/);
-  return m ? m[1] : '';
-}
 
 /**
  * 原生筛选按钮（Type / Language / Sort）所在的那一行。

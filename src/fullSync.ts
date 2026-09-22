@@ -30,8 +30,7 @@ import { gmGet, gmSet } from './gm';
 import { applyExternalUnstar, getGitHubPat, promptForToken, recordVerdict } from './starCheck';
 import { loadPendingDelete, markRepoStarred } from './storage/pendingDelete';
 import { loadRepoCache, saveRepoCache, saveRepoData } from './storage/repoCache';
-import type { RepoData, ShiftPendingMap } from './types';
-
+import type { FullSyncMeta, RepoData, ShiftPendingMap } from './types';
 interface RemoteStar {
   repoId: string;
   path: string;
@@ -53,11 +52,12 @@ const PAGE_SIZE = 100;
 const MAX_PAGES = 200;
 const PAGE_GAP_MS = 100;
 const RATE_FLOOR = 10;
-const AUTO_COOLDOWN_MS = 60_000;
-
+/** ETag 快筛冷却：进页/frame 重渲染风暴下最多 60s 探一次 */
+const PROBE_COOLDOWN_MS = 60_000;
+/** 整表 TTL 兜底：ETag 只代表首页，中部变化可能长期 304 → 超时强制整表 */
+const FULL_SYNC_TTL_MS = 48 * 60 * 60 * 1000;
 let syncing = false;
-let lastAutoAt = 0;
-
+let lastProbeAt = 0;
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -87,12 +87,12 @@ function parseItem(raw: unknown): RemoteStar | null {
 }
 
 /** 分页拉全量；任何不完整信号都抛错（调用方保证不落地半张表） */
-async function pullAllStarred(tok: string): Promise<{ items: RemoteStar[]; pages: number }> {
+async function pullAllStarred(tok: string): Promise<{ items: RemoteStar[]; pages: number; etag: string | undefined }> {
   const items: RemoteStar[] = [];
   let pages = 0;
   let rawSeen = 0;
   let parseMisses = 0;
-
+  let etag: string | undefined;
   for (let page = 1; page <= MAX_PAGES; page++) {
     const resp = await fetch(`https://api.github.com/user/starred?per_page=${PAGE_SIZE}&page=${page}`, {
       headers: {
@@ -101,7 +101,8 @@ async function pullAllStarred(tok: string): Promise<{ items: RemoteStar[]; pages
         'X-GitHub-Api-Version': '2022-11-28',
       },
     });
-
+    // 首页 ETag 抓一次（后续 probeAndSync 的 If-None-Match 基线）
+    if (page === 1) etag = resp.headers.get('etag') ?? undefined;
     if (resp.status === 401) throw new Error('token 无效（401），TM 菜单可重新设置');
     if (resp.status === 403) {
       const retryAfter = resp.headers.get('retry-after');
@@ -141,7 +142,7 @@ async function pullAllStarred(tok: string): Promise<{ items: RemoteStar[]; pages
   if (rawSeen > 0 && items.length === 0) {
     throw new Error(`拉到 ${rawSeen} 条但解析为 0（响应形态不符），整体放弃`);
   }
-  return { items, pages };
+  return { items, pages, etag };
 }
 
 /** 仍 star 的位移挂起直接结案（成员关系已被整表证实；unstar 的由宽限管线清） */
@@ -159,7 +160,7 @@ function clearShiftPendingForStarred(starredIds: Set<string>): number {
 }
 
 /** 手动/自动的共同入口；失败返回 null 且不改动任何数据 */
-async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummary | null> {
+export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummary | null> {
   if (syncing) return null;
   let tok = getGitHubPat();
   if (!tok && source === 'button') {
@@ -174,7 +175,7 @@ async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummary | nul
   syncing = true;
   console.log('[github-stars-grid] ★ P4 全量拉取开始（GET /user/starred，每页 100）…');
   try {
-    const { items, pages } = await pullAllStarred(tok);
+    const { items, pages, etag } = await pullAllStarred(tok);
     const remoteMap = new Map(items.map((it) => [it.repoId, it]));
 
     // A. 外部 unstar：本地缓存有、远端无 → 整表即权威确认，走既有宽限管线
@@ -244,6 +245,8 @@ async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummary | nul
         `恢复 ${restored}、外部 unstar ${unstarred}、回填 star 时间 ${backfilled}、` +
         `元数据刷新 ${refreshed}、位移挂起结算 ${shiftCleared}`
     );
+    // 写元数据：ETag 快筛基线 + lastFullSyncAt（TTL/isApiData 判定）+ 本地分页总数
+    gmSet(STORAGE_KEYS.fullSyncMeta, { etag, lastFullSyncAt: Date.now(), count: items.length });
     return summary;
   } catch (err) {
     console.error(
@@ -256,13 +259,62 @@ async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummary | nul
   }
 }
 
-/** 快照消失 > 12 等场景的自动入口：单飞 + 60s 冷却 */
-export function scheduleFullSync(): void {
-  if (syncing) return;
-  if (Date.now() - lastAutoAt < AUTO_COOLDOWN_MS) return;
-  lastAutoAt = Date.now();
-  void runFullSync('auto');
+/** API 数据就绪 = 至少完整整表过一次（全量缓存可渲染 = API 主模式前提） */
+export function hasApiData(): boolean {
+  const meta = gmGet<FullSyncMeta>(STORAGE_KEYS.fullSyncMeta, {});
+  return !!meta.lastFullSyncAt && (meta.count ?? 0) > 0;
 }
+
+/** 进页自动同步（transform 成功后触发）：延迟 2s 让首屏渲染先完成 */
+export function scheduleProbeSync(): void {
+  window.setTimeout(() => {
+    void probeAndSync();
+  }, 2000);
+}
+
+/**
+ * ETag 条件快筛 → 变更时整表：
+ * - 距上次整表 < 48h 且有 etag → If-None-Match 探首页：304 = 无变化（免额度）直接返回；
+ * - 200（有变化）/ 无 etag / 超 TTL → 整表（runFullSync 自己写新 etag）；
+ * - 探测 401/403/网络失败 → 跳过本次（权限问题留给手动 Sync 报详细错误）。
+ */
+async function probeAndSync(): Promise<void> {
+  if (syncing) return;
+  if (Date.now() - lastProbeAt < PROBE_COOLDOWN_MS) return;
+  const tok = getGitHubPat();
+  if (!tok) return;
+  lastProbeAt = Date.now();
+
+  const meta = gmGet<FullSyncMeta>(STORAGE_KEYS.fullSyncMeta, {});
+  const stale = !meta.lastFullSyncAt || Date.now() - meta.lastFullSyncAt > FULL_SYNC_TTL_MS;
+  if (meta.etag && !stale) {
+    let resp: Response;
+    try {
+      resp = await fetch(`https://api.github.com/user/starred?per_page=${PAGE_SIZE}&page=1`, {
+        headers: {
+          Authorization: `Bearer ${tok}`,
+          Accept: 'application/vnd.github.star+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'If-None-Match': meta.etag,
+        },
+      });
+    } catch (err) {
+      console.log('[github-stars-grid] ETag 探测网络失败，本次跳过:', err instanceof Error ? err.message : err);
+      return;
+    }
+    if (resp.status === 304) {
+      console.log('[github-stars-grid] ETag 304：star 列表无变化（免额度快筛）');
+      return;
+    }
+    if (resp.status !== 200) {
+      console.log(`[github-stars-grid] ETag 探测 HTTP ${resp.status}，本次跳过`);
+      return;
+    }
+  }
+
+  await runFullSync('auto');
+}
+
 
 /**
  * 标题行同步按钮：插在顶部翻页器左侧（父容器 .gsm-header-row，h2 flex:1

@@ -5,10 +5,10 @@
 
 ---
 
-## 当前交接（2026-09-22 16:45 +0800）
+## 当前交接（2026-09-23 07:30 +0800）
 
 ### 目标
-GitHub 2026 改版适配（f117ef4）、Lists+FOUC（2c84884）、GM 兼容层+Turbo 动画（c376192）、mountGmApi（bc6b19d）、3.0.3 三 bug（0d6e913）、3.0.4 直载动画+兜底误撤、3.0.5 取消冗余整页 visit（554bcf1）、3.0.6 Set status 裁剪修复（569174d）、3.0.7 分页原地翻页（bffa4e8）、3.0.8 顶部翻页器+转圈（270ba4d）、3.0.9 外部 unstar 检测 P1+P2.5（dceeef5）、3.0.10 位移判定（15e1729）、3.0.11 搜索口径修正（a162eae）均已提交。本轮 = **3.1.0 P4 全量同步落地**：新模块 `src/fullSync.ts`——标题行 Sync 按钮（翻页器左侧）手动 + 快照消失 >12 自动触发，`GET /user/starred`（`star+json`）整表 diff（外部 unstar 走既有宽限管线 / 新 star 建缓存 / 宽限区内恢复标签备注）并回填 `starredAt`；**Sort 补第 3 项「Recently starred」**（D5c 兑现）；`pnpm check` 通过，待提交与真机验证。
+GitHub 2026 改版适配到 3.1.0 全系列（f117ef4 … a162eae，含 3.1.0 P4 全量同步，明细见下方各段）均已提交。本轮 = **4.0.0 API 主模式三步走**（Step A PAT 安全 + ETag 条件同步 / Step B 渲染源切换：缓存卡 + 本地分页/退出 + 纯本地搜索 + API 星星按钮 + 配置横幅 / Step C 死码清理，见下方「4.0.0 段」与 D7）：`pnpm check` 通过（87.30 kB，比 3.1.0 小 20kB），**待提交与真机验证**。
 
 ### 本轮改了什么（3.0.3 → 3.0.4，本次提交）
 
@@ -47,6 +47,10 @@ GitHub 2026 改版适配（f117ef4）、Lists+FOUC（2c84884）、GM 兼容层+T
 
 **3.1.0 P4 全量同步（同日 16:45；用户指令「开始实现 P4，同步按钮放标题行右侧翻页器左边」）**：① **新模块 `src/fullSync.ts`**——`GET /user/starred?per_page=100&page=N` + `Accept: application/vnd.github.star+json`（带 `starred_at`；防御 `repository`/`repo`/裸对象三形态，任一条解析失败=整体放弃）、页间 100ms、速率余量 <10 放弃、超 200 页上限放弃、401/403/限流报错带修复提示；**完整性红线：半张表绝不当整表用**——所有失败路径在 catch 里抛错、不改任何数据（否则未拉到的页会全被误判 unstar）。② **整表 diff 三向**：本地有远端无 → `starCheck.applyExternalUnstar()`（= `confirmExternalUnstar` 管线：宽限备份+清快照+卡片翻空星，**整表即权威确认跳过双 404**）+ 写 7d 裁决；远端有本地无 → `saveRepoData()` 建条目 / `pendingDelete` 内则 `markRepoStarred()` 恢复（标签备注连同恢复）；交集 → 回填 `starredAt` + desc/lang/stars/forks/updatedAt 刷新（`updated` 展示文本 API 还原不出，保留旧值）；顺带结算位移挂起（远端仍 star 的直接清）。写放大控制：交集回填整表只 load/save 各 1 次，新增/恢复按差异数走既有管线。③ **Sync 按钮**：`mountTopPager` 改返回标题行（`HTMLElement \| null`），transform 里 `mountSyncButton(headerRow)` 插到 `.gsm-top-pager` 左侧——CSS 把 `.gsm-header-row` 的 `h2` 改 `flex:1` 撑满（去掉 `space-between`），按钮与翻页器一起贴右；loading 复用 `gsm-pager-loading`；无 token 点击先弹 `promptForToken()`（starCheck 把菜单体抽成公共函数，菜单标签改「⭐ 设置 GitHub Token（核对 + P4 全量同步）」）。④ **快照 >12 升级为自动整表**：`snapshot.handleMissing` 消失 >12 **且已配 token** → `scheduleFullSync()`（单飞 + 60s 冷却），否则维持 ≤8 核对 +「配置 token 后自动走 P4」提示。⑤ **Sort 第 3 项落地（D5c 兑现）**：`SortKey + 'created'`、自建菜单 `+{created, Recently starred}`、`sortResults` star 时间降序（未回填沉底、稳定排序保到达序=原生服务端序）、`inheritNativeFilters` 遇原生 Recently starred → `'created'`、退出模式 URL 写回泛化为 `targetParams.set('sort', …)`。
 
+**4.0.0 API 主模式（2026-09-23 07:30；用户定案：全面强制 API + 分期 0/1/2 先行，见 D7）**：**A 安全+ETag**——PAT 移出 localStorage 镜像（gm.ts `SENSITIVE_KEYS`：lsWrite 跳写、gmGet 迁移清镜像，XSS 防护）；新增 `stars_full_sync_meta`（ETag/lastFullSyncAt/count）、`pullAllStarred` 带 `If-None-Match` 条件拉取（304 免额度免拉）、transform 成功后 `probeAndSync` 进页 idle 自动探（无变化免拉、超 TTL 强制整表）、`hasApiData()` 判渲染模式。
+**B 渲染源切换**——有全量缓存：`transformStarsList` 不再解析原生卡不再抽缓存（API 已权威），改挂 `renderBrowsePage`（原生列表+原生分页器 `stars-original-hidden` 藏起；`buildCardFromCache`+`createStarButtonForCached` 纯缓存渲染）；**本地分页**：自造 `gsm-local-pager`（`buildLocalPager`，`data-gsm-page`）顶/底两份由 `updateLocalPagers` 同步页码与 disabled，`pagination.ts` 只拦本地页码点击（零 fetch、零 Turbo）；**本地退出**：`exitCustomMode`（pushState `?tab=stars`，Clear filter 不再整页导航）；**搜索纯本地**（`fetchNativeSearchResults`/`nativeSearchResults` 等全删）；**星星按钮纯 API**（PUT/DELETE `/user/starred/{o}/{r}` + Bearer PAT，CSRF 提单/三处检测管线整体移除，失败回落原生 form 路径）；无缓存：原生页 + `.gsm-setup-banner` 横幅（「设置 token」= `promptForToken`、「立即同步」= `runFullSync('button')`，无 token 自动弹配置，完成后 `transformAndReveal` 重建出网格）。
+**C 死码清理**——snapshot.ts 删 `recordArrival`/位移/挂起全链只留 `purgeRepoFromSnapshots` 回调；starCheck 删 `enqueueVerify`/`kick`/`verifyOne`/`apiGet` 核对队列与双 404（P4 整表 diff 即权威确认，留 token/裁决写入/宽限区管线）；extract 删 `extractAndCacheRepoFromCard`；dom 删 `getRepoIdFromItem`；fullSync 删 `scheduleFullSync`（`probeAndSync` 接管）；filters 删原生搜索语言补充块与 `getTags` 死 import；+`NATIVE_PAGE_SIZE=30`（constants）。
+
 **三 bug 根因（用户 2026-09-22 报告，本轮已修）**：① `@match */*` 匹配不到单段路径 `/YsLtr`，且 `init()` 在非 stars 页早退不挂导航监听 → profile 直入/点 Stars 均无效；② `visibility:hidden` 可被后代覆盖（GitHub 还有 app 层 CSS 未查全），且揭示后网格 `gsm-grid-in` 淡入 0.3s——「页面出现后内容再淡入」被当成闪；③ `gmAddStyle` 注入的布局样式**没有任何移除路径**，同文档 turbo 离开后 180px 侧边栏/120px 头像规则仍生效。
 **约束（永久生效）**：禁止 `import {GM_*} from '$'`（顶部一次性捕获与 document-start 不兼容，会固化成 undefined）；GM 一律走 `src/gm.ts`。
 
@@ -55,7 +59,7 @@ GitHub 2026 改版适配（f117ef4）、Lists+FOUC（2c84884）、GM 兼容层+T
 ### 数据存储（已向用户说明）
 - 主存储 GM：`stars_tags_<userId>` / `stars_notes_<userId>` / `stars_repo_cache` / `stars_pending_delete`（取不到 userId 回退 `stars_tags`/`stars_notes`）；localStorage 镜像同键加前缀 `github-stars-grid::`。
 - 迁移仅当 GM 为默认值时触发：GM 已有旧数据时，dev 写进 localStorage 的新数据**不会合并**。
-- 核对相关（3.0.9/3.0.10 新增）：`github_pat`（PAT）、`stars_page_snapshots`（到货页快照）、`stars_star_verdicts`（API 裁决缓存）、`stars_shift_pending`（位移挂起：被挤出的仓库 → 预期页，出现即清、缺失才核对）——机制见 DEVELOPER.md §5/§6，决策见下方「数据同步设计决策」。
+- 核对/同步相关：`github_pat`（PAT，**4.0.0 起不写 localStorage 镜像**）、`stars_page_snapshots`（到货页快照，4.0.0 起只清不写）、`stars_star_verdicts`（裁决缓存）、`stars_shift_pending`（位移挂起，历史数据）、`stars_full_sync_meta`（ETag/lastFullSyncAt/count，4.0.0 新增）——机制见 DEVELOPER.md §5/§6，决策见下方「数据同步设计决策」D1–D7。
 
 ### 数据同步设计决策（2026-09-22 定稿，用户逐条确认）
 
@@ -74,7 +78,9 @@ GitHub 2026 改版适配（f117ef4）、Lists+FOUC（2c84884）、GM 兼容层+T
 
 **D6 · P4 全量同步与 Sync 按钮（3.1.0，用户定：「开始实现 P4，按钮放标题行右侧翻页器左边」）**：a) 数据源选 **REST `GET /user/starred` + `Accept: application/vnd.github.star+json`**（GraphQL 未采用，先跑通 REST，ETag/GraphQL 分页优化留后续）——参考项目 GithubStarsManager 同法实现（每页 100、页间 100ms），但本项目须兼容 fine-grained PAT（D3；参考项目只支持 classic）；b) 触发 = 标题行 **Sync** 手动（无 token 先弹配置）+ 快照消失 >12 自动（**且已配 token**；单飞 + 60s 冷却）；c) 权威边界照总则——**远端权威**：星标成员关系、star 时间、仓库元数据；**本地权威**：标签/备注（`fullSync` 绝不写 tags/notes）；d) 整表拉取**即 unstar 的权威确认**，直接复用 P2.5 宽限管线（`confirmExternalUnstar`：备份+清快照+卡片翻转）并写 7d 裁决，跳过逐条双 404；e) **完整性红线**：分页中断 / 解析失败 / 超 200 页上限 → 整体放弃不改任何数据（半表会把未拉到的页全判 unstar）；f) 写放大控制：交集回填整表只 load/save 各 1 次；g) 已知局限：classic 无 `repo` scope 时私有仓库 star 不在列表 → 误判 unstar（与 D3 同源；fine-grained 选 All repositories 无此问题）；h) **D5c 兑现**：Sort 补第 3 项「Recently starred」（`starredAt` 降序，未回填沉底保到达序），`inheritNativeFilters` 遇原生 Recently starred → `'created'`。
 
-**未实现（后续阶段）**：P3 local-first 首屏（缓存快照先渲染 + 到货校正 + DOM 增量 patch）；P4 余项——ETag/GraphQL 分页调研、**周期自动同步**（当前仅 Sync 手动 + 消失 >12 自动触发）。P4 主体已在 3.1.0 落地（见 D6）。
+**D7 · 全面强制 API（2026-09-23 用户定，覆盖此前「双模式」初案）**：a) **有 PAT → API 主模式全功能；无 PAT → 原生页 + `.gsm-setup-banner` 配置横幅强推**（「立即同步」无 token 自动弹 `promptForToken`，配置完成点同步即出缓存网格）；b) 分期 **0/1/2 本轮已落地**（0 = PAT 移出 localStorage；1 = ETag 条件同步 + 进页自动 probe；2 = 渲染/分页/退出/搜索/星星按钮全本地化），3/4（周期自动同步、原生交互深化）后续；c) 非个人页 `github.com/<u>?tab=stars` 的 API 能力已调研——`GET /users/{u}/starred` 不受 2026-07 stargazers 端点收紧限制、可 unauth（60/h、100/页）、`star+json` 返回 `starred_at`——**本轮未接**（transform 只查本用户缓存），留后续。
+
+**未实现（后续阶段）**：P3 local-first 首屏的**剩余部分**（4.0.0 渲染源已全走缓存 = P3 主体已达成；余 = 无 PAT 用户的本地镜像首屏与到货校正/增量 patch）；P4 余项——GraphQL 分页调研（ETag 已落地）、**周期自动同步**（当前进页 `probeAndSync` + Sync 手动）；D7c 非个人页 `GET /users/{u}/starred` 接入。
 
 **来源**：
 - fine-grained 端点权限表（“User permissions for Starring” 段）: https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens
@@ -103,7 +109,7 @@ dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用�
 
 ### 阻塞 / 风险 / 待确认
 
-1. **用户重装 `dist/github-stars-grid.user.js`（3.1.0）前台验证**：① 直进 `?tab=stars`：揭示无闪烁，且**至少观察 10 秒**页面不回退原生（3.0.3 是揭示后约 4s 被误撤样式）；② profile 点 Stars 出网格；③ 离开/返回时侧边栏恢复与收缩动画正常；④ 悬停 `Set status` 圆圈展开成完整药丸、右侧不再被切（水合完成需数秒，刚刷新时圆圈悬停不展开属正常）；⑤ **点分页 Next/Prev：旧内容保持可见直到新页换入，全程无空白/无淡入**（3.0.7 原地翻页；地址栏保持 ?tab=stars 属预期）；⑥ **「Starred repositories」行右侧有 Previous/Next 快捷份，点击后按钮内转圈、文字不消失、按钮不变宽**（3.0.8）；⑦ **TM 菜单出现「⭐ 设置 GitHub Token（核对 + P4 全量同步）」**（= grant+注册生效），配置 PAT（classic `ghp_`，或 fine-grained `github_pat_` = Account permissions → Starring → Read + All repositories）；⑧ **位移判定（3.0.10 核心）**：默认排序（Recently starred）在第 1 页新 star 一个仓库后，被挤到第 2 页的原尾部仓库只应见「位移挂起：N 个…本页不核对」且**不发 API 请求**（reverify 即上次误核对的用例）；翻到第 2 页该仓库出现 →「位移确认：…清除挂起、不核对」；只有挂起项在预期页**缺失**才见「…预期在本页却没有出现：交 API 核对」（未配 token 时见「未配置 token」提示属预期）；切 Most stars / Recently active 排序翻页见「快照检测到 N 个仓库从本页消失（当前排序无位移模型…）」直接核对属预期；⑨ **外部 unstar 端到端**：用**脚本感知不到的方式**取消 star（另一浏览器/手机 App，或 F12 里 `fetch('https://api.github.com/user/starred/<owner>/<repo>',{method:'DELETE',headers:{Authorization:'Bearer <PAT>'}})` —— 详情页/卡片上的星星按钮会走脚本自己的管线，测不到 API 核对路径），重进该页等 ~2s 见「★ 核对确认外部 unstar」，标签/备注已进宽限期（24h 内重 star 恢复）；⑩ **搜索口径（3.0.11）**：搜 `ASC` 结果只剩 名称/描述/标签/备注 真含 asc 的仓库（**不再整屏 JavaScript**），命中词在 标题/描述/标签/备注 里黄色高亮；⑪ **Sync 按钮 + P4 整表（3.1.0 核心）**：标题行右侧 `[Sync] [Previous][Next]`——点 Sync：无 token 先弹 PAT 配置（取消则控制台「P4 同步：未配置 token，已取消」）；有 token 按钮转圈 → 控制台「★ P4 全量拉取开始」→ 完成行「★ P4 全量同步完成：N 个 star / X 页 — 新增 a、恢复 b、外部 unstar c、回填 star 时间 d、元数据刷新 e、位移挂起结算 f」；失败见「★ P4 全量同步失败（未改动任何数据）」+ 原因（401 换 token / 403 对照 D3 / 限流稍后）。**判读**：完成后若「外部 unstar」数量异常大且你有私有 star → 先怀疑 classic 无 `repo` scope（D6g），换 fine-grained（All repositories）再同步；⑫ **Recently starred（D5c）**：原生菜单选「Recently starred」进自建模式后 Sort 菜单有**第 3 项**、按 star 时间降序；**首次 Sync 回填前未回填仓库整体沉底、保持到达序 = 原生页序**（属预期）；退出自定义模式 URL 写 `sort=created`。若仍闪：要控制台 `script loaded / 防闪烁隐藏已挂载 / 防闪烁解除 / 原地翻页完成` 各行原文。
+1. **用户重装 `dist/github-stars-grid.user.js`（4.0.0）前台验证**：① **首次装（无 token）**：原生页 + `.gsm-setup-banner` 横幅出现；点「设置 token」弹 PAT 输入（classic `ghp_` / fine-grained `github_pat_` = Account permissions → Starring → Read + All repositories）、「立即同步」按钮转圈 → 控制台「★ P4 全量同步完成」→ 网格自动出现（全量缓存渲染）；② **有 token 重进页**：直接缓存网格无闪烁，控制台见「ETag 304」或「★ P4 全量同步完成」（进页 `probeAndSync` 自动）；③ **本地翻页**：点顶/底 Previous/Next 零网络（Network 无 GitHub 列表请求）、页码「N / M」随缓存与语言/排序筛选联动、按钮内转圈 = `gsm-pager-loading`；④ **搜索** `ASC` 纯本地出结果 + 命中词黄高亮（无 JavaScript 噪音）；⑤ **星星按钮**：点卡片星 → Network 见 `PUT/DELETE /user/starred/...` 204/205，刷新后状态保持，失败回滚；⑥ **退出自定义模式**：标签/搜索清空或点原生 Clear filter → 地址栏回 `?tab=stars` 且**不整页刷新**（pushState）；⑦ 离开/返回 Stars 侧边栏恢复与收缩动画正常、直进 `?tab=stars` 观察 10s 不回退原生；⑧ Sort 三项含 Recently starred（`starredAt` 降序，未回填沉底=到达序）。**判读**：②见「ETag 探测 HTTP 4xx」→ PAT 权限对照 D3；⑤ 404 → 仓库路径/私有权限；横幅不同步消失 → 「立即同步」报 401/403 换 token。若仍闪：要控制台 `script loaded / 防闪烁隐藏已挂载 / 防闪烁解除` 各行原文。
 2. **dev HMR 在 github.com 上需要浏览器放行 CSP**：GitHub 的 `script-src` 白名单不含 `127.0.0.1`，dev loader 的动态 import 必被拒（`Failed to fetch dynamically imported module`）。插件绕不过，需装 CSP 放行扩展 + 允许 Local Network Access 弹窗。详见 `DEVELOPER.md` §2「dev 模式在 github.com 上的两个前置条件」。
 3. **两个脚本不能同时启用**：`transformStarsList()` 见到 `.stars-grid-container` 就提前返回，正式版先跑会让 dev 版"改了没反应"。开发时在 Tampermonkey 里禁用正式版。
 4. 真机验证必须**前台**：Chrome 冻结后台标签页后测量/交互全部失真（曾误判样式失效）。
@@ -111,7 +117,7 @@ dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用�
 
 ### 下一步
 
-1. 等 3.1.0 验证结果。完整清单见「阻塞」①（含 3.0.7–3.1.10 全部要点）。判读捷径：`防闪烁解除` 原因=`转换成功(直载)`；10s 无回退；位移三连日志顺序对（挂起→确认→缺失才核对）；搜 `ASC` 无 JavaScript 噪音+黄高亮；**Sync 点击后转圈、出「★ P4 全量同步完成」总结行（未配 token 先弹配置）；Sort 有 3 项、Recently starred 按 star 时间降序（首同步前沉底=到达序）**。若 403 按 `X-Accepted-GitHub-Permissions` 对照 D3 改 token；若 P4 后「外部 unstar」异常多 → 先查 classic 无 `repo` scope（D6g）。
+1. 等 4.0.0 验证结果，完整清单见「阻塞」①（4.0 新要点：无 token 横幅 → 同步出网格、进页 ETag/整表自动同步、分页零网络、星星按钮走 `/user/starred` API、退出 pushState 不整页刷新）。判读捷径：横幅消失 = 同步闭环；Network 无列表 GET = 本地分页闭环；`PUT /user/starred` 204 = API 按钮闭环；地址栏回 `?tab=stars` 且页面不闪 = 退出本地化闭环。ETag 4xx 查 PAT 权限（D3）；同步后「外部 unstar」异常多 → classic 无 `repo` scope（D6g）。
 2. **快速构建阶段（2026-09-22 起，用户已定）**：不跑 `tests/smoke/`，不写测试 fixture/断言；改完只 `pnpm check`，由用户在真实页面判断是否成功。
 3. 若 GitHub 再改版：先跑 `tests/diag/selectors.js` 定位失配点，再改 `src/dom.ts` 的 helper（**只改 helper，不要在业务模块里写选择器**）。
 4. 数据同步后续阶段（**P4 主体已在 3.1.0 落地**，见 D6）：**P3** local-first 首屏（缓存快照先显 + 到货校正 + DOM 增量 patch）；P4 余项——ETag/GraphQL 分页调研、**周期自动同步**（当前 Sync 手动 + 消失 >12 自动，可加定时 idle 同步）。见「数据同步设计决策」。

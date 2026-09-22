@@ -545,3 +545,20 @@ mark.gsm-search-hit {
 html.gsm-turbo-entry .stars-grid-container {
   animation: gsm-grid-in 0.3s ease both;
 }
+
+/* 4.0.0 配置横幅（无全量缓存时挂在列表上方：引导配置 token / 立即同步） */
+.gsm-setup-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  border: 1px solid var(--borderColor-default, #d0d7de);
+  border-radius: 6px;
+  background: var(--bgColor-muted, #f6f8fa);
+  font-size: 14px;
+  color: var(--fgColor-default, #1f2328);
+}
+
+.gsm-setup-banner .btn { flex: none; }

@@ -5,6 +5,9 @@ export const WIDE_BREAKPOINT = 1200;
 /** unstar 后数据的宽限期：24 小时 */
 export const GRACE_PERIOD = 24 * 60 * 60 * 1000;
 
+/** 每页卡片数（与 GitHub 原生分页一致；4.0.0 本地切页用） */
+export const NATIVE_PAGE_SIZE = 30;
+
 export const STORAGE_KEYS = {
   repoCache: 'stars_repo_cache',
   pendingDelete: 'stars_pending_delete',
@@ -22,6 +25,8 @@ export const STORAGE_KEYS = {
   starVerdicts: 'stars_star_verdicts',
   /** 位移挂起：repoId → {o, n, expectKey, srcKey, ts}（被挤出的仓库，预期页出现即清、缺失才核对） */
   shiftPending: 'stars_shift_pending',
+  /** P4 全量同步元数据：{etag, lastFullSyncAt, count}（ETag 快筛 + API 模式判定 + 本地分页总数） */
+  fullSyncMeta: 'stars_full_sync_meta',
 } as const;
 
 export const STAR_FILL_SVG = '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" class="octicon octicon-star-fill"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"></path></svg>';

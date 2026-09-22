@@ -1,10 +1,9 @@
-// GitHub star 状态核对：外部 unstar 检测的确认层（P2.5）。
+// GitHub token 与 star 状态存储：外部 unstar 确认层（P2.5）与 P4 全量同步的共用基础。
 //
-// snapshot.ts 的快照 diff 只会把「从到货页消失」的仓库列为**候选**；一切数据
-// 改动都必须经过这里 API 核对的双 404 确认（2026-09-22 决策：默认开启）。
-// 无 token / 权限不足 / 网络失败 / 速率受限时一律只记日志，绝不改数据
-// （「不确定只当 stale」）。
-//
+// 4.0.0：原「页快照候选 → enqueueVerify 队列 → 双 404 逐条核对」链路随 API 主模式
+// 移除（recordArrival 已无调用者）；星状态判定统一由 P4 全量拉取（fullSync.ts）
+// 三方 diff 承担。本文件保留：token 双格式读写/校验、裁决缓存写入（recordVerdict）、
+// 确认外部 unstar 的宽限区管线（applyExternalUnstar → confirmExternalUnstar）。
 // Token 双格式（2026-09-22 调研结论，来源链接记录在 AGENTS.md 决策记录）：
 // - classic `ghp_`：有效 token 即可读 /user/starred*；仅涉及公开仓库时可不勾
 //   scope，涉及私有仓库请勾 `repo`——API 无法区分「无权限读取的私有仓库」与
@@ -14,12 +13,6 @@
 //   Read，仓库范围选 All repositories（官方 fine-grained 端点权限表
 //   "User permissions for Starring" 列出全部 5 个 /user/starred* 端点）。
 //
-// 预算（P2.5 设计）：
-// - 每次到货最多交 8 个候选（snapshot.ts 切片）、队列总上限 24；
-// - 串行逐条、条间隔 200ms；双 404 间隔 1.5s；网络错误重试 1 次；
-// - 速率余量 < 50 / 余量为 0 / retry-after → 暂停到重置时刻；
-// - 裁决缓存：starred 24h、unstarred 7d 内不重复核对（确认后还会全量清快照）。
-
 import { applyFilters } from './filters';
 import { STAR_EMPTY_SVG, STORAGE_KEYS } from './constants';
 import { gmGet, gmRegisterMenuCommand, gmSet } from './gm';
@@ -85,235 +78,16 @@ export function registerTokenMenu(): void {
 
 /* ---------------- 裁决缓存 ---------------- */
 
-const VERDICT_STARRED_TTL = 24 * 60 * 60 * 1000; // 24h
-const VERDICT_UNSTARRED_TTL = 7 * 24 * 60 * 60 * 1000; // 7d
 
 function loadVerdicts(): VerdictMap {
   return gmGet<VerdictMap>(STORAGE_KEYS.starVerdicts, {});
 }
 
-function getVerdict(repoId: string): boolean {
-  const all = loadVerdicts();
-  const v = all[repoId];
-  if (!v) return false;
-  const ttl = v.s === 'starred' ? VERDICT_STARRED_TTL : VERDICT_UNSTARRED_TTL;
-  if (Date.now() - v.ts > ttl) {
-    delete all[repoId];
-    gmSet(STORAGE_KEYS.starVerdicts, all);
-    return false;
-  }
-  return true;
-}
 
 function setVerdict(repoId: string, s: 'starred' | 'unstarred'): void {
   const all = loadVerdicts();
   all[repoId] = { s, ts: Date.now() };
   gmSet(STORAGE_KEYS.starVerdicts, all);
-}
-
-/* ---------------- 队列与速率控制 ---------------- */
-
-interface VerifyItem {
-  repoId: string;
-  path: string;
-  attempts: number;
-}
-
-const MAX_QUEUE = 24;
-const ITEM_SPACING_MS = 200;
-const DOUBLE_404_DELAY_MS = 1500;
-const RATE_FLOOR = 50;
-
-let queue: VerifyItem[] = [];
-const queued = new Set<string>();
-let processing = false;
-let ratePausedUntil = 0;
-/** 当前 token 核对失败（401/403 权限）后熔断，换 token 自动恢复 */
-let authBrokenFor = '';
-let noTokenWarned = false;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-/** snapshot.ts 的候选入口：去重、过滤已知项、限额入队并启动串行核对 */
-export function enqueueVerify(items: { repoId: string; path: string }[]): void {
-  if (items.length === 0) return;
-  const tok = getGitHubPat();
-  if (!tok) {
-    if (!noTokenWarned) {
-      noTokenWarned = true;
-      console.log(
-        `[github-stars-grid] 有 ${items.length} 个仓库从页面消失待核对，但未配置 token：` +
-          'Tampermonkey 菜单 →「⭐ 设置 GitHub Token」（配置前候选仅记录不核对）'
-      );
-    }
-    return;
-  }
-  noTokenWarned = false;
-  if (authBrokenFor === tok) return; // 同一 token 已熔断，不再空转
-
-  const pending: PendingDeleteMap = loadPendingDelete();
-  const accepted: VerifyItem[] = [];
-  for (const it of items) {
-    if (queued.has(it.repoId) || queue.some((q) => q.repoId === it.repoId)) continue;
-    if (pending[it.repoId]) continue; // 脚本自己记录的 unstar，无需 API 复核
-    if (getVerdict(it.repoId)) continue; // 裁决缓存有效期内
-    if (queue.length + accepted.length >= MAX_QUEUE) break;
-    accepted.push({ repoId: it.repoId, path: it.path, attempts: 0 });
-  }
-  if (accepted.length === 0) return;
-  queue.push(...accepted);
-  accepted.forEach((it) => queued.add(it.repoId));
-  console.log(
-    `[github-stars-grid] star 核对入队 ${accepted.length} 个: ` +
-      accepted.map((it) => it.path).join(', ')
-  );
-  kick();
-}
-
-function kick(): void {
-  if (processing) return;
-  processing = true;
-  void (async () => {
-    while (queue.length > 0) {
-      if (Date.now() < ratePausedUntil) {
-        await sleep(ratePausedUntil - Date.now());
-        continue;
-      }
-      const item = queue.shift();
-      if (!item) break;
-      queued.delete(item.repoId);
-      try {
-        await verifyOne(item);
-      } catch (err) {
-        console.warn('[github-stars-grid] star 核对异常（本条跳过）', item.path, err);
-      }
-      if (queue.length > 0) await sleep(ITEM_SPACING_MS);
-    }
-    processing = false;
-  })();
-}
-
-/* ---------------- API 核对 ---------------- */
-
-interface ApiRes {
-  status: number;
-}
-
-/** 'owner/repo' → API 路径段；形态异常返回 null（跳过该候选） */
-function toApiPath(path: string): string | null {
-  const segs = path.replace(/^\//, '').split('/');
-  if (segs.length !== 2 || !segs[0] || !segs[1]) return null;
-  try {
-    return `${encodeURIComponent(decodeURIComponent(segs[0]))}/${encodeURIComponent(
-      decodeURIComponent(segs[1])
-    )}`;
-  } catch {
-    return null;
-  }
-}
-
-async function apiGet(url: string, tok: string): Promise<ApiRes | null> {
-  let resp: Response;
-  try {
-    resp = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${tok}`,
-        Accept: 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
-    });
-  } catch (err) {
-    console.warn('[github-stars-grid] star 核对网络失败（CORS/断网），本条按未知处理', err);
-    return null;
-  }
-
-  // 速率信息（GitHub 暴露这些响应头；读不到就跳过守卫）
-  const remainingHeader = resp.headers.get('x-ratelimit-remaining');
-  const resetHeader = resp.headers.get('x-ratelimit-reset');
-  const remaining = remainingHeader === null ? NaN : Number(remainingHeader);
-  const reset = resetHeader === null ? NaN : Number(resetHeader);
-  if (Number.isFinite(remaining) && Number.isFinite(reset)) {
-    if (remaining <= 0) {
-      ratePausedUntil = reset * 1000 + 30_000;
-      console.warn(`[github-stars-grid] star 核对速率余量用尽，暂停至 ${new Date(ratePausedUntil).toLocaleTimeString()}`);
-    } else if (remaining < RATE_FLOOR) {
-      ratePausedUntil = reset * 1000 + 30_000;
-      console.warn(
-        `[github-stars-grid] star 核对速率余量 ${remaining} < ${RATE_FLOOR}，本次会话暂停至 ${new Date(
-          ratePausedUntil
-        ).toLocaleTimeString()}（限额 5000/h，核对预算远低于此）`
-      );
-    }
-  }
-
-  if (resp.status === 401) {
-    authBrokenFor = tok;
-    console.error('[github-stars-grid] star 核对: token 无效（401），已熔断；TM 菜单可重新设置');
-    return { status: resp.status };
-  }
-  if (resp.status === 403) {
-    const retryAfter = resp.headers.get('retry-after');
-    if (retryAfter !== null) {
-      ratePausedUntil = Date.now() + Number(retryAfter) * 1000 + 5_000;
-      console.warn('[github-stars-grid] star 核对: 触发次级速率限制，按 retry-after 暂停');
-      return { status: resp.status };
-    }
-    if (remaining === 0) return { status: resp.status }; // 已在上面熔断速率
-    authBrokenFor = tok;
-    const perms = resp.headers.get('x-accepted-github-permissions');
-    console.error(
-      `[github-stars-grid] star 核对: 403 权限不足，已熔断` +
-        (perms ? `（需要权限: ${perms}）` : '') +
-        '。fine-grained 需 Account permissions → Starring → Read 且仓库范围 All repositories；' +
-        'classic 请确认 token 有效'
-    );
-    return { status: resp.status };
-  }
-  return { status: resp.status };
-}
-
-async function verifyOne(item: VerifyItem): Promise<void> {
-  const tok = getGitHubPat();
-  if (!tok || authBrokenFor === tok) return;
-  const apiPath = toApiPath(item.path);
-  if (!apiPath) return;
-  const url = `https://api.github.com/user/starred/${apiPath}`;
-
-  const first = await apiGet(url, tok);
-  if (!first) {
-    // 网络失败：重试 1 次（attempts 计入总数，最多 2 次尝试）
-    if (item.attempts < 1) {
-      item.attempts += 1;
-      queue.push(item);
-      queued.add(item.repoId);
-    }
-    return;
-  }
-  if (first.status === 204) {
-    setVerdict(item.repoId, 'starred'); // 仍 star：位移/排序导致的页面缺失，不动数据
-    return;
-  }
-  if (first.status === 404) {
-    await sleep(DOUBLE_404_DELAY_MS); // 双 404 确认（默认开启）
-    const second = await apiGet(url, tok);
-    if (!second) return;
-    if (second.status === 404) {
-      setVerdict(item.repoId, 'unstarred');
-      confirmExternalUnstar(item.repoId, item.path);
-      return;
-    }
-    if (second.status === 204) {
-      setVerdict(item.repoId, 'starred');
-      return;
-    }
-    console.warn(`[github-stars-grid] star 核对: ${item.path} 复核返回意外状态 ${second.status}，按未知处理`);
-    return;
-  }
-  if (first.status !== 401 && first.status !== 403) {
-    console.warn(`[github-stars-grid] star 核对: ${item.path} 返回意外状态 ${first.status}，按未知处理`);
-  }
 }
 
 /* ---------------- 确认外部 unstar 后的数据与 DOM 动作 ---------------- */

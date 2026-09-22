@@ -1,28 +1,9 @@
 import { FORK_META_SVG, STAR_EMPTY_SVG, STAR_FILL_SVG, STAR_META_SVG } from '../constants';
-import { getToggler, isStarredInToggler } from '../dom';
 import { markRepoStarred, markRepoUnstarred } from '../storage/pendingDelete';
+import { getGitHubPat } from '../starCheck';
 import { escapeHtml } from '../utils';
 import type { RepoData } from '../types';
 
-/**
- * 提交原生 star/unstar 表单。
- * 缺少 action 或 CSRF token 时返回 null（调用方按失败处理）。
- */
-function submitStarForm(formEl: HTMLFormElement): Promise<Response> | null {
-  const action = formEl.getAttribute('action');
-  const tokenInput = formEl.querySelector<HTMLInputElement>('input[name="authenticity_token"]');
-  if (!action || !tokenInput) return null;
-  const context = formEl.querySelector<HTMLInputElement>('input[name="context"]');
-  const body = new URLSearchParams();
-  body.append('authenticity_token', tokenInput.value);
-  if (context) body.append('context', context.value);
-  return fetch(action, {
-    method: 'POST',
-    headers: { 'X-Requested-With': 'XMLHttpRequest' },
-    body,
-    credentials: 'same-origin',
-  });
-}
 
 /** 用缓存数据构建卡片（跨页筛选时使用） */
 export function buildCardFromCache(repoId: string, data: RepoData): HTMLDivElement {
@@ -116,106 +97,45 @@ export function toggleStarButtonState(btn: HTMLButtonElement, card: HTMLElement,
   }
 }
 
-/** 为当前页卡片创建星星按钮：直接复用页面上的原生表单与 CSRF token */
-export function createStarButton(card: HTMLElement, item: Element): void {
-  const toggler = getToggler(item);
-  if (!toggler) return;
 
-  const isStarred = isStarredInToggler(toggler);
 
-  const btn = createStarButtonElement(isStarred);
-
-  btn.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    if (btn.disabled) return;
-    btn.disabled = true;
-
-    const currentlyStarred = btn.classList.contains('starred');
-    const formSelector = currentlyStarred
-      ? '.starred form[action$="/unstar"]'
-      : '.unstarred form[action$="/star"]';
-    const formEl = toggler.querySelector<HTMLFormElement>(formSelector);
-    if (!formEl) { btn.disabled = false; return; }
-
-    try {
-      const resp = await submitStarForm(formEl);
-      if (!resp || !resp.ok) { btn.disabled = false; return; }
-
-      // 同步原生 DOM 的显隐
-      const starredEl = toggler.querySelector<HTMLElement>('.starred');
-      const unstarredEl = toggler.querySelector<HTMLElement>('.unstarred');
-      if (currentlyStarred) {
-        if (starredEl) starredEl.style.display = 'none';
-        if (unstarredEl) unstarredEl.style.display = '';
-      } else {
-        if (unstarredEl) unstarredEl.style.display = 'none';
-        if (starredEl) starredEl.style.display = '';
-      }
-
-      toggleStarButtonState(btn, card, !currentlyStarred);
-    } catch {
-      // 网络错误 — 不做处理
-    }
-    btn.disabled = false;
-  });
-
-  const header = card.querySelector('.stars-card-header');
-  if (header) header.appendChild(btn);
-}
-
-/** 为缓存卡片创建星星按钮：先 fetch 仓库详情页拿有效 CSRF token */
+/** 为缓存卡片创建星星按钮：PUT/DELETE /user/starred/{owner}/{repo}（Bearer PAT，无 CSRF，4.0.0） */
 export function createStarButtonForCached(card: HTMLElement, data: RepoData): void {
   if (!data.name) return;
-
-  const isStarred = !data.unstarredAt;
-  const btn = createStarButtonElement(isStarred);
+  const btn = createStarButtonElement(!data.unstarredAt);
 
   btn.addEventListener('click', async (e) => {
     e.stopPropagation();
     e.preventDefault();
     if (btn.disabled) return;
-    btn.disabled = true;
 
     const currentlyStarred = btn.classList.contains('starred');
+    const tok = getGitHubPat();
+    if (!tok) {
+      btn.title = '未配置 token：Tampermonkey 菜单 →「⭐ 设置 GitHub Token」';
+      return;
+    }
+    const [owner, repo] = data.name.split('/');
+    if (!owner || !repo) return;
 
+    btn.disabled = true;
     try {
-      // 拉取仓库详情页以获取有效 CSRF token
-      const pageResp = await fetch('/' + data.name, { credentials: 'same-origin' });
-      if (!pageResp.ok) { btn.disabled = false; return; }
-      const pageHtml = await pageResp.text();
-      const doc = new DOMParser().parseFromString(pageHtml, 'text/html');
-
-      // 选择正确的表单：已 star → unstar，未 star → star
-      const formSelector = currentlyStarred
-        ? '.starred form[action$="/unstar"]'
-        : '.unstarred form[action$="/star"]';
-      const formEl = doc.querySelector<HTMLFormElement>(formSelector);
-      if (!formEl) { btn.disabled = false; return; }
-
-      const token = formEl.querySelector<HTMLInputElement>('input[name="authenticity_token"]');
-      if (!token) { btn.disabled = false; return; }
-
-      const action = formEl.getAttribute('action');
-      const contextInput = formEl.querySelector<HTMLInputElement>('input[name="context"]');
-
-      const body = new URLSearchParams();
-      body.append('authenticity_token', token.value);
-      if (contextInput) body.append('context', contextInput.value);
-
-      const resp = await fetch(action || '', {
-        method: 'POST',
-        headers: { 'X-Requested-With': 'XMLHttpRequest' },
-        body,
-        credentials: 'same-origin',
-      });
-      if (!resp.ok) { btn.disabled = false; return; }
-
-      toggleStarButtonState(btn, card, !currentlyStarred);
+      const resp = await fetch(
+        `https://api.github.com/user/starred/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+        {
+          method: currentlyStarred ? 'DELETE' : 'PUT',
+          headers: {
+            Authorization: `Bearer ${tok}`,
+            'X-GitHub-Api-Version': '2022-11-28',
+          },
+        }
+      );
+      if (resp.ok) toggleStarButtonState(btn, card, !currentlyStarred);
     } catch {
       // 网络错误 — 不做处理
+    } finally {
+      btn.disabled = false;
     }
-    btn.disabled = false;
   });
 
   const header = card.querySelector('.stars-card-header');

@@ -1,5 +1,3 @@
-import { getRepoIdFromItem, getRepoItems } from './dom';
-import { extractAndCacheRepoFromCard } from './extract';
 import { applyFilters, inheritNativeFilters } from './filters';
 import { filterState } from './state';
 import { refreshTagPillStates, renderTagFilterBar } from './ui/tagFilter';
@@ -36,13 +34,12 @@ export function interceptSearchForm(): void {
   }
 }
 
-/** 进入搜索模式：立即渲染缓存结果，再异步补充原生结果 */
+/** 进入搜索模式：全量缓存搜索（4.0.0 起不再补充原生 HTML 结果） */
 export function activateSearch(query: string): void {
   if (!query) { clearSearch(); return; }
 
   filterState.searchQuery = query;
   filterState.searchMode = true;
-  filterState.nativeSearchResults = [];
 
   // 首次进入自定义模式时继承原生筛选
   if (!filterState.tagMode) {
@@ -50,14 +47,12 @@ export function activateSearch(query: string): void {
   }
 
   applyFilters();                        // 立即渲染缓存搜索结果
-  void fetchNativeSearchResults(query);  // 异步补充原始结果
 }
 
 /** 退出搜索模式（tags 仍激活则保持 tag 模式） */
 export function clearSearch(): void {
   filterState.searchQuery = '';
   filterState.searchMode = false;
-  filterState.nativeSearchResults = [];
 
   const searchInput = document.querySelector<HTMLInputElement>('input[placeholder*="Search starred"]');
   if (searchInput) searchInput.value = '';
@@ -67,42 +62,3 @@ export function clearSearch(): void {
   refreshTagPillStates();
 }
 
-/** 拉取 GitHub 原生搜索结果，补充缓存中缺失的仓库 */
-async function fetchNativeSearchResults(query: string): Promise<void> {
-  if (filterState.nativeSearchFetching) return;
-  filterState.nativeSearchFetching = true;
-
-  try {
-    const currentQ = new URLSearchParams(location.search).get('q');
-    let doc: Document;
-    if (currentQ === query) {
-      // 当前页面已是搜索结果页，直接使用
-      doc = document;
-    } else {
-      const url = location.pathname + '?tab=stars&q=' + encodeURIComponent(query);
-      const resp = await fetch(url, { credentials: 'same-origin' });
-      if (!resp.ok) { filterState.nativeSearchFetching = false; return; }
-      doc = new DOMParser().parseFromString(await resp.text(), 'text/html');
-    }
-
-    const items = getRepoItems(doc);
-    const newIds: string[] = [];
-    items.forEach(item => {
-      const repoId = getRepoIdFromItem(item);
-      if (!repoId) return;
-      extractAndCacheRepoFromCard(item, repoId);
-      newIds.push(repoId);
-    });
-
-    filterState.nativeSearchResults = newIds;
-
-    // 仍在同一次搜索 → 重新渲染（缓存已更新，补充结果会出现）
-    if (filterState.searchMode && filterState.searchQuery === query) {
-      applyFilters();
-    }
-  } catch {
-    // 网络错误，仅展示缓存结果
-  }
-
-  filterState.nativeSearchFetching = false;
-}
