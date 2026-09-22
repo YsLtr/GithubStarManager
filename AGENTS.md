@@ -5,12 +5,12 @@
 
 ---
 
-## 当前交接（2026-09-22 09:18 +0800）
+## 当前交接（2026-09-22 09:25 +0800）
 
 ### 目标
-GitHub 2026 改版适配（f117ef4）、Lists+FOUC（2c84884）、GM 兼容层+Turbo 动画（c376192）、mountGmApi（bc6b19d）均已提交。本轮 = **3.0.3 三个真机 bug 修复**（profile 直入不生效 / 直载仍闪 / 离开 Stars 头像侧边栏不恢复），待用户重装真机验证。
+GitHub 2026 改版适配（f117ef4）、Lists+FOUC（2c84884）、GM 兼容层+Turbo 动画（c376192）、mountGmApi（bc6b19d）、3.0.3 三 bug 修复（0d6e913）均已提交。本轮 = **3.0.4 补丁**（直载误播入场动画仍闪 + 兜底定时器 4s 后误撤样式「脚本失效」），待用户重装真机验证。
 
-### 本轮改了什么（3.0.3，本次提交）
+### 本轮改了什么（3.0.3 → 3.0.4，本次提交）
 
 | 文件 | 改动 |
 |---|---|
@@ -21,6 +21,8 @@ GitHub 2026 改版适配（f117ef4）、Lists+FOUC（2c84884）、GM 兼容层+T
 | `src/styles/base.css` | 4 条 transition 移去常驻表；`gsm-grid-in` 淡入改挂 `html.gsm-turbo-entry`——**直载不播淡入**（揭示后网格再淡入被用户当成闪） |
 | `src/gm.ts` | `gmAddStyle` 改为返回 `HTMLStyleElement` 句柄 |
 | `package.json` | 3.0.2 → **3.0.3** |
+
+**3.0.4 补丁（同日；用户对 3.0.3 反馈：仍闪 + 过一会恢复原始页面）**：① 直载时 Turbo 也会渲染初始 `user-profile-frame` → profile-frame 分支无条件 `transformAndReveal(true)` → 直载播了入场动画（网格淡入 + 侧边栏收缩）＝用户看到的「闪」→ 改为 `transformAndReveal(starsNavPending)`，并给 `revealAfterTransform` 加 `wasHidden` 幂等门（未处于隐藏绝不播动画，二次调用天然跳过）；② 首次 frame-render 时 `armNavFailsafe` 的 4s 定时器在成功揭示后**从未撤销**，到点误调 `exitStarsView` 整表撤样式 →「过一会脚本失效、恢复原始页面」→ 揭示成功即 `clearTimeout`，且回调自检仍隐藏才退出（残余定时器无害）。
 
 **三 bug 根因（用户 2026-09-22 报告，本轮已修）**：① `@match */*` 匹配不到单段路径 `/YsLtr`，且 `init()` 在非 stars 页早退不挂导航监听 → profile 直入/点 Stars 均无效；② `visibility:hidden` 可被后代覆盖（GitHub 还有 app 层 CSS 未查全），且揭示后网格 `gsm-grid-in` 淡入 0.3s——「页面出现后内容再淡入」被当成闪；③ `gmAddStyle` 注入的布局样式**没有任何移除路径**，同文档 turbo 离开后 180px 侧边栏/120px 头像规则仍生效。
 **约束（永久生效）**：禁止 `import {GM_*} from '$'`（顶部一次性捕获与 document-start 不兼容，会固化成 undefined）；GM 一律走 `src/gm.ts`。
@@ -52,7 +54,7 @@ dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用�
 
 ### 阻塞 / 风险 / 待确认
 
-1. **用户重装 `dist/github-stars-grid.user.js`（3.0.3）前台验证三 bug**：① 直进 `github.com/YsLtr` → 点 Stars 标签出网格；② 直进 `?tab=stars` 无闪烁；③ 离开 Stars 头像/侧边栏恢复原生大小。若②仍闪，要控制台 `script loaded / 防闪烁隐藏已挂载 / 防闪烁解除: 原因 (耗时ms)` 行原文定位。
+1. **用户重装 `dist/github-stars-grid.user.js`（3.0.4）前台验证**：① 直进 `?tab=stars`：揭示无闪烁，且**至少观察 10 秒**页面不回退原生（3.0.3 是揭示后约 4s 被误撤样式）；② profile 点 Stars 出网格；③ 离开/返回时侧边栏恢复与收缩动画正常。若仍闪：要控制台 `script loaded / 防闪烁隐藏已挂载 / 防闪烁解除` 三行原文 + 闪烁发生在揭示瞬间还是揭示后约 0.5s。
 2. **dev HMR 在 github.com 上需要浏览器放行 CSP**：GitHub 的 `script-src` 白名单不含 `127.0.0.1`，dev loader 的动态 import 必被拒（`Failed to fetch dynamically imported module`）。插件绕不过，需装 CSP 放行扩展 + 允许 Local Network Access 弹窗。详见 `DEVELOPER.md` §2「dev 模式在 github.com 上的两个前置条件」。
 3. **两个脚本不能同时启用**：`transformStarsList()` 见到 `.stars-grid-container` 就提前返回，正式版先跑会让 dev 版"改了没反应"。开发时在 Tampermonkey 里禁用正式版。
 4. 真机验证必须**前台**：Chrome 冻结后台标签页后测量/交互全部失真（曾误判样式失效）。
@@ -60,7 +62,7 @@ dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用�
 
 ### 下一步
 
-1. 等用户 3.0.3 三 bug 验证结果；若②仍闪，据「防闪烁隐藏已挂载/解除」日志判断：挂载缺失=脚本没在 document-start 跑（安装/启用问题），解除原因异常=揭示过早。
+1. 等 3.0.4 验证结果。判读要点：`防闪烁解除` 原因必须是 `转换成功(直载)`（若仍是 turbo 入场 = pending 状态被意外置位）；观察 10s 无回退 = 兜底定时器问题已闭环。
 2. **快速构建阶段（2026-09-22 起，用户已定）**：不跑 `tests/smoke/`，不写测试 fixture/断言；改完只 `pnpm check`，由用户在真实页面判断是否成功。
 3. 若 GitHub 再改版：先跑 `tests/diag/selectors.js` 定位失配点，再改 `src/dom.ts` 的 helper（**只改 helper，不要在业务模块里写选择器**）。
 

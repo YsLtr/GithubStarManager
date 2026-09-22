@@ -120,27 +120,42 @@ function watchRepoStarState(repoId: string): void {
 let starsNavPending = false;
 let navFailsafeTimer: number | undefined;
 
-/** 兜底：任何一步没走到，最多藏 4s，退化为"延迟闪烁"而非永久空白 */
+/** 兜底：导航卡死导致一直藏着时最多藏 4s；回调自检——已成功揭示的残余定时器必须无害 */
 function armNavFailsafe(): void {
   if (navFailsafeTimer !== undefined) window.clearTimeout(navFailsafeTimer);
   navFailsafeTimer = window.setTimeout(() => {
     navFailsafeTimer = undefined;
     starsNavPending = false;
+    // 只有仍处于隐藏（导航真卡死）才兜底退出；成功揭示后若不自检，
+    // 到点会误调 exitStarsView 把样式撤掉——表现为「过一会脚本失效、恢复原始页面」
+    const stillHidden =
+      document.documentElement.classList.contains('gsm-boot-hidden') ||
+      !!document.querySelector('.gsm-turbo-hidden');
+    if (!stillHidden) return;
     exitStarsView('导航 4s 兜底');
   }, 4000);
 }
 
-/** 解除隐藏；animate=true 时让侧边栏/头像从 GitHub 原始尺寸收缩到紧凑尺寸 */
+/** 解除隐藏；animate=true 且本次揭示真的解除了隐藏时，播入场动画（收缩+淡入）。
+ *  幂等门 wasHidden：直载（从未藏过？不，直载也藏着——由 animate=false 挡）与
+ *  二次调用（首次揭示已摘掉隐藏类）都跳过动画，防止重复入场造成二次闪烁。 */
 function revealAfterTransform(animate: boolean): void {
+  const root = document.documentElement;
+  const wasHidden =
+    root.classList.contains('gsm-boot-hidden') || !!document.querySelector('.gsm-turbo-hidden');
+  // 成功揭示 = 导航兜底定时器已完成使命，必须撤销；否则它到点后会误撤样式
+  if (navFailsafeTimer !== undefined) {
+    window.clearTimeout(navFailsafeTimer);
+    navFailsafeTimer = undefined;
+  }
   revealTurboHide();
-  if (!animate) {
-    document.documentElement.classList.remove('gsm-anim-prepare');
+  if (!animate || !wasHidden) {
+    root.classList.remove('gsm-anim-prepare');
     revealBootHide('转换成功(直载)');
     return;
   }
-  const root = document.documentElement;
-  root.classList.add('gsm-turbo-entry'); // 卡片淡入只在 turbo 入场播；直载不播（防"闪一下"）
-  root.classList.add('gsm-anim-prepare'); // 过渡起点：原始宽度（此刻要么还藏着、要么 = 原生值）
+  root.classList.add('gsm-turbo-entry'); // 卡片淡入：仅真正的 turbo 入场
+  root.classList.add('gsm-anim-prepare'); // 过渡起点：原始宽度（此刻还藏着）
   revealBootHide('转换成功(turbo 入场)');
   void (document.body && document.body.offsetHeight); // 强制样式计算，提交过渡起点
   root.classList.remove('gsm-anim-prepare'); // 起点 → 紧凑尺寸，transition 开跑
@@ -226,8 +241,10 @@ function registerNavListeners(): void {
           exitStarsView('切至非 Stars 标签(渲染后)');
         } else {
           // Stars 内容就绪。注意 Turbo 会按 id 保留嵌套的 starred frame（src 未变就不会
-          // 重新渲染、也就没有 starred 的 frame-render），必须在这里主动解除隐藏
-          transformAndReveal(true);
+          // 重新渲染、也就没有 starred 的 frame-render，必须在这里主动调用。
+          // animate 跟随 starsNavPending：直载时 Turbo 也会走一遍初始 frame-render，
+          // 无脑 true 会让直载也播入场动画（网格淡入+侧边栏收缩）→ 被当成闪烁
+          transformAndReveal(starsNavPending);
         }
       }, 100);
     }
