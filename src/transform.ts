@@ -122,6 +122,8 @@ export function transformStarsList(): boolean {
   }
 
   colLg9.appendChild(gridContainer);
+  // “Starred repositories” 标题行右侧复制一份分页器（免滚动到底部才能翻页）
+  mountTopPager(colLg9, gridContainer);
 
   // 将 Starred topics 移到右侧边栏
   const colLg3 = turboFrame.querySelector('.col-lg-3');
@@ -145,4 +147,24 @@ export function transformStarsList(): boolean {
   applyFilters();
 
   return true;
+}
+
+/**
+ * 在「Starred repositories」标题行右侧复制一份分页器（顶部快捷翻页）。
+ * 克隆网格底部那份（内容一致、状态随页码），保留 `paginate-container` 类
+ * → 分页拦截与转圈动画对顶/底两份一视同仁。父容器加 `gsm-header-row` 变
+ * flex 两端对齐实现「行右边」。随 transform 完整重建同步（原地翻页后自动更新）。
+ */
+function mountTopPager(colLg9: HTMLElement, gridContainer: HTMLElement): void {
+  const source = gridContainer.querySelector<HTMLElement>('.paginate-container');
+  const h2 = colLg9.querySelector<HTMLElement>('h2.f3-light');
+  const row = h2 && h2.parentElement;
+  if (!source || !row) return;
+
+  row.classList.add('gsm-header-row');
+  row.querySelector<HTMLElement>('.gsm-top-pager')?.remove();
+
+  const top = source.cloneNode(true) as HTMLElement;
+  top.classList.add('gsm-top-pager');
+  row.appendChild(top);
 }

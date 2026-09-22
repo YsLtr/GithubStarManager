@@ -45,15 +45,19 @@ export function interceptPagination(): void {
       e.preventDefault();
       e.stopImmediatePropagation();
       if (pagingInFlight) return;
-      void swapPageInPlace(frame, href);
+      void swapPageInPlace(frame, href, link);
     },
     { capture: true, passive: false }
   );
 }
 
 /** fetch 新页 → 原地换入 frame → 重建网格；任一步失败回落整页导航。 */
-async function swapPageInPlace(frame: HTMLElement, href: string): Promise<void> {
+/** fetch 新页 → 原地换入 frame → 重建网格；任一步失败回落整页导航。期间 sourceLink 内转圈。 */
+async function swapPageInPlace(frame: HTMLElement, href: string, sourceLink: HTMLAnchorElement): Promise<void> {
   pagingInFlight = true;
+  // Primer loading 态规范：按钮内转圈 + 文字透明占位（宽度不变、无布局跳动）+ aria-busy
+  sourceLink.classList.add('gsm-pager-loading');
+  sourceLink.setAttribute('aria-busy', 'true');
   try {
     const url = new URL(href, location.href).href;
     const resp = await fetch(url, { credentials: 'same-origin' });
@@ -76,6 +80,9 @@ async function swapPageInPlace(frame: HTMLElement, href: string): Promise<void> 
     console.error('[github-stars-grid] 原地翻页失败，回落整页导航:', err);
     location.href = href;
   } finally {
+    // 换入成功时 transform 已整块重建 DOM（此节点多半已脱离文档，remove 无害）
+    sourceLink.classList.remove('gsm-pager-loading');
+    sourceLink.removeAttribute('aria-busy');
     pagingInFlight = false;
   }
 }
