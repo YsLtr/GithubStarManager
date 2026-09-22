@@ -5,10 +5,10 @@
 
 ---
 
-## 当前交接（2026-09-22 10:00 +0800）
+## 当前交接（2026-09-22 10:55 +0800）
 
 ### 目标
-GitHub 2026 改版适配（f117ef4）、Lists+FOUC（2c84884）、GM 兼容层+Turbo 动画（c376192）、mountGmApi（bc6b19d）、3.0.3 三 bug（0d6e913）、3.0.4 直载动画+兜底误撤、3.0.5 取消冗余整页 visit（554bcf1）均已提交。本轮 = **3.0.6 补丁**（用户报「Set status 悬停展开被遮挡」→ `.h-card` 裁剪边界修复，真机热注入命中测试验证通过，已提交 569174d），待用户重装 dist 验证。
+GitHub 2026 改版适配（f117ef4）、Lists+FOUC（2c84884）、GM 兼容层+Turbo 动画（c376192）、mountGmApi（bc6b19d）、3.0.3 三 bug（0d6e913）、3.0.4 直载动画+兜底误撤、3.0.5 取消冗余整页 visit（554bcf1）、3.0.6 Set status 裁剪修复（569174d）均已提交。本轮 = **3.0.7 分页原地翻页**（用户报「点 Next 闪一下才出下一页」→ 拦截分页点击自 fetch 原地换入，零 Turbo 渲染，真机受信任点击端到端验证通过，已提交 bffa4e8），待用户重装 dist 验证。
 
 ### 本轮改了什么（3.0.3 → 3.0.4，本次提交）
 
@@ -25,6 +25,7 @@ GitHub 2026 改版适配（f117ef4）、Lists+FOUC（2c84884）、GM 兼容层+T
 **3.0.4 补丁（同日；用户对 3.0.3 反馈：仍闪 + 过一会恢复原始页面）**：① 直载时 Turbo 也会渲染初始 `user-profile-frame` → profile-frame 分支无条件 `transformAndReveal(true)` → 直载播了入场动画（网格淡入 + 侧边栏收缩）＝用户看到的「闪」→ 改为 `transformAndReveal(starsNavPending)`，并给 `revealAfterTransform` 加 `wasHidden` 幂等门（未处于隐藏绝不播动画，二次调用天然跳过）；② 首次 frame-render 时 `armNavFailsafe` 的 4s 定时器在成功揭示后**从未撤销**，到点误调 `exitStarsView` 整表撤样式 →「过一会脚本失效、恢复原始页面」→ 揭示成功即 `clearTimeout`，且回调自检仍隐藏才退出（残余定时器无害）。
 **3.0.5 补丁（同日 09:45；用户报「进入 ?tab=stars 仍旧整页刷新」）**：CDP 受信任点击抓链——GitHub 的 profile frame 带 `data-turbo-action`，Turbo FrameController 在 `fetchResponseLoaded → proposeVisitIfNavigatedWithAction` 于 frame 渲染完 **8ms 后补一次同 URL 整页 Drive visit**（`updateHistory:false`、`willRender:false`，纯重复）；该 visit 触发我们 `before-render → installBootHide` 的整页隐藏 + body 级渲染 = 用户看到的「整页刷新」（真机 boot 挂/摘日志与 152ms 空白窗口完全吻合，且 window/probe 状态未丢 = 非真刷新）。修法：`registerNavListeners()` 闭包记 `lastFrameRenderAt`（user-profile-frame/user-starred-repos 的 frame-render），`turbo:before-visit` 在 **1s 内且同 URL** 时 `preventDefault()`——下载 bundle 切片确认 `proposeVisit = allows && (...)`，取消即短路、无 `location.href` fallback；history 由 frame 的 action 自己维护（`changeHistory: if(this.action)`），被取消的 visit 本就 `updateHistory:false`，前进后退不受影响。**已热注入真机验证**：修复后两次 tab 往返无 `turbo:visit`/`before-render`/`turbo:load`、boot 0 次切换、grid 正常、URL 正确。**预期控制台变化**：tab 切换不再打印「防闪烁隐藏已挂载/解除」（before-render 不再触发，属正常）；仅直载/F5 与前进/后退仍走整页隐藏。
 **3.0.6 补丁（同日 10:00；用户报「Set status 悬浮展开后被遮挡」，确认就是裁剪）**：药丸静息态 = emoji 圆圈（36px），**悬停时 React 展开成完整药丸 101px（right=352）**，而我们 `.h-card{overflow:hidden}` 的裁剪边界在 x=344（180px 窄栏右缘）→ 展开部分右侧 8px 被切（命中测试 x346/350 原返回 Layout/MAIN 而非药丸）。修法：`overflow: hidden` → **`overflow: clip` + `overflow-clip-margin: 16px`**（裁剪职责保留、边界外扩 16px；16 < 列间距 24 不碰 Stars 网格）。真机验证：注入后命中 x346/350 返回 BUTTON/circle-badge 栈、截图圆角完整。**排查坑**：刷新页面后 React partial 水合有数秒延迟，期间药丸测得 36px 且悬停不展开——早期「clip 把药丸压塌」是误判（实为水合未完成）。`top` 悬停态 `document.elementsFromPoint` 会忽略 pointer-events:none 的 tool-tip，验证遮挡要换用元素自身坐标 + 截图。
+**3.0.7 补丁（同日 10:55；用户报「点分页 Next 闪一下才加载下一页」，要求直接截取数据原地更新）**：根因 = 分页链接在 `turbo-frame#user-starred-repos` 内（`.paginate-container` 下的 `a.btn.BtnGroup-item`），点击走 Turbo frame 导航 → 我们在 `before-frame-render` 给 frame 挂 `gsm-turbo-hidden` 整块藏住 + frame-render 后播入场动画 → 网络往返期间空白、到达后淡入 = 「闪」。修法：新模块 `src/pagination.ts`——**window 捕获阶段**拦分页链接点击（document-start 注册，先于 Turbo 一切 document 监听；`preventDefault`+`stopImmediatePropagation` 一处干掉 Turbo 与本脚本的 starsNavPending 误置位），直接取链接 `href`（**不解析游标参数，值不固定**）fetch 新页 HTML，`frame.innerHTML` 原地换入 + `transformStarsList()` 完整重建；不 pushState（原生 frame 翻页不改地址栏，链接无 data-turbo-action）；中键/Ctrl/Shift 不拦截；失败回落 `location.href`。**不动 frame[src]**（Turbo 监听 src 属性变化会二次加载再闪一次）。真机受信任点击端到端验证：首卡 utags→Lithe-IDEA→Ditto 连翻两页、`turbo:frame-render/visit/before-render` 与 `gsm-turbo-hidden` 计数全 0、地址栏保持 ?tab=stars、控制台两条「原地翻页完成」。**排查坑**：CDP Input 对**后台标签页静默失效**（tab `active:false` 时 click 不到达页面、无任何报错）——真机点击测试必须先 `Page.bringToFront` 再重测坐标（前台化后布局会偏移约 56px）。
 
 **三 bug 根因（用户 2026-09-22 报告，本轮已修）**：① `@match */*` 匹配不到单段路径 `/YsLtr`，且 `init()` 在非 stars 页早退不挂导航监听 → profile 直入/点 Stars 均无效；② `visibility:hidden` 可被后代覆盖（GitHub 还有 app 层 CSS 未查全），且揭示后网格 `gsm-grid-in` 淡入 0.3s——「页面出现后内容再淡入」被当成闪；③ `gmAddStyle` 注入的布局样式**没有任何移除路径**，同文档 turbo 离开后 180px 侧边栏/120px 头像规则仍生效。
 **约束（永久生效）**：禁止 `import {GM_*} from '$'`（顶部一次性捕获与 document-start 不兼容，会固化成 undefined）；GM 一律走 `src/gm.ts`。
@@ -56,7 +57,7 @@ dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用�
 
 ### 阻塞 / 风险 / 待确认
 
-1. **用户重装 `dist/github-stars-grid.user.js`（3.0.6）前台验证**：① 直进 `?tab=stars`：揭示无闪烁，且**至少观察 10 秒**页面不回退原生（3.0.3 是揭示后约 4s 被误撤样式）；② profile 点 Stars 出网格；③ 离开/返回时侧边栏恢复与收缩动画正常；④ 悬停 `Set status` 圆圈展开成完整药丸、右侧不再被切（水合完成需数秒，刚刷新时圆圈悬停不展开属正常）。若仍闪：要控制台 `script loaded / 防闪烁隐藏已挂载 / 防闪烁解除` 三行原文 + 闪烁发生在揭示瞬间还是揭示后约 0.5s。
+1. **用户重装 `dist/github-stars-grid.user.js`（3.0.7）前台验证**：① 直进 `?tab=stars`：揭示无闪烁，且**至少观察 10 秒**页面不回退原生（3.0.3 是揭示后约 4s 被误撤样式）；② profile 点 Stars 出网格；③ 离开/返回时侧边栏恢复与收缩动画正常；④ 悬停 `Set status` 圆圈展开成完整药丸、右侧不再被切（水合完成需数秒，刚刷新时圆圈悬停不展开属正常）；⑤ **点分页 Next/Prev：旧内容保持可见直到新页换入，全程无空白/无淡入**（3.0.7 原地翻页；地址栏保持 ?tab=stars 属预期）。若仍闪：要控制台 `script loaded / 防闪烁隐藏已挂载 / 防闪烁解除 / 原地翻页完成` 各行原文。
 2. **dev HMR 在 github.com 上需要浏览器放行 CSP**：GitHub 的 `script-src` 白名单不含 `127.0.0.1`，dev loader 的动态 import 必被拒（`Failed to fetch dynamically imported module`）。插件绕不过，需装 CSP 放行扩展 + 允许 Local Network Access 弹窗。详见 `DEVELOPER.md` §2「dev 模式在 github.com 上的两个前置条件」。
 3. **两个脚本不能同时启用**：`transformStarsList()` 见到 `.stars-grid-container` 就提前返回，正式版先跑会让 dev 版"改了没反应"。开发时在 Tampermonkey 里禁用正式版。
 4. 真机验证必须**前台**：Chrome 冻结后台标签页后测量/交互全部失真（曾误判样式失效）。
@@ -64,7 +65,7 @@ dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用�
 
 ### 下一步
 
-1. 等 3.0.6 验证结果。判读要点：`防闪烁解除` 原因必须是 `转换成功(直载)`（若仍是 turbo 入场 = pending 状态被意外置位）；观察 10s 无回退 = 兜底定时器问题已闭环；悬停药丸展开完整 = 裁剪修复闭环。
+1. 等 3.0.7 验证结果。判读要点：`防闪烁解除` 原因必须是 `转换成功(直载)`；观察 10s 无回退 = 兜底定时器闭环；悬停药丸展开完整 = 裁剪闭环；翻页无闪 + 控制台 `原地翻页完成` = 原地翻页闭环（若翻页走了整页导航 = window 捕获拦截未生效，查 TM 注入时机）。
 2. **快速构建阶段（2026-09-22 起，用户已定）**：不跑 `tests/smoke/`，不写测试 fixture/断言；改完只 `pnpm check`，由用户在真实页面判断是否成功。
 3. 若 GitHub 再改版：先跑 `tests/diag/selectors.js` 定位失配点，再改 `src/dom.ts` 的 helper（**只改 helper，不要在业务模块里写选择器**）。
 
