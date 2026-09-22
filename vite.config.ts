@@ -21,6 +21,12 @@ export default defineConfig({
       build: {
         fileName: 'github-stars-grid.user.js',
       },
+      server: {
+        // dev 下代码跑在页面 realm，沙箱 GM_* 不可见（issue #35）；把已 grant 的 GM_* 复制到
+        // unsafeWindow，让 gm.ts 调用时判定在 dev 与正式版一致走 GM 分支。仅影响 pnpm dev，
+        // 构建产物不变。官方首选 `$` 导入，但其顶部捕获与 document-start 不兼容已禁用。
+        mountGmApi: true,
+      },
     }),
   ],
   // 固定 dev server 端口：dev 模式装进 Tampermonkey 的加载器把入口 URL 写死了，

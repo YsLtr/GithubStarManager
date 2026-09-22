@@ -5,7 +5,7 @@
 
 ---
 
-## 当前交接（2026-09-22 08:57 +0800）
+## 当前交接（2026-09-22 09:05 +0800）
 
 ### 目标
 GitHub 2026 改版适配已完成并提交（f117ef4）；Lists 隐藏 + document-start FOUC 已提交（2c84884）。本轮收尾 = **GM API 在 document-start 下不可用的根因修复（3.0.2）** + Turbo 切换动画，随本次 handoff 一并提交，等用户真机确认。
@@ -19,7 +19,7 @@ GitHub 2026 改版适配已完成并提交（f117ef4）；Lists 隐藏 + documen
 | `src/index.ts` | Turbo 切换防闪烁+动画、gmAddStyle 迁移、3 处诊断日志（`script loaded (document-start)` / observer 等待 / 10s 失败——确认后可删） |
 | `src/boot.ts` | installBootHide/reveal 按 `isDesktop()` 分桶，移动端不隐藏 |
 | `src/styles/base.css` | 侧边栏/头像 width transition、`html.gsm-anim-prepare`、`.gsm-turbo-hidden`、`.stars-grid-container` 的 `gsm-grid-in` 淡入 |
-| `vite.config.ts` | `run-at` 去重只留 **document-start**；显式 `grant: ['GM_getValue','GM_setValue']` |
+| `vite.config.ts` | `run-at` 去重只留 **document-start**；显式 `grant: ['GM_getValue','GM_setValue']`；**`server:{mountGmApi:true}`**（dev 时把已 grant 的 GM_* 复制到 unsafeWindow → gm.ts dev 走 GM 分支，仅 dev 生效、产物不变） |
 | `package.json` | 3.0.1 → **3.0.2**（3.0.1 是带 bug 构建，版本号必须可区分） |
 
 **GM 根因（用户真机报 `init 失败: GM_addStyle is not a function` → 全功能失效）**：`$` 虚拟模块的 GM_* 被打包成 **bundle 顶部一次性 typeof 捕获（IIFE）**，document-start 执行时 TM 尚未提供 GM_* → 永久固化 undefined → init 中断。旧版 document-idle + CDP 注入测试的 GM stub 双重掩盖了它。产物已验证：`var _GM_*` 捕获 **0 处**、header grant 正确。
@@ -32,7 +32,7 @@ GitHub 2026 改版适配已完成并提交（f117ef4）；Lists 隐藏 + documen
 - 迁移仅当 GM 为默认值时触发：GM 已有旧数据时，dev 写进 localStorage 的新数据**不会合并**。
 
 ### dev 模式 GM 不可用的原因（已答用户）
-dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用域没有 GM_api（插件作者原话，issue #35）。官方解法：1 = `from '$'`（因上述根因已禁用）；2 = `server:{mountGmApi:true}` 把全部 GM 挂到 unsafeWindow（仅 dev 生效）。**已问用户是否加，待答复。** 来源: https://github.com/lisonge/vite-plugin-monkey/issues/35
+dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用域没有 GM_api（插件作者原话，issue #35）。官方解法：1 = `from '$'`（因上述根因已禁用）；2 = `server:{mountGmApi:true}` 把全部 GM 挂到 unsafeWindow（仅 dev 生效）——**已决定并加上（2026-09-22）**，dev 下 gm.ts 走 GM 分支、存储位置与正式版一致。来源: https://github.com/lisonge/vite-plugin-monkey/issues/35
 
 ### DOM 变更对照（GitHub 2026 改版）
 
@@ -53,18 +53,16 @@ dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用�
 ### 阻塞 / 风险 / 待确认
 
 1. **用户需重新安装 `dist/github-stars-grid.user.js`（3.0.2）并前台真机验证**：控制台无红色报错（尤其 GM 相关）、网格/标签/备注/缓存正常、**历史标签/备注数据仍在**；有新报错要原文。
-2. `server:{mountGmApi:true}` 加不加——已问未答。
-3. **dev HMR 在 github.com 上需要浏览器放行 CSP**：GitHub 的 `script-src` 白名单不含 `127.0.0.1`，dev loader 的动态 import 必被拒（`Failed to fetch dynamically imported module`）。插件绕不过，需装 CSP 放行扩展 + 允许 Local Network Access 弹窗。详见 `DEVELOPER.md` §2「dev 模式在 github.com 上的两个前置条件」。
-4. **两个脚本不能同时启用**：`transformStarsList()` 见到 `.stars-grid-container` 就提前返回，正式版先跑会让 dev 版"改了没反应"。开发时在 Tampermonkey 里禁用正式版。
-5. 真机验证必须**前台**：Chrome 冻结后台标签页后测量/交互全部失真（曾误判样式失效）。
-6. `todo` 文件按上次决定继续留在未跟踪状态，未纳入提交。
+2. **dev HMR 在 github.com 上需要浏览器放行 CSP**：GitHub 的 `script-src` 白名单不含 `127.0.0.1`，dev loader 的动态 import 必被拒（`Failed to fetch dynamically imported module`）。插件绕不过，需装 CSP 放行扩展 + 允许 Local Network Access 弹窗。详见 `DEVELOPER.md` §2「dev 模式在 github.com 上的两个前置条件」。
+3. **两个脚本不能同时启用**：`transformStarsList()` 见到 `.stars-grid-container` 就提前返回，正式版先跑会让 dev 版"改了没反应"。开发时在 Tampermonkey 里禁用正式版。
+4. 真机验证必须**前台**：Chrome 冻结后台标签页后测量/交互全部失真（曾误判样式失效）。
+5. `todo` 文件按上次决定继续留在未跟踪状态，未纳入提交。
 
 ### 下一步
 
 1. 等用户 3.0.2 验证结果；通过后可删 `index.ts` 的 3 处诊断日志（或保留）。
-2. 按用户答复决定是否加 `server:{mountGmApi:true}`（仅改 `vite.config.ts`，不影响产物）。
-3. **快速构建阶段（2026-09-22 起，用户已定）**：不跑 `tests/smoke/`，不写测试 fixture/断言；改完只 `pnpm check`，由用户在真实页面判断是否成功。
-4. 若 GitHub 再改版：先跑 `tests/diag/selectors.js` 定位失配点，再改 `src/dom.ts` 的 helper（**只改 helper，不要在业务模块里写选择器**）。
+2. **快速构建阶段（2026-09-22 起，用户已定）**：不跑 `tests/smoke/`，不写测试 fixture/断言；改完只 `pnpm check`，由用户在真实页面判断是否成功。
+3. 若 GitHub 再改版：先跑 `tests/diag/selectors.js` 定位失配点，再改 `src/dom.ts` 的 helper（**只改 helper，不要在业务模块里写选择器**）。
 
 ### 常用命令
 
