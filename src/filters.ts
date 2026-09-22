@@ -53,7 +53,6 @@ export function searchCacheRepos(query: string, ignoreLang: boolean): FilteredRe
     const name = (data.name || '').toLowerCase();
     const [author, repo] = name.split('/');
     const desc = (data.desc || '').toLowerCase();
-    const lang = (data.lang || '').toLowerCase();
     const tags = (allTags[repoId] || []).map(t => t.toLowerCase());
     const note = (allNotes[repoId] || '').toLowerCase();
 
@@ -62,7 +61,6 @@ export function searchCacheRepos(query: string, ignoreLang: boolean): FilteredRe
       (author || '').includes(term) ||
       (repo || '').includes(term) ||
       desc.includes(term) ||
-      lang.includes(term) ||
       tags.some(t => t.includes(term)) ||
       note.includes(term)
     );
@@ -82,6 +80,47 @@ export function searchCacheRepos(query: string, ignoreLang: boolean): FilteredRe
 
   sortResults(results);
   return results;
+}
+
+
+/** 转义正则元字符 */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** 在搜索结果卡片内高亮命中词：只包文本节点不改结构；语言字段已退出全文搜索故不扫 meta */
+function highlightMatchesInCard(card: HTMLElement, terms: string[]): void {
+  if (terms.length === 0) return;
+  const re = new RegExp(`(${terms.map(escapeRegExp).join('|')})`, 'gi');
+  const roots = card.querySelectorAll(
+    '.stars-card-header a, .stars-card-desc, .stars-card-tags, .stars-card-notes'
+  );
+  roots.forEach((root) => {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const textNodes: Text[] = [];
+    let node: Node | null;
+    while ((node = walker.nextNode())) textNodes.push(node as Text);
+    for (const textNode of textNodes) {
+      const parent = textNode.parentElement;
+      if (!parent || parent.closest('textarea, input, [contenteditable="true"], script, style')) continue;
+      const text = textNode.nodeValue;
+      if (!text || !re.test(text)) continue;
+      re.lastIndex = 0;
+      const frag = document.createDocumentFragment();
+      let last = 0;
+      for (const m of text.matchAll(re)) {
+        const idx = m.index ?? 0;
+        if (idx > last) frag.appendChild(document.createTextNode(text.slice(last, idx)));
+        const mark = document.createElement('mark');
+        mark.className = 'gsm-search-hit';
+        mark.textContent = m[0];
+        frag.appendChild(mark);
+        last = idx + m[0].length;
+      }
+      if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+      textNode.replaceWith(frag);
+    }
+  });
 }
 
 /** 从 GitHub 原生筛选按钮的文案里读出当前 Language / Sort */
@@ -266,6 +305,14 @@ export function applyFilters(): void {
     // 备注
     const notesContainer = cachedCard.querySelector<HTMLElement>('.stars-card-notes');
     if (notesContainer) renderNotes(notesContainer);
+
+    // 搜索模式：高亮命中词（标题 / 描述 / 标签 / 备注）
+    if (hasSearch) {
+      highlightMatchesInCard(
+        cachedCard,
+        filterState.searchQuery.toLowerCase().split(/\s+/).filter(t => t.length > 0)
+      );
+    }
   });
 
   // 7. 展示计数信息条

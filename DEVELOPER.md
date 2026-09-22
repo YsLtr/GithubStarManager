@@ -243,7 +243,9 @@ unstar 时数据不会立即删除，而是移入 `stars_pending_delete` 并记�
 
 ### 全缓存搜索与筛选联动
 
-搜索走 `searchCacheRepos()`：把关键词按空白拆词，每个词都必须至少命中作者、仓库名、描述、语言、标签、备注之一；并联动当前激活的标签与语言筛选。同时 `search.ts` 会异步拉取 GitHub 原生搜索结果页，把缓存里缺失的仓库补进缓存并重渲染（`filterState.nativeSearchResults`）。
+搜索走 `searchCacheRepos()`：把关键词按空白拆词，每个词都必须至少命中作者、仓库名、描述、标签、备注之一（**语言已退出全文匹配**（3.0.11）——避免 `ASC` 子串命中 `javascript`，语言只通过下拉筛选指定）；并联动当前激活的标签与语言筛选。搜索模式下重建的结果卡片会把命中词以 `<mark class="gsm-search-hit">` 高亮（标题 / 描述 / 标签 / 备注四字段，大小写不敏感、只包文本节点、跳过输入控件）。同时 `search.ts` 会异步拉取 GitHub 原生搜索结果页，把缓存里缺失的仓库补进缓存并重渲染（`filterState.nativeSearchResults`）。
+
+自建 Sort 菜单只有 Most stars / Recently active 两项：客户端排序依赖 `starred_at`（star 时间），`stars_repo_cache` 未存该字段，「Recently starred」排不了（`inheritNativeFilters()` 遇原生 Recently starred 回退 `stars` 属已知行为）；P4 用 PAT 回填 `starred_at` 后再补第 3 项（AGENTS D5）。
 
 ### 退出自定义模式
 
