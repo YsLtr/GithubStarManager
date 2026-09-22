@@ -1,14 +1,14 @@
-import { GM_getValue, GM_setValue } from '$';
+import { gmGet, gmSet } from '../gm';
 import { STORAGE_KEYS } from '../constants';
 import type { RepoCache, RepoData } from '../types';
 
 /** 读取全部仓库缓存（所有用户共享） */
 export function loadRepoCache(): RepoCache {
-  return GM_getValue<RepoCache>(STORAGE_KEYS.repoCache, {});
+  return gmGet<RepoCache>(STORAGE_KEYS.repoCache, {});
 }
 
 export function saveRepoCache(all: RepoCache): void {
-  GM_setValue(STORAGE_KEYS.repoCache, all);
+  gmSet(STORAGE_KEYS.repoCache, all);
 }
 
 /** 读取单个仓库缓存，未命中返回 null */

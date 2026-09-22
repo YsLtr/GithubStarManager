@@ -1,4 +1,4 @@
-import { GM_getValue, GM_setValue } from '$';
+import { gmGet, gmSet } from '../gm';
 import { STORAGE_KEYS } from '../constants';
 import { getStarsUserId } from './tags';
 import type { NoteMap } from '../types';
@@ -10,19 +10,19 @@ function notesKey(userId: string): string {
 
 /** 读取当前用户的全部备注 */
 export function loadAllNotes(): NoteMap {
-  return GM_getValue<NoteMap>(notesKey(getStarsUserId()), {});
+  return gmGet<NoteMap>(notesKey(getStarsUserId()), {});
 }
 
 /** 覆盖写入单个仓库的备注；空文本等价于删除 */
 export function saveNote(repoId: string, text: string): void {
   const key = notesKey(getStarsUserId());
-  const all = GM_getValue<NoteMap>(key, {});
+  const all = gmGet<NoteMap>(key, {});
   if (!text) {
     delete all[repoId];
   } else {
     all[repoId] = text;
   }
-  GM_setValue(key, all);
+  gmSet(key, all);
 }
 
 /** 读取单个仓库的备注 */

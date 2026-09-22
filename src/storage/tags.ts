@@ -1,4 +1,4 @@
-import { GM_getValue, GM_setValue } from '$';
+import { gmGet, gmSet } from '../gm';
 import { STORAGE_KEYS } from '../constants';
 import type { TagMap } from '../types';
 
@@ -15,19 +15,19 @@ function tagsKey(userId: string): string {
 
 /** 读取当前用户的全部标签 */
 export function loadAllTags(): TagMap {
-  return GM_getValue<TagMap>(tagsKey(getStarsUserId()), {});
+  return gmGet<TagMap>(tagsKey(getStarsUserId()), {});
 }
 
 /** 覆盖写入单个仓库的标签；空数组等价于删除 */
 export function saveTags(repoId: string, tagsArray: string[]): void {
   const key = tagsKey(getStarsUserId());
-  const all = GM_getValue<TagMap>(key, {});
+  const all = gmGet<TagMap>(key, {});
   if (tagsArray.length === 0) {
     delete all[repoId];
   } else {
     all[repoId] = tagsArray;
   }
-  GM_setValue(key, all);
+  gmSet(key, all);
 }
 
 /** 读取单个仓库的标签 */
@@ -49,10 +49,10 @@ export function getAllUniqueTags(): string[] {
 export function migrateTagsIfNeeded(): void {
   const userId = getStarsUserId();
   if (!userId) return;
-  const oldData = GM_getValue<TagMap | null>(STORAGE_KEYS.legacyTags, null);
+  const oldData = gmGet<TagMap | null>(STORAGE_KEYS.legacyTags, null);
   const newKey = STORAGE_KEYS.tagsPrefix + userId;
-  const newData = GM_getValue<TagMap | null>(newKey, null);
+  const newData = gmGet<TagMap | null>(newKey, null);
   if (oldData && !newData) {
-    GM_setValue(newKey, oldData);
+    gmSet(newKey, oldData);
   }
 }

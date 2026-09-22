@@ -1,4 +1,4 @@
-import { GM_getValue, GM_setValue } from '$';
+import { gmGet, gmSet } from '../gm';
 import { GRACE_PERIOD, STORAGE_KEYS } from '../constants';
 import { loadRepoCache, saveRepoCache } from './repoCache';
 import { getTags, saveTags } from './tags';
@@ -6,11 +6,11 @@ import { getNote, saveNote } from './notes';
 import type { PendingDeleteMap } from '../types';
 
 export function loadPendingDelete(): PendingDeleteMap {
-  return GM_getValue<PendingDeleteMap>(STORAGE_KEYS.pendingDelete, {});
+  return gmGet<PendingDeleteMap>(STORAGE_KEYS.pendingDelete, {});
 }
 
 export function savePendingDelete(all: PendingDeleteMap): void {
-  GM_setValue(STORAGE_KEYS.pendingDelete, all);
+  gmSet(STORAGE_KEYS.pendingDelete, all);
 }
 
 /**

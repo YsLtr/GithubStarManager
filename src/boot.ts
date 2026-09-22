@@ -10,6 +10,8 @@
  * - 转换失败/选择器失配时有 4s 兜底，最多退化为"延迟闪烁"，不会永久白屏。
  */
 
+import { isDesktop } from './utils';
+
 const HIDE_CLASS = 'gsm-boot-hidden';
 const HIDE_STYLE_ID = 'gsm-boot-hide-style';
 const FAILSAFE_MS = 4000;
@@ -23,6 +25,8 @@ export function installBootHide(): void {
   const root = document.documentElement;
   if (!root || root.classList.contains(HIDE_CLASS)) return;
   if (!isStarsPage()) return;
+  // 移动端永远不做转换，更不能把页面捂住
+  if (!isDesktop()) return;
 
   const style = document.createElement('style');
   style.id = HIDE_STYLE_ID;
@@ -45,4 +49,9 @@ export function installBootHide(): void {
 export function revealBootHide(): void {
   document.documentElement.classList.remove(HIDE_CLASS);
   document.getElementById(HIDE_STYLE_ID)?.remove();
+}
+
+/** 解除 Turbo frame 替换期间的隐藏（所有 frame 一起解除）。幂等。 */
+export function revealTurboHide(): void {
+  document.querySelectorAll('.gsm-turbo-hidden').forEach((el) => el.classList.remove('gsm-turbo-hidden'));
 }

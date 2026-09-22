@@ -14,7 +14,8 @@ export default defineConfig({
           '将 GitHub Stars 页面的列表视图改为卡片网格视图，缩小左侧个人资料栏，最大化仓库展示空间（仅桌面端生效）',
         author: 'YsLtr',
         match: ['https://github.com/*tab=stars*', 'https://github.com/*/*'],
-        'run-at': 'document-idle',
+        // 不靠 `$` 导入自动推断 grant(那会在 document-start 顶部捕获 GM_*),显式声明
+        grant: ['GM_getValue', 'GM_setValue'],
         'run-at': 'document-start',
       },
       build: {

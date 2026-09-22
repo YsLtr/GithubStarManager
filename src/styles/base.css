@@ -27,6 +27,40 @@
     display: block !important;
   }
 
+  /* 切换动画：进入 Stars 时侧边栏/头像从 GitHub 原始尺寸平滑收缩到紧凑尺寸 */
+  .Layout.Layout--sidebarPosition-start {
+    transition: grid-template-columns 0.35s ease;
+  }
+  .Layout-sidebar {
+    transition: width 0.35s ease, min-width 0.35s ease;
+  }
+  .Layout-sidebar .avatar-user,
+  .Layout-sidebar a[href*="avatars"] img,
+  .Layout-sidebar a[href*="avatars"] {
+    transition: width 0.35s ease, height 0.35s ease;
+  }
+  .Layout-sidebar .user-status-circle-badge-container {
+    transition: top 0.35s ease, left 0.35s ease;
+  }
+  /* 过渡起点（JS 在解除隐藏前挂一帧 html.gsm-anim-prepare）：临时恢复原始宽度 */
+  html.gsm-anim-prepare .Layout.Layout--sidebarPosition-start {
+    grid-template-columns: 296px minmax(0, 1fr) auto !important;
+  }
+  html.gsm-anim-prepare .Layout-sidebar {
+    width: 296px !important;
+    min-width: 296px !important;
+  }
+  html.gsm-anim-prepare .Layout-sidebar .avatar-user,
+  html.gsm-anim-prepare .Layout-sidebar a[href*="avatars"] img,
+  html.gsm-anim-prepare .Layout-sidebar a[href*="avatars"] {
+    width: 296px !important;
+    height: 296px !important;
+  }
+  html.gsm-anim-prepare .Layout-sidebar .user-status-circle-badge-container {
+    top: 262px !important;
+    left: 262px !important;
+  }
+
   /* 缩小用户名字体 */
   .Layout-sidebar .vcard-names .p-name,
   .Layout-sidebar .vcard-names .p-nickname,
@@ -452,3 +486,17 @@
   }
 
 } /* end @media */
+
+/* ===== Turbo frame 替换期间不渲染（JS 加类控制，桌面/移动通用） ===== */
+.gsm-turbo-hidden {
+  visibility: hidden !important;
+}
+
+/* 卡片网格出现动画（每次 turbo 重新进入 Stars 都会重放） */
+@keyframes gsm-grid-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.stars-grid-container {
+  animation: gsm-grid-in 0.3s ease both;
+}
