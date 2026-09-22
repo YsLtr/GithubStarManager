@@ -18,7 +18,8 @@ export default defineConfig({
         // ?tab=stars 与仓库详情页也一并覆盖（TM 的 @match 把 query 计入 path）。
         match: ['https://github.com/*'],
         // 不靠 `$` 导入自动推断 grant(那会在 document-start 顶部捕获 GM_*),显式声明
-        grant: ['GM_getValue', 'GM_setValue'],
+        // （GM_registerMenuCommand: TM 菜单「设置 GitHub Token」入口）
+        grant: ['GM_getValue', 'GM_setValue', 'GM_registerMenuCommand'],
         'run-at': 'document-start',
       },
       build: {

@@ -1,5 +1,6 @@
 import { isStarsPage } from './boot';
 import { transformStarsList } from './transform';
+import { recordArrival } from './snapshot';
 import { isDesktop } from './utils';
 
 /** 翻页进行中：防连点（拦截已发生，重复点击直接吞掉） */
@@ -75,6 +76,8 @@ async function swapPageInPlace(frame: HTMLElement, href: string, sourceLink: HTM
     // 新内容是服务端原始 HTML（无 .stars-grid-container）→ transform 走完整重建：
     // 提取缓存、标签、备注、分页器克隆、右栏搬运、筛选栏与 applyFilters 全部重来。
     if (!transformStarsList()) throw new Error('新内容转换失败');
+    // 到货记录：键用取回内容的 href（地址栏未变），与直载基线可比
+    recordArrival(url);
     console.log('[github-stars-grid] 原地翻页完成:', url);
   } catch (err) {
     console.error('[github-stars-grid] 原地翻页失败，回落整页导航:', err);

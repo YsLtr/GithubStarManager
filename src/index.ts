@@ -6,6 +6,8 @@ import { installBootHide, isStarsPage, revealBootHide, revealTurboHide } from '.
 import { getRepoIdMeta, getStarButton, hideListsSection, isStarButtonActive } from './dom';
 import { extractAndCacheRepoFromDetailPage } from './extract';
 import { interceptPagination } from './pagination';
+import { recordArrival } from './snapshot';
+import { registerTokenMenu } from './starCheck';
 import { filterState } from './state';
 import { cleanupExpiredUnstarred, markRepoStarred, markRepoUnstarred } from './storage/pendingDelete';
 import { migrateTagsIfNeeded } from './storage/tags';
@@ -184,6 +186,8 @@ function transformAndReveal(animate: boolean, retries = 12): void {
   if (done) {
     starsNavPending = false;
     revealAfterTransform(animate);
+    // 到货记录：与上次同 URL 到货 diff，消失的仓库交 API 核对（幂等，内容未变不写盘）
+    recordArrival();
     return;
   }
   if (!isDesktop()) {
@@ -323,6 +327,8 @@ function init(): void {
   // 导航监听必须最先挂：纯 profile 页（非 stars、非仓库详情）也要能响应
   // "点 Stars 标签"，否则从 profile 进 Stars 时没有任何转换逻辑在跑。
   registerNavListeners();
+  // TM 菜单：任意匹配页都可设置/清除核对用 PAT
+  registerTokenMenu();
 
   const repoIdMeta = getRepoIdMeta();
   const isRepoDetailPage = !isStarsPage() && !!repoIdMeta;

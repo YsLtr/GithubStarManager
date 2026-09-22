@@ -66,6 +66,11 @@ src/
   transform.ts        列表 → 卡片网格转换
   filters.ts          筛选引擎：标签/语言/排序/搜索、信息条、原生筛选联动
   search.ts           搜索表单拦截、原生搜索结果补充
+  gm.ts              GM API 兼容层（调用时判定；localStorage 兜底与迁移）
+  boot.ts            document-start 防闪烁隐藏生命周期（FOUC）
+  pagination.ts      原地翻页拦截（window 捕获 + fetch 换入，不走 Turbo frame 导航）
+  starCheck.ts       外部 unstar 确认层：PAT 菜单、API 双 404、速率守卫、裁决缓存
+  snapshot.ts        到货页快照 diff：发现从页面消失的仓库（核对候选）
   storage/
     repoCache.ts      仓库缓存 CRUD
     tags.ts           标签存储 + 备注键规则 + 迁移
@@ -138,7 +143,7 @@ GitHub DOM
 
 ## 5. 存储模型
 
-脚本使用 `GM_setValue` / `GM_getValue` 持久化四类数据，键名集中在 `src/constants.ts` 的 `STORAGE_KEYS`。
+脚本使用 `GM_setValue` / `GM_getValue` 持久化数据，键名集中在 `src/constants.ts` 的 `STORAGE_KEYS`（仓库缓存 / 待删除区 / 标签 / 备注 / PAT / 到货页快照 / star 裁决缓存）。
 
 ### `stars_repo_cache`
 
@@ -190,11 +195,30 @@ GitHub DOM
 
 > 历史遗留：旧版使用无用户隔离的 `stars_tags` / `stars_notes`。`migrateTagsIfNeeded()` 负责标签迁移；备注的旧键仍作为取不到 userId 时的回退键使用。
 
+### `github_pat` / `stars_page_snapshots` / `stars_star_verdicts`（外部 unstar 核对）
+
+```jsonc
+// github_pat（字符串）：“ghp_...” 或 “github_pat_...”；TM 菜单写入，空串 = 未配置
+// stars_page_snapshots
+{
+  "https://github.com/YsLtr?tab=stars": { "123456": "owner/repo", ... },  // 规范化页 URL → 该页上次到货成员
+  "https://github.com/YsLtr?page=2&tab=stars": { ... }                      // 原地翻页键 = 取回内容的 href
+}
+// stars_star_verdicts
+{ "123456": { "s": "starred", "ts": 1780000000000 } }   // starred 24h / unstarred 7d 内免重复核对
+```
+
+由 `snapshot.ts` + `starCheck.ts` 维护，机制见 §6「外部 unstar 核对」。`github_pat` 仅用于 `Authorization: Bearer` 调用 `api.github.com`，不进仓库、不写日志（提示中只显示前 12 后 4 位掩码）。
+
 ## 6. 核心机制
 
 ### 待删除区宽限期
 
 unstar 时数据不会立即删除，而是移入 `stars_pending_delete` 并记录 `unstarredAt`；24 小时内重新 star，数据、标签和备注会自动恢复。超期条目在下次脚本加载时由 `cleanupExpiredUnstarred()` 清理。
+
+### 外部 unstar 核对（到货快照 diff + API 双 404）
+
+每次 Stars 内容到货（直载转换 / Turbo 重渲染 / 原地翻页换入）由 `snapshot.ts` 记录或更新页快照，与上次同键到货 diff 出「消失」候选（新 star 顶入、排序位移同样会造成消失），单次 ≤8 交 `starCheck.ts` 串行核对 `GET /user/starred/{owner}/{repo}`：204 = 仍 star（位移），只记裁决不动数据；404 需间隔 1.5s 两次才确认，随后复用 unstar 宽限管线（`markRepoUnstarred` 同款备份）+ 从全部快照清除 + 卡片原地翻未 star。无 PAT / 401 / 403 / 网络失败一律只记日志不改数据；速率余量 <50 暂停至 reset。PAT 权限指引（classic / fine-grained 双格式）与设计决策见 AGENTS.md「数据同步设计决策」。
 
 ### 每用户标签隔离
 
@@ -280,7 +304,7 @@ filterState.nativeSearchFetching // 防重复 fetch
 - **无运行时依赖**：只用浏览器原生 API + GM API。`package.json` 里的依赖全部是 devDependencies。
 - **仅桌面端**：`transformStarsList()` 首先检查 `isDesktop()`；所有 CSS 包在 `@media (min-width: 768px)` 内。
 - **三栏响应式布局**：768–1199px 隐藏左右侧边栏只留主内容区；>= 1200px 为左侧资料栏 (180px) + 中间卡片网格 + 右侧 Starred Topics (220px)。
-- **GM API 用法**：从 `$` 虚拟模块按需 import（`import { GM_getValue } from '$'`），类型由 `src/vite-env.d.ts` 里的 `/// <reference types="vite-plugin-monkey/client" />` 提供；`@grant` 由插件自动生成，不要手写。
+- **GM API 用法**：一律走 `src/gm.ts` 的 `gmGet/gmSet/gmAddStyle/gmRegisterMenuCommand`（**调用时**判定可用性，document-start 时晚到/缺席都安全，附 localStorage 兜底与迁移）；**禁止** `import { GM_* } from '$'`（bundle 顶部一次性捕获会在 document-start 固化成 undefined → `GM_addStyle is not a function` 事故）。`@grant` 在 `vite.config.ts` **显式声明**（当前：`GM_getValue` / `GM_setValue` / `GM_registerMenuCommand`），不要依赖插件自动推断。
 - **循环依赖**：`filters.ts` 与 `ui/tagFilter.ts` 互相引用（筛选逻辑 ↔ 筛选 UI）。所有导出都是函数声明，运行时靠提升解析，不会在模块初始化阶段取值，因此是安全的；新增模块时不要把这类互相引用的值用在模块顶层。
 
 ## 11. 测试

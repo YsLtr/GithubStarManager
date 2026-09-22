@@ -13,6 +13,7 @@
 // 即使环境把 GM_* 绑在作用域而非 globalThis 也能命中。
 declare const GM_getValue: (<T>(key: string, defaultValue: T) => T) | undefined;
 declare const GM_setValue: ((key: string, value: unknown) => void) | undefined;
+declare const GM_registerMenuCommand: ((name: string, fn: () => void) => unknown) | undefined;
 
 const LS_PREFIX = 'github-stars-grid::';
 
@@ -73,4 +74,17 @@ export function gmAddStyle(css: string): HTMLStyleElement {
   style.textContent = css;
   (document.head || document.documentElement).appendChild(style);
   return style;
+}
+
+/** 注册 Tampermonkey 菜单命令（同样调用时判定；dev/非 TM 环境静默降级为日志） */
+export function gmRegisterMenuCommand(name: string, fn: () => void): void {
+  if (typeof GM_registerMenuCommand === 'function') {
+    try {
+      GM_registerMenuCommand(name, fn);
+    } catch (e) {
+      console.error('[github-stars-grid] GM_registerMenuCommand 失败', e);
+    }
+  } else {
+    console.info('[github-stars-grid] GM_registerMenuCommand 不可用（非 TM 环境），无法打开 token 设置菜单');
+  }
 }

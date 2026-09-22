@@ -33,6 +33,17 @@ export type TagMap = Record<string, string[]>;
 /** repoId → 备注文本 */
 export type NoteMap = Record<string, string>;
 
+/** star 核对裁决（API 确认结果；starred 24h / unstarred 7d 内免重复核对） */
+export interface StarVerdict {
+  s: 'starred' | 'unstarred';
+  /** 裁决时间戳 */
+  ts: number;
+}
+/** repoId → 裁决 */
+export type VerdictMap = Record<string, StarVerdict>;
+/** 到货页快照：规范化页 URL → {repoId: 'owner/repo'} */
+export type PageSnapshots = Record<string, Record<string, string>>;
+
 /** 筛选结果项 */
 export interface FilteredRepo {
   repoId: string;
