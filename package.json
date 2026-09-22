@@ -1,7 +1,7 @@
 {
   "name": "github-stars-grid",
   "private": true,
-  "version": "3.0.6",
+  "version": "3.0.7",
   "type": "module",
   "description": "GitHub Stars 页面卡片网格视图油猴脚本",
   "scripts": {

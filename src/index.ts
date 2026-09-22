@@ -5,6 +5,7 @@ import wideCss from './styles/wide.css?inline';
 import { installBootHide, isStarsPage, revealBootHide, revealTurboHide } from './boot';
 import { getRepoIdMeta, getStarButton, hideListsSection, isStarButtonActive } from './dom';
 import { extractAndCacheRepoFromDetailPage } from './extract';
+import { interceptPagination } from './pagination';
 import { filterState } from './state';
 import { cleanupExpiredUnstarred, markRepoStarred, markRepoUnstarred } from './storage/pendingDelete';
 import { migrateTagsIfNeeded } from './storage/tags';
@@ -353,6 +354,8 @@ function whenReady(fn: () => void): void {
 // 加载标记：F12 控制台能看到这行 = 脚本已执行；看不到 = TM 没注入（启用状态/@match/未安装）
 console.log('[github-stars-grid] script loaded (document-start)');
 installBootHide();
+// 原地翻页拦截：document-start 同步挂载，先于 Turbo 的 click 监听拿到事件
+interceptPagination();
 whenReady(() => {
   try {
     init();
