@@ -80,9 +80,10 @@
     z-index: 100 !important;
   }
 
-  /* 侧边栏内容自适应窄宽度 */
+  /* 侧边栏内容自适应窄宽度；clip + 16px 缓冲：悬停展开的 Set status 药丸右缘超出 h-card 9px，不能被裁掉（16 < 列间距 24，不会碰到 Stars 网格） */
   .Layout-sidebar .h-card {
-    overflow: hidden !important;
+    overflow: clip !important;
+    overflow-clip-margin: 16px !important;
     word-wrap: break-word !important;
   }
   .Layout-sidebar .js-profile-editable-replace {
