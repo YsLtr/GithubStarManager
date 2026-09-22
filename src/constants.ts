@@ -20,6 +20,8 @@ export const STORAGE_KEYS = {
   pageSnapshots: 'stars_page_snapshots',
   /** star 核对裁决缓存：repoId → {s: 'starred'|'unstarred', ts} */
   starVerdicts: 'stars_star_verdicts',
+  /** 位移挂起：repoId → {o, n, expectKey, srcKey, ts}（被挤出的仓库，预期页出现即清、缺失才核对） */
+  shiftPending: 'stars_shift_pending',
 } as const;
 
 export const STAR_FILL_SVG = '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" class="octicon octicon-star-fill"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"></path></svg>';

@@ -70,7 +70,7 @@ src/
   boot.ts            document-start 防闪烁隐藏生命周期（FOUC）
   pagination.ts      原地翻页拦截（window 捕获 + fetch 换入，不走 Turbo frame 导航）
   starCheck.ts       外部 unstar 确认层：PAT 菜单、API 双 404、速率守卫、裁决缓存
-  snapshot.ts        到货页快照 diff：发现从页面消失的仓库（核对候选）
+  snapshot.ts        到货页快照 diff + 位移挂起/结算：发现外部消失（核对候选），被挤出的到预期页结案
   storage/
     repoCache.ts      仓库缓存 CRUD
     tags.ts           标签存储 + 备注键规则 + 迁移
@@ -143,7 +143,7 @@ GitHub DOM
 
 ## 5. 存储模型
 
-脚本使用 `GM_setValue` / `GM_getValue` 持久化数据，键名集中在 `src/constants.ts` 的 `STORAGE_KEYS`（仓库缓存 / 待删除区 / 标签 / 备注 / PAT / 到货页快照 / star 裁决缓存）。
+脚本使用 `GM_setValue` / `GM_getValue` 持久化数据，键名集中在 `src/constants.ts` 的 `STORAGE_KEYS`（仓库缓存 / 待删除区 / 标签 / 备注 / PAT / 到货页快照 / star 裁决缓存 / 位移挂起）。
 
 ### `stars_repo_cache`
 
@@ -195,7 +195,7 @@ GitHub DOM
 
 > 历史遗留：旧版使用无用户隔离的 `stars_tags` / `stars_notes`。`migrateTagsIfNeeded()` 负责标签迁移；备注的旧键仍作为取不到 userId 时的回退键使用。
 
-### `github_pat` / `stars_page_snapshots` / `stars_star_verdicts`（外部 unstar 核对）
+### `github_pat` / `stars_page_snapshots` / `stars_star_verdicts` / `stars_shift_pending`（外部 unstar 核对）
 
 ```jsonc
 // github_pat（字符串）：“ghp_...” 或 “github_pat_...”；TM 菜单写入，空串 = 未配置
@@ -206,9 +206,11 @@ GitHub DOM
 }
 // stars_star_verdicts
 { "123456": { "s": "starred", "ts": 1780000000000 } }   // starred 24h / unstarred 7d 内免重复核对
+// stars_shift_pending（被挤出的仓库 → 预期页；到货页出现即清、预期页缺失才核对）
+{ "123456": { "o": "owner", "n": "repo", "expectKey": "https://github.com/YsLtr?page=2&tab=stars", "srcKey": "https://github.com/YsLtr?tab=stars", "ts": 1780000000000 } },
 ```
 
-由 `snapshot.ts` + `starCheck.ts` 维护，机制见 §6「外部 unstar 核对」。`github_pat` 仅用于 `Authorization: Bearer` 调用 `api.github.com`，不进仓库、不写日志（提示中只显示前 12 后 4 位掩码）。
+由 `snapshot.ts` + `starCheck.ts` 维护（`stars_shift_pending` 位移挂起由 `snapshot.ts` 独占），机制见 §6「外部 unstar 核对」。`github_pat` 仅用于 `Authorization: Bearer` 调用 `api.github.com`，不进仓库、不写日志（提示中只显示前 12 后 4 位掩码）。
 
 ## 6. 核心机制
 
@@ -216,9 +218,9 @@ GitHub DOM
 
 unstar 时数据不会立即删除，而是移入 `stars_pending_delete` 并记录 `unstarredAt`；24 小时内重新 star，数据、标签和备注会自动恢复。超期条目在下次脚本加载时由 `cleanupExpiredUnstarred()` 清理。
 
-### 外部 unstar 核对（到货快照 diff + API 双 404）
+### 外部 unstar 核对（到货快照 diff + 位移挂起 + API 双 404）
 
-每次 Stars 内容到货（直载转换 / Turbo 重渲染 / 原地翻页换入）由 `snapshot.ts` 记录或更新页快照，与上次同键到货 diff 出「消失」候选（新 star 顶入、排序位移同样会造成消失），单次 ≤8 交 `starCheck.ts` 串行核对 `GET /user/starred/{owner}/{repo}`：204 = 仍 star（位移），只记裁决不动数据；404 需间隔 1.5s 两次才确认，随后复用 unstar 宽限管线（`markRepoUnstarred` 同款备份）+ 从全部快照清除 + 卡片原地翻未 star。无 PAT / 401 / 403 / 网络失败一律只记日志不改数据；速率余量 <50 暂停至 reset。PAT 权限指引（classic / fine-grained 双格式）与设计决策见 AGENTS.md「数据同步设计决策」。
+每次 Stars 内容到货（直载转换 / Turbo 重渲染 / 原地翻页换入）由 `snapshot.ts` 先**结算位移挂起**（`stars_shift_pending`：挂起项在任何到货页可见 = 位移确认即清；`expectKey` 正好是本页却缺失 = 「本该在本页却没有出现」才交核对），再与上次同键到货做成员 diff。消失按**排序方式 + 页码**直接算位移模型（`expectationKey()`：`sort` 缺省/`created` 且 `direction` 缺省/`desc` → 预期下一页；`asc` → 预期上一页；`updated`/`stars` 及升序第 1 页 → 无位移模型）：有预期页 → 挂起不核对（cap 60、TTL 30d）；无模型 → 直接交 `starCheck.ts` 串行核对 `GET /user/starred/{owner}/{repo}`（单次 ≤8，>12 提示走 P4）：204 = 仍 star 只记裁决不动数据；404 需间隔 1.5s 两次才确认，随后复用 unstar 宽限管线（`markRepoUnstarred` 同款备份）+ 从全部快照与挂起中清除 + 卡片原地翻未 star。无 PAT / 401 / 403 / 网络失败一律只记日志不改数据；速率余量 <50 暂停至 reset。**位移判定不存顺序**（排序键 star 时间在页面 HTML 中不提供；预期页的成员检测与「存顺序再对齐」等价且更简单——用户决策）。PAT 权限指引与设计决策见 AGENTS.md「数据同步设计决策」。
 
 ### 每用户标签隔离
 

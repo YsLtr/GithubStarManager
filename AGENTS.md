@@ -5,10 +5,10 @@
 
 ---
 
-## 当前交接（2026-09-22 14:55 +0800）
+## 当前交接（2026-09-22 15:38 +0800）
 
 ### 目标
-GitHub 2026 改版适配（f117ef4）、Lists+FOUC（2c84884）、GM 兼容层+Turbo 动画（c376192）、mountGmApi（bc6b19d）、3.0.3 三 bug（0d6e913）、3.0.4 直载动画+兜底误撤、3.0.5 取消冗余整页 visit（554bcf1）、3.0.6 Set status 裁剪修复（569174d）、3.0.7 分页原地翻页（bffa4e8）、3.0.8 顶部翻页器+转圈（270ba4d）均已提交。本轮 = **3.0.9 外部 unstar 检测 + API 双 404 确认（P1+P2.5）+ PAT 双格式配置**（三条设计决策已定稿，见下方「数据同步设计决策」），`pnpm check` 通过，待提交与真机验证。
+GitHub 2026 改版适配（f117ef4）、Lists+FOUC（2c84884）、GM 兼容层+Turbo 动画（c376192）、mountGmApi（bc6b19d）、3.0.3 三 bug（0d6e913）、3.0.4 直载动画+兜底误撤、3.0.5 取消冗余整页 visit（554bcf1）、3.0.6 Set status 裁剪修复（569174d）、3.0.7 分页原地翻页（bffa4e8）、3.0.8 顶部翻页器+转圈（270ba4d）均已提交。本轮 = **3.0.9 外部 unstar 检测（P1+P2.5）+ PAT 双格式 + 3.0.10 位移判定（按排序算预期页、挂起→预期页成员检测，不存顺序）**（设计决策 D1–D4 见下方「数据同步设计决策」），`pnpm check` 通过，待提交与真机验证。
 
 ### 本轮改了什么（3.0.3 → 3.0.4，本次提交）
 
@@ -28,18 +28,20 @@ GitHub 2026 改版适配（f117ef4）、Lists+FOUC（2c84884）、GM 兼容层+T
 **3.0.7 补丁（同日 10:55；用户报「点分页 Next 闪一下才加载下一页」，要求直接截取数据原地更新）**：根因 = 分页链接在 `turbo-frame#user-starred-repos` 内（`.paginate-container` 下的 `a.btn.BtnGroup-item`），点击走 Turbo frame 导航 → 我们在 `before-frame-render` 给 frame 挂 `gsm-turbo-hidden` 整块藏住 + frame-render 后播入场动画 → 网络往返期间空白、到达后淡入 = 「闪」。修法：新模块 `src/pagination.ts`——**window 捕获阶段**拦分页链接点击（document-start 注册，先于 Turbo 一切 document 监听；`preventDefault`+`stopImmediatePropagation` 一处干掉 Turbo 与本脚本的 starsNavPending 误置位），直接取链接 `href`（**不解析游标参数，值不固定**）fetch 新页 HTML，`frame.innerHTML` 原地换入 + `transformStarsList()` 完整重建；不 pushState（原生 frame 翻页不改地址栏，链接无 data-turbo-action）；中键/Ctrl/Shift 不拦截；失败回落 `location.href`。**不动 frame[src]**（Turbo 监听 src 属性变化会二次加载再闪一次）。真机受信任点击端到端验证：首卡 utags→Lithe-IDEA→Ditto 连翻两页、`turbo:frame-render/visit/before-render` 与 `gsm-turbo-hidden` 计数全 0、地址栏保持 ?tab=stars、控制台两条「原地翻页完成」。**排查坑**：CDP Input 对**后台标签页静默失效**（tab `active:false` 时 click 不到达页面、无任何报错）——真机点击测试必须先 `Page.bringToFront` 再重测坐标（前台化后布局会偏移约 56px）。
 **3.0.8 补丁（同日 11:20；用户要求顶部复制分页器 + 点击转圈动画）**：① **顶部快捷翻页器**——`src/transform.ts` 末尾新增私有 `mountTopPager(colLg9, gridContainer)`（在 `appendChild(gridContainer)` 后调用，随 transform 完整重建同步，原地翻页后自动换新页状态）：克隆网格底部的 `.paginate-container` 挂到 `h2.f3-light`（「Starred repositories」）的父容器 `div.position-relative` 上并加 `gsm-top-pager` 类，父容器加 `gsm-header-row` 变 flex 两端对齐实现「行右边」（实测 topRect 右缘 = 行右缘 1456）；保留 `paginate-container` 类 → 分页拦截/转圈对顶底两份一视同仁，无需改 pagination.ts 的匹配逻辑。② **转圈动画**——按 Primer 官方 Button loading 态规范（文字保留透明占位防布局跳动 + aria-busy）：`swapPageInPlace` 签名加 `sourceLink`，开头加 `gsm-pager-loading` + `aria-busy=true`，`finally` 里摘除（成功时节点已被 transform 重建、脱离文档，remove 无害）；CSS 在 `base.css`：文字 `color:transparent` 占位保留，`::before` 画 14px 边框转圈（`border-top-color` 用 `var(--fgColor-default)` 适配暗色）+ `gsm-spin` keyframes + `pointer-events:none`/`cursor:progress`。**真机验证**（CDP `Network.emulateNetworkConditions` 限速 2s 拉开观察窗口 + 受信任点击顶部 Next）：点击即 `loading:1`、截图见 Next 内转圈而 Previous 文字保留、完成后 `loadingNow:0`；第 2 页顶/底 Previous 由 disabled 按钮变可点链接（状态同步 ✓）、首卡 utags→Lithe-IDEA、topRect 无跳动。**注意**：计数 `[aria-busy]` 时页面全局会有 ~60 个 GitHub 自己的 busy 区块，别误判。
 
-### 本轮改了什么（3.0.8 → 3.0.9，本次，待提交）
+### 本轮改了什么（3.0.8 → 3.0.10，本次，待提交）
 
 | 文件 | 改动 |
 |---|---|
 | `src/starCheck.ts` | **新增（确认层 P2.5）**：PAT 存取与前缀校验（`ghp_`/`github_pat_`）、TM 菜单注册（`GM_registerMenuCommand` + prompt，非法前缀拒绝保存、只显示掩码）、`GET /user/starred/{owner}/{repo}` 串行核对队列（204=仍 star 只记裁决；404 间隔 1.5s **双确认**才走 unstar 宽限备份+清快照+卡片翻空星；条间隔 200ms、网络失败重试 1 次）、速率守卫（余量 <50 / 余量 0 / retry-after → 暂停至 reset+30s）、401/403 熔断当前 token（403 读 `X-Accepted-GitHub-Permissions` 给权限修复提示，换 token 自动恢复）、裁决缓存（starred 24h / unstarred 7d）、无 token 时只提示一次绝不改数据 |
-| `src/snapshot.ts` | **新增（检测层 P1）**：`stars_page_snapshots` 按规范化页 URL（去 hash、page=1 归一、query 排序）记 `{repoId: owner/repo}`；同页 diff 出的「消失」按单次 ≤8 交核对（>12 提示走 P4）；`currentKey` 跟踪当前内容所属键（原地翻页不 pushState、Turbo 保留 frame 时防记错键）；空到货不更新快照；通过回调注册确认钩子反向清全部快照（避免与 starCheck 循环 import）；内容未变不写盘 |
+| `src/snapshot.ts` | **新增（检测层 P1 + 位移判定）**：`stars_page_snapshots` 按规范化页 URL（去 hash、page=1 归一、query 排序）记 `{repoId: owner/repo}`，**不存顺序**；同页成员 diff 出「消失」后 `expectationKey()` 按排序参数+页码算预期页——有模型（`created`+desc → 本页+1 / `asc` → 本页−1）→ `stars_shift_pending` 挂起（本页不核对，cap 60/TTL 30d），无模型（`updated`/`stars`、升序第 1 页）→ 直接 ≤8 核对（>12 提示走 P4）；到货先 `resolvePending()`：在到货页可见=位移确认即清、预期页缺失=才核对；`currentKey` 跟踪当前内容所属键（原地翻页不 pushState、Turbo 保留 frame 时防记错键）；空到货不更新也不结算；确认回调同时清全部快照与挂起（回调注册避免与 starCheck 循环 import）；内容未变不写盘 |
 | `src/gm.ts` | +`gmRegisterMenuCommand()`（调用时判定，非 TM 环境降级为 info 日志） |
 | `src/index.ts` | `transformAndReveal` 成功分支 +`recordArrival()`；`init()` 无条件 +`registerTokenMenu()` |
 | `src/pagination.ts` | 原地换页成功后 +`recordArrival(url)`（键 = 取回内容的 href） |
-| `src/constants.ts` / `src/types.ts` | +`github_pat` / `stars_page_snapshots` / `stars_star_verdicts` 三键；+`StarVerdict` / `VerdictMap` / `PageSnapshots` 类型 |
+| `src/constants.ts` / `src/types.ts` | +`github_pat` / `stars_page_snapshots` / `stars_star_verdicts` / `stars_shift_pending` 四键；+`StarVerdict` / `VerdictMap` / `PageSnapshots` / `ShiftPendingEntry` / `ShiftPendingMap` 类型 |
 | `vite.config.ts` | grant +`GM_registerMenuCommand`（仍显式声明，不靠 `$` 推断） |
-| `package.json` | 3.0.8 → **3.0.9** |
+| `package.json` | 3.0.8 → **3.0.10** |
+
+**3.0.10 补丁（同日 15:38；用户反馈：`/2akouwu/reverify` 被「新 star 挤到下一页」误判核对，并提出「按排序方式和每页数量直接计算」）**：位移判定改为**无序方案**（不存顺序、快照形状不变、零迁移）。线上实测排序参数 `sort=created/updated/stars` + `direction=desc/asc`（每页 30 卡）：`created`+desc（默认）消失 → 预期页 = 本页+1 挂起、**本页不核对**；`asc` → 预期页 = 本页−1；`updated`/`stars` → 无位移模型直接核对。任何页到货先结算：挂起项**在到货页可见 = 位移确认即清**；**预期页缺失 = 「本该在本页却没有」才核对**；方向猜错（上拉 / 一次跨多页）由 API 204 无害兜底。确认 unstar 后同步清挂起。
 
 **三 bug 根因（用户 2026-09-22 报告，本轮已修）**：① `@match */*` 匹配不到单段路径 `/YsLtr`，且 `init()` 在非 stars 页早退不挂导航监听 → profile 直入/点 Stars 均无效；② `visibility:hidden` 可被后代覆盖（GitHub 还有 app 层 CSS 未查全），且揭示后网格 `gsm-grid-in` 淡入 0.3s——「页面出现后内容再淡入」被当成闪；③ `gmAddStyle` 注入的布局样式**没有任何移除路径**，同文档 turbo 离开后 180px 侧边栏/120px 头像规则仍生效。
 **约束（永久生效）**：禁止 `import {GM_*} from '$'`（顶部一次性捕获与 document-start 不兼容，会固化成 undefined）；GM 一律走 `src/gm.ts`。
@@ -49,7 +51,7 @@ GitHub 2026 改版适配（f117ef4）、Lists+FOUC（2c84884）、GM 兼容层+T
 ### 数据存储（已向用户说明）
 - 主存储 GM：`stars_tags_<userId>` / `stars_notes_<userId>` / `stars_repo_cache` / `stars_pending_delete`（取不到 userId 回退 `stars_tags`/`stars_notes`）；localStorage 镜像同键加前缀 `github-stars-grid::`。
 - 迁移仅当 GM 为默认值时触发：GM 已有旧数据时，dev 写进 localStorage 的新数据**不会合并**。
-- 核对相关（3.0.9 新增）：`github_pat`（PAT）、`stars_page_snapshots`（到货页快照）、`stars_star_verdicts`（API 裁决缓存）——机制见 DEVELOPER.md §5/§6，决策见下方「数据同步设计决策」。
+- 核对相关（3.0.9/3.0.10 新增）：`github_pat`（PAT）、`stars_page_snapshots`（到货页快照）、`stars_star_verdicts`（API 裁决缓存）、`stars_shift_pending`（位移挂起：被挤出的仓库 → 预期页，出现即清、缺失才核对）——机制见 DEVELOPER.md §5/§6，决策见下方「数据同步设计决策」。
 
 ### 数据同步设计决策（2026-09-22 定稿，用户逐条确认）
 
@@ -61,6 +63,8 @@ GitHub 2026 改版适配（f117ef4）、Lists+FOUC（2c84884）、GM 兼容层+T
 - classic `ghp_`：有效 token 即可读全部 `/user/starred*`；**核对私有仓库需勾 `repo` scope**——无 scope 时「无权限的私有仓库 404」与「真 unstar 404」不可区分（D2 已排除页面 fallback，只能靠 token scope 规避），此为已知局限。
 - fine-grained `github_pat_`：官方 fine-grained 权限表 **“User permissions for Starring”** 列出全部 5 个端点（`GET /user/starred`、`GET/PUT/DELETE /user/starred/{owner}/{repo}`、`GET /users/{username}/starred`）→ 勾 **Account permissions → Starring → Read** + 仓库范围 **All repositories**（2026-06-30 stargazers 端点收紧名单**不含**这些端点）。
 - 配置入口：TM 菜单「⭐ 设置 GitHub Token」（任意 github.com 页可用）；存储键 `github_pat`；按前缀校验、非法拒绝保存；401/403 自动熔断当前 token，换 token 自动恢复。
+
+**D4 · 位移判定（3.0.10，用户 2026-09-22 反馈 reverify 误核对后定，修订 D1 的「消失→候选→API」）**：a) 「被新 star 挤到下一页」的消失**不触发核对**——按排序方式+每页数量直接算预期页（`created`+desc → 本页+1；`created`+asc → 本页−1；`updated`/`stars` 与升序第 1 页 → 无位移模型），消失先挂起 `stars_shift_pending`；b) 核对只发生在「本该在本页出现却没有出现」= 挂起项在预期页缺失（无模型排序仍直接有界核对，≤8 / >12 走 P4 照旧）；c) 结算用**集合成员检测、不存顺序**——挂起项在任何到货页出现即确认清（顺序只用于同货次区分尾部/中部，推迟到预期页成员检测等价且更简单，用户指出按排序+页数直接计算即可）；d) 方向猜错（上拉到页码更小的一页 / 一次跨多页）由「预期页缺失 → API 204」无害兜底；e) 确认 unstar 后清全部快照**与挂起**。
 
 **未实现（后续阶段）**：P3 local-first 首屏（缓存快照先渲染再由到货校正）；P4 全量拉取比对（整表 diff，收编「单页缺失猜测」与 >12 场景；GraphQL/REST 分页与 ETag 优化届时调研）。
 
@@ -91,7 +95,7 @@ dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用�
 
 ### 阻塞 / 风险 / 待确认
 
-1. **用户重装 `dist/github-stars-grid.user.js`（3.0.9）前台验证**：① 直进 `?tab=stars`：揭示无闪烁，且**至少观察 10 秒**页面不回退原生（3.0.3 是揭示后约 4s 被误撤样式）；② profile 点 Stars 出网格；③ 离开/返回时侧边栏恢复与收缩动画正常；④ 悬停 `Set status` 圆圈展开成完整药丸、右侧不再被切（水合完成需数秒，刚刷新时圆圈悬停不展开属正常）；⑤ **点分页 Next/Prev：旧内容保持可见直到新页换入，全程无空白/无淡入**（3.0.7 原地翻页；地址栏保持 ?tab=stars 属预期）；⑥ **「Starred repositories」行右侧有 Previous/Next 快捷份，点击后按钮内转圈、文字不消失、按钮不变宽**（3.0.8）；⑦ **TM 菜单出现「⭐ 设置 GitHub Token」**（= grant+注册生效）；配置 PAT（classic `ghp_`，或 fine-grained `github_pat_` = Account permissions → Starring → Read + All repositories）后刷新 stars 页并翻页往返，控制台应见「快照检测到 N 个仓库从本页消失…」「star 核对入队」（未配 token 时见「未配置 token」提示属预期）；⑧ **外部 unstar 端到端**：用**脚本感知不到的方式**取消 star（另一浏览器/手机 App，或 F12 里 `fetch('https://api.github.com/user/starred/<owner>/<repo>',{method:'DELETE',headers:{Authorization:'Bearer <PAT>'}})` —— 详情页/卡片上的星星按钮会走脚本自己的管线，测不到 API 核对路径），重进该页等 ~2s 见「★ 核对确认外部 unstar」，标签/备注已进宽限期（24h 内重 star 恢复）。若仍闪：要控制台 `script loaded / 防闪烁隐藏已挂载 / 防闪烁解除 / 原地翻页完成` 各行原文。
+1. **用户重装 `dist/github-stars-grid.user.js`（3.0.10）前台验证**：① 直进 `?tab=stars`：揭示无闪烁，且**至少观察 10 秒**页面不回退原生（3.0.3 是揭示后约 4s 被误撤样式）；② profile 点 Stars 出网格；③ 离开/返回时侧边栏恢复与收缩动画正常；④ 悬停 `Set status` 圆圈展开成完整药丸、右侧不再被切（水合完成需数秒，刚刷新时圆圈悬停不展开属正常）；⑤ **点分页 Next/Prev：旧内容保持可见直到新页换入，全程无空白/无淡入**（3.0.7 原地翻页；地址栏保持 ?tab=stars 属预期）；⑥ **「Starred repositories」行右侧有 Previous/Next 快捷份，点击后按钮内转圈、文字不消失、按钮不变宽**（3.0.8）；⑦ **TM 菜单出现「⭐ 设置 GitHub Token」**（= grant+注册生效），配置 PAT（classic `ghp_`，或 fine-grained `github_pat_` = Account permissions → Starring → Read + All repositories）；⑧ **位移判定（3.0.10 核心）**：默认排序（Recently starred）在第 1 页新 star 一个仓库后，被挤到第 2 页的原尾部仓库只应见「位移挂起：N 个…本页不核对」且**不发 API 请求**（reverify 即上次误核对的用例）；翻到第 2 页该仓库出现 →「位移确认：…清除挂起、不核对」；只有挂起项在预期页**缺失**才见「…预期在本页却没有出现：交 API 核对」（未配 token 时见「未配置 token」提示属预期）；切 Most stars / Recently active 排序翻页见「快照检测到 N 个仓库从本页消失（当前排序无位移模型…）」直接核对属预期；⑨ **外部 unstar 端到端**：用**脚本感知不到的方式**取消 star（另一浏览器/手机 App，或 F12 里 `fetch('https://api.github.com/user/starred/<owner>/<repo>',{method:'DELETE',headers:{Authorization:'Bearer <PAT>'}})` —— 详情页/卡片上的星星按钮会走脚本自己的管线，测不到 API 核对路径），重进该页等 ~2s 见「★ 核对确认外部 unstar」，标签/备注已进宽限期（24h 内重 star 恢复）。若仍闪：要控制台 `script loaded / 防闪烁隐藏已挂载 / 防闪烁解除 / 原地翻页完成` 各行原文。
 2. **dev HMR 在 github.com 上需要浏览器放行 CSP**：GitHub 的 `script-src` 白名单不含 `127.0.0.1`，dev loader 的动态 import 必被拒（`Failed to fetch dynamically imported module`）。插件绕不过，需装 CSP 放行扩展 + 允许 Local Network Access 弹窗。详见 `DEVELOPER.md` §2「dev 模式在 github.com 上的两个前置条件」。
 3. **两个脚本不能同时启用**：`transformStarsList()` 见到 `.stars-grid-container` 就提前返回，正式版先跑会让 dev 版"改了没反应"。开发时在 Tampermonkey 里禁用正式版。
 4. 真机验证必须**前台**：Chrome 冻结后台标签页后测量/交互全部失真（曾误判样式失效）。
@@ -99,7 +103,7 @@ dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用�
 
 ### 下一步
 
-1. 等 3.0.9 验证结果。原要点照旧：`防闪烁解除` 原因必须是 `转换成功(直载)`；观察 10s 无回退 = 兜底闭环；悬停药丸完整 = 裁剪闭环；翻页无闪 = 原地翻页闭环；顶部翻页器+转圈 = 3.0.8 闭环。**3.0.9 新要点**：TM 菜单有「⭐ 设置 GitHub Token」；配 token 后翻页往返见「快照检测到…消失」「star 核对入队」；外部 unstar 后重进见「★ 核对确认外部 unstar」（步骤见「阻塞」⑦⑧）。若 403：按控制台 `X-Accepted-GitHub-Permissions` 提示行对照 D3 权限指引改 token。
+1. 等 3.0.10 验证结果。原要点照旧：`防闪烁解除` 原因必须是 `转换成功(直载)`；观察 10s 无回退 = 兜底闭环；悬停药丸完整 = 裁剪闭环；翻页无闪 = 原地翻页闭环；顶部翻页器+转圈 = 3.0.8 闭环。**3.0.9/3.0.10 新要点**：TM 菜单有「⭐ 设置 GitHub Token」；位移判定三连——新 star 后见「位移挂起…本页不核对」（零 API 请求）、到预期页见「位移确认」、预期页缺失才见「预期在本页却没有出现…交 API 核对」、updated/stars 排序见「无位移模型」直接核对；外部 unstar 后重进见「★ 核对确认外部 unstar」（步骤见「阻塞」⑧⑨）。若 403：按控制台 `X-Accepted-GitHub-Permissions` 提示行对照 D3 权限指引改 token。
 2. **快速构建阶段（2026-09-22 起，用户已定）**：不跑 `tests/smoke/`，不写测试 fixture/断言；改完只 `pnpm check`，由用户在真实页面判断是否成功。
 3. 若 GitHub 再改版：先跑 `tests/diag/selectors.js` 定位失配点，再改 `src/dom.ts` 的 helper（**只改 helper，不要在业务模块里写选择器**）。
 4. 数据同步后续阶段（方向已定、未排期）：**P3** local-first 首屏渲染（缓存快照先显 + 到货校正）；**P4** 全量拉取比对（GraphQL/REST 分页整表 diff + ETag，收编「单页缺失猜测」与 >12 场景）。见「数据同步设计决策」。

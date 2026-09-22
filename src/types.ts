@@ -44,6 +44,17 @@ export type VerdictMap = Record<string, StarVerdict>;
 /** 到货页快照：规范化页 URL → {repoId: 'owner/repo'} */
 export type PageSnapshots = Record<string, Record<string, string>>;
 
+/** 位移挂起条目：上一页被挤出的仓库 → 预期出现的页（出现即清、缺失才核对） */
+export interface ShiftPendingEntry {
+  o: string;
+  n: string;
+  /** 预期出现的页键（规范化 URL） */
+  expectKey: string;
+  /** 被挤出的来源页键 */
+  srcKey: string;
+  ts: number;
+}
+export type ShiftPendingMap = Record<string, ShiftPendingEntry>;
 /** 筛选结果项 */
 export interface FilteredRepo {
   repoId: string;
