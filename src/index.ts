@@ -1,5 +1,6 @@
 import { gmAddStyle } from './gm';
 import baseCss from './styles/base.css?inline';
+import persistentCss from './styles/persistent.css?inline';
 import wideCss from './styles/wide.css?inline';
 import { installBootHide, isStarsPage, revealBootHide, revealTurboHide } from './boot';
 import { getRepoIdMeta, getStarButton, hideListsSection, isStarButtonActive } from './dom';
@@ -10,13 +11,55 @@ import { migrateTagsIfNeeded } from './storage/tags';
 import { transformStarsList } from './transform';
 import { isDesktop } from './utils';
 
-/**
- * 注入样式。
- * 只在 Stars 页面调用 —— 这些样式会改变 GitHub 的 Layout 结构，
- * 在仓库详情页注入会误伤侧边栏宽度。
- */
-function injectStyles(): void {
-  gmAddStyle(baseCss + '\n' + wideCss);
+/* ============================================================
+ * 样式生命周期
+ *
+ * 布局样式（base+wide，含 180px 侧边栏 / 120px 头像 / 三栏网格）只在 Stars
+ * 视图存在：离开 Stars（切到 Repositories 等标签、整页导航走人）时整表移除，
+ * GitHub 原生布局与尺寸立即恢复；再次进入时重新挂上。
+ *
+ * persistentCss 是常驻小表（注入后不移除）：
+ * - .stars-right-sidebar 默认隐藏：它是脚本追加到持久 .Layout 上的节点，
+ *   主表一撤它会以 display:block 挤进网格轨道残留一块空列；
+ * - 侧边栏/头像 transition：离开时宽度 180→296 回弹仍需要过渡。
+ *
+ * 注入顺序恒为「常驻表 → 主表」，同特异性时后插入的主表在 Stars 视图
+ * 正确覆盖常驻表的默认隐藏。
+ * ============================================================ */
+let persistentStyleEl: HTMLStyleElement | null = null;
+let layoutStyleEl: HTMLStyleElement | null = null;
+let starsSetupDone = false;
+
+function ensureStyles(): void {
+  if (!persistentStyleEl || !persistentStyleEl.isConnected) {
+    persistentStyleEl = gmAddStyle(persistentCss);
+  }
+  if (!layoutStyleEl || !layoutStyleEl.isConnected) {
+    layoutStyleEl = gmAddStyle(baseCss + '\n' + wideCss);
+  }
+}
+
+/** 幂等：样式 + 一次性存储迁移/清理。profile 页直入（样式从未注入过）也走这里。 */
+function ensureStarsSetup(): void {
+  ensureStyles();
+  if (starsSetupDone) return;
+  starsSetupDone = true;
+  migrateTagsIfNeeded();
+  cleanupExpiredUnstarred();
+}
+
+/** 离开 Stars：撤掉布局主表 + 清掉入场标记。幂等。 */
+function deactivateStars(): void {
+  layoutStyleEl?.remove();
+  document.documentElement.classList.remove('gsm-anim-prepare');
+  document.documentElement.classList.remove('gsm-turbo-entry');
+}
+
+/** 离开 Stars 的完整收尾：解除一切隐藏 + 撤样式，回到 GitHub 原生视图。幂等。 */
+function exitStarsView(reason: string): void {
+  revealTurboHide();
+  deactivateStars();
+  revealBootHide(reason);
 }
 
 /**
@@ -62,14 +105,18 @@ function watchRepoStarState(repoId: string): void {
   }
 }
 
-/**
- * Turbo frame 局部切换（标签互切/翻页）防闪烁 + 过渡动画。
+/* ============================================================
+ * Turbo 导航：防闪烁 + 入场过渡 + 离开恢复
  *
  * GitHub 的 profile 标签链接都带 data-turbo-frame="user-profile-frame"，
  * 点击后只替换 frame 内容，不整页刷新 —— document-start 那套管不到。
- * 做法：frame 替换前先藏住，替换 + 转换全部完成后再渲染；
- * 侧边栏/头像在 frame 外，是持久元素，解除隐藏瞬间从原始尺寸平滑收缩。
- */
+ * 做法：进 Stars 前先藏住，替换 + 转换完成后再渲染；侧边栏/头像是 frame
+ * 外的持久元素，解除隐藏瞬间从原始尺寸平滑收缩。离开 Stars 时撤掉主样式表，
+ * 尺寸带过渡地弹回原生值。
+ *
+ * 这些监听必须在**任何**匹配页都注册：纯 profile 页（无 tab=stars）也要能
+ * 响应"点 Stars 标签"的 turbo 事件把用户接进来。
+ * ============================================================ */
 let starsNavPending = false;
 let navFailsafeTimer: number | undefined;
 
@@ -79,8 +126,7 @@ function armNavFailsafe(): void {
   navFailsafeTimer = window.setTimeout(() => {
     navFailsafeTimer = undefined;
     starsNavPending = false;
-    revealTurboHide();
-    revealBootHide();
+    exitStarsView('导航 4s 兜底');
   }, 4000);
 }
 
@@ -88,18 +134,31 @@ function armNavFailsafe(): void {
 function revealAfterTransform(animate: boolean): void {
   revealTurboHide();
   if (!animate) {
-    revealBootHide();
+    document.documentElement.classList.remove('gsm-anim-prepare');
+    revealBootHide('转换成功(直载)');
     return;
   }
   const root = document.documentElement;
-  root.classList.add('gsm-anim-prepare'); // 过渡起点：临时恢复原始宽度
-  void (document.body && document.body.offsetHeight); // 强制样式计算，否则没有过渡
-  root.classList.remove('gsm-anim-prepare');
-  revealBootHide();
+  root.classList.add('gsm-turbo-entry'); // 卡片淡入只在 turbo 入场播；直载不播（防"闪一下"）
+  root.classList.add('gsm-anim-prepare'); // 过渡起点：原始宽度（此刻要么还藏着、要么 = 原生值）
+  revealBootHide('转换成功(turbo 入场)');
+  void (document.body && document.body.offsetHeight); // 强制样式计算，提交过渡起点
+  root.classList.remove('gsm-anim-prepare'); // 起点 → 紧凑尺寸，transition 开跑
 }
 
-/** 反复尝试转换（frame 渲染后内容可能未就绪），成功即解除隐藏 */
+/**
+ * 反复尝试转换（frame 渲染后内容可能未就绪），成功即解除隐藏。
+ * 失败重试耗尽时解除隐藏并撤掉样式，回落到 GitHub 原生页面。
+ */
 function transformAndReveal(animate: boolean, retries = 12): void {
+  const root = document.documentElement;
+  if (animate) {
+    // 起点先行：布局样式一注入，侧边栏就会算成 180px。先把 prepare 立好
+    // （= 原生 296px），注入与转换全程都停在起点宽度，解除隐藏时一次性过渡。
+    root.classList.add('gsm-anim-prepare');
+  }
+  ensureStarsSetup();
+
   let done = false;
   try {
     done = transformStarsList();
@@ -117,54 +176,19 @@ function transformAndReveal(animate: boolean, retries = 12): void {
     return;
   }
   if (retries > 0) {
+    if (retries === 12) console.log('[github-stars-grid] 转换目标未就绪，150ms 后重试');
     window.setTimeout(() => transformAndReveal(animate, retries - 1), 150);
-  }
-  // 重试耗尽：交给 4s 兜底强制显示
-}
-function init(): void {
-  // 页面类型检测
-  const repoIdMeta = getRepoIdMeta();
-  const isRepoDetailPage = !isStarsPage() && !!repoIdMeta;
-  // 仓库详情页：缓存数据 + 监听 unstar + 提前返回
-  if (isRepoDetailPage) {
-    cleanupExpiredUnstarred();
-    extractAndCacheRepoFromDetailPage();
-    watchRepoStarState(repoIdMeta.getAttribute('content') || '');
     return;
   }
+  // 重试耗尽：解除隐藏 + 撤样式，恢复原生页面（诊断日志要能一眼看出失配）
+  console.error('[github-stars-grid] 转换重试耗尽，已恢复原生页面（选择器可能再次失配）');
+  revealTurboHide();
+  deactivateStars();
+  revealBootHide('转换失败/重试耗尽');
+}
 
-  if (!isStarsPage()) return;
-  // Stars 页面初始化
-  injectStyles();
-  migrateTagsIfNeeded();
-  cleanupExpiredUnstarred();
-
-  // 执行转换 + MutationObserver + Turbo 事件
-  // document-start 防闪烁：转换成功才解除页面隐藏
-  let transformed = false;
-  try {
-    transformed = transformStarsList();
-  } catch (err) {
-    console.error('[github-stars-grid] transformStarsList 执行失败', err);
-  }
-  if (transformed) {
-    revealBootHide();
-  } else {
-    console.log('[github-stars-grid] 首次转换未就绪，转入 MutationObserver 等待');
-    const observer = new MutationObserver((_mutations, obs) => {
-      if (transformStarsList()) {
-        obs.disconnect();
-        revealBootHide();
-      }
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-    setTimeout(() => {
-      observer.disconnect();
-      console.error('[github-stars-grid] 10s 内仍未转换成功，选择器可能再次失配，已恢复原页面');
-      revealBootHide();
-    }, 10000);
-  }
-
+/** 导航监听：任何匹配页都要挂（纯 profile 页点 Stars 就靠它接进来）。 */
+function registerNavListeners(): void {
   // Turbo frame 替换前先藏住（标签互切、翻页都走这里），替换+转换完成后再渲染
   document.addEventListener('turbo:before-frame-render', (event) => {
     const frame = event.target as Element;
@@ -173,10 +197,16 @@ function init(): void {
     // 只在目标内容确实是 Stars 列表时才藏：切去 Repositories 等标签不能捂住
     const detail = (event as CustomEvent<{ newFrame?: Element }>).detail;
     const newFrame = detail && detail.newFrame;
-    const toStars = isStarsPage() || starsNavPending ||
+    const toStars =
+      isStarsPage() ||
+      starsNavPending ||
       frame.id === 'user-starred-repos' ||
       !!(newFrame && newFrame.querySelector('#user-starred-repos'));
-    if (!toStars) return;
+    if (!toStars) {
+      // 切去非 Stars：立刻撤布局样式，别让原生内容顶着 180px 侧边栏渲染
+      exitStarsView('切至非 Stars 标签(渲染前)');
+      return;
+    }
     frame.classList.add('gsm-turbo-hidden');
     armNavFailsafe();
   });
@@ -189,11 +219,11 @@ function init(): void {
     } else if (frameId === 'user-profile-frame') {
       setTimeout(() => {
         hideListsSection();
-        // 兜底：若换进来的不是 Stars 标签内容（无 starred 列表），立即解除，别捂住别的页面
+        // 兜底：若换进来的不是 Stars 标签内容（无 starred 列表），立即解除并撤样式
         const pf = document.getElementById('user-profile-frame');
         if (!pf) return;
         if (!pf.querySelector('#user-starred-repos')) {
-          revealTurboHide();
+          exitStarsView('切至非 Stars 标签(渲染后)');
         } else {
           // Stars 内容就绪。注意 Turbo 会按 id 保留嵌套的 starred frame（src 未变就不会
           // 重新渲染、也就没有 starred 的 frame-render），必须在这里主动解除隐藏
@@ -213,18 +243,11 @@ function init(): void {
   document.addEventListener('turbo:load', () => {
     if (!isStarsPage()) {
       starsNavPending = false;
-      revealTurboHide();
-      revealBootHide();
+      exitStarsView('非 Stars 页 turbo:load');
       return;
     }
     const arrive = starsNavPending;
     setTimeout(() => transformAndReveal(arrive), 200);
-  });
-
-  document.addEventListener('turbo:load', () => {
-    if (window.location.search.includes('tab=stars')) {
-      setTimeout(transformStarsList, 200);
-    }
   });
 
   // 记录"即将切到 Stars 标签"：frame 导航期间 URL 不会立刻变，isStarsPage() 测不到
@@ -253,6 +276,28 @@ function init(): void {
   });
 }
 
+function init(): void {
+  // 导航监听必须最先挂：纯 profile 页（非 stars、非仓库详情）也要能响应
+  // "点 Stars 标签"，否则从 profile 进 Stars 时没有任何转换逻辑在跑。
+  registerNavListeners();
+
+  const repoIdMeta = getRepoIdMeta();
+  const isRepoDetailPage = !isStarsPage() && !!repoIdMeta;
+  // 仓库详情页：缓存数据 + 监听 unstar + 提前返回
+  if (isRepoDetailPage) {
+    cleanupExpiredUnstarred();
+    extractAndCacheRepoFromDetailPage();
+    watchRepoStarState(repoIdMeta.getAttribute('content') || '');
+    return;
+  }
+
+  if (!isStarsPage()) return; // 纯 profile 页等 turbo 接进来
+
+  // Stars 直载：样式 + 迁移 + 转换；转换成功才解除 document-start 的隐藏
+  ensureStarsSetup();
+  transformAndReveal(false);
+}
+
 /** document-start 时 DOM 尚未解析，等 DOM 就绪后再跑主逻辑 */
 function whenReady(fn: () => void): void {
   if (document.readyState !== 'loading') {
@@ -271,6 +316,8 @@ whenReady(() => {
     init();
   } catch (err) {
     console.error('[github-stars-grid] init 失败，解除防闪烁隐藏', err);
-    revealBootHide();
+    revealTurboHide();
+    deactivateStars();
+    revealBootHide('init 异常');
   }
 });

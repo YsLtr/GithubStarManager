@@ -5,27 +5,27 @@
 
 ---
 
-## 当前交接（2026-09-22 09:05 +0800）
+## 当前交接（2026-09-22 09:18 +0800）
 
 ### 目标
-GitHub 2026 改版适配已完成并提交（f117ef4）；Lists 隐藏 + document-start FOUC 已提交（2c84884）。本轮收尾 = **GM API 在 document-start 下不可用的根因修复（3.0.2）** + Turbo 切换动画，随本次 handoff 一并提交，等用户真机确认。
+GitHub 2026 改版适配（f117ef4）、Lists+FOUC（2c84884）、GM 兼容层+Turbo 动画（c376192）、mountGmApi（bc6b19d）均已提交。本轮 = **3.0.3 三个真机 bug 修复**（profile 直入不生效 / 直载仍闪 / 离开 Stars 头像侧边栏不恢复），待用户重装真机验证。
 
-### 本轮改了什么（本次提交）
+### 本轮改了什么（3.0.3，本次提交）
 
 | 文件 | 改动 |
 |---|---|
-| `src/gm.ts` | **新增 GM 兼容层**：`gmGet/gmSet` 调用时 `typeof` 判定——GM 可用写 GM + 镜像 localStorage；不可用退 localStorage（前缀 `github-stars-grid::`），GM 恢复后自动迁回；`gmAddStyle` 原生 DOM 插 `<style>`，彻底弃用 GM_addStyle |
-| `src/storage/{tags,notes,repoCache,pendingDelete}.ts` | GM_* 调用全部改走 gmGet/gmSet，删除 `from '$'` 导入（连同 index.ts 共 17 处调用点） |
-| `src/index.ts` | Turbo 切换防闪烁+动画、gmAddStyle 迁移、3 处诊断日志（`script loaded (document-start)` / observer 等待 / 10s 失败——确认后可删） |
-| `src/boot.ts` | installBootHide/reveal 按 `isDesktop()` 分桶，移动端不隐藏 |
-| `src/styles/base.css` | 侧边栏/头像 width transition、`html.gsm-anim-prepare`、`.gsm-turbo-hidden`、`.stars-grid-container` 的 `gsm-grid-in` 淡入 |
-| `vite.config.ts` | `run-at` 去重只留 **document-start**；显式 `grant: ['GM_getValue','GM_setValue']`；**`server:{mountGmApi:true}`**（dev 时把已 grant 的 GM_* 复制到 unsafeWindow → gm.ts dev 走 GM 分支，仅 dev 生效、产物不变） |
-| `package.json` | 3.0.1 → **3.0.2**（3.0.1 是带 bug 构建，版本号必须可区分） |
+| `vite.config.ts` | `match` 收敛为单条 **`https://github.com/*`**：旧 `*/*` 要求两段路径，匹配不到纯 `/YsLtr` → profile 页脚本根本没跑 |
+| `src/index.ts` | **全量重构**：`registerNavListeners()` 无条件前置（任何匹配页都挂 turbo/click 监听）；样式生命周期 `ensureStarsSetup()/deactivateStars()/exitStarsView()`；`transformAndReveal()` 成为唯一转换入口（重试耗尽=撤样式+恢复原生+大声日志）；删 observer/10s 块与重复 turbo:load；profile→Stars 到达时补注入样式 |
+| `src/boot.ts` | 隐藏从 `visibility:hidden` 改为 **`body{display:none!important}`**（不可被后代覆盖、零绘制）；挂载/解除都打日志（原因+耗时） |
+| `src/styles/persistent.css` | **新增常驻表**：`.stars-right-sidebar` 默认隐藏（防离开后残留空列）+ 侧边栏/头像 transition（离开时主表被撤，回弹过渡必须还在） |
+| `src/styles/base.css` | 4 条 transition 移去常驻表；`gsm-grid-in` 淡入改挂 `html.gsm-turbo-entry`——**直载不播淡入**（揭示后网格再淡入被用户当成闪） |
+| `src/gm.ts` | `gmAddStyle` 改为返回 `HTMLStyleElement` 句柄 |
+| `package.json` | 3.0.2 → **3.0.3** |
 
-**GM 根因（用户真机报 `init 失败: GM_addStyle is not a function` → 全功能失效）**：`$` 虚拟模块的 GM_* 被打包成 **bundle 顶部一次性 typeof 捕获（IIFE）**，document-start 执行时 TM 尚未提供 GM_* → 永久固化 undefined → init 中断。旧版 document-idle + CDP 注入测试的 GM stub 双重掩盖了它。产物已验证：`var _GM_*` 捕获 **0 处**、header grant 正确。
-**约束（永久生效）**：禁止 `import {GM_*} from '$'`（顶部捕获与 document-start 不兼容）；GM 一律走 `src/gm.ts`。
+**三 bug 根因（用户 2026-09-22 报告，本轮已修）**：① `@match */*` 匹配不到单段路径 `/YsLtr`，且 `init()` 在非 stars 页早退不挂导航监听 → profile 直入/点 Stars 均无效；② `visibility:hidden` 可被后代覆盖（GitHub 还有 app 层 CSS 未查全），且揭示后网格 `gsm-grid-in` 淡入 0.3s——「页面出现后内容再淡入」被当成闪；③ `gmAddStyle` 注入的布局样式**没有任何移除路径**，同文档 turbo 离开后 180px 侧边栏/120px 头像规则仍生效。
+**约束（永久生效）**：禁止 `import {GM_*} from '$'`（顶部一次性捕获与 document-start 不兼容，会固化成 undefined）；GM 一律走 `src/gm.ts`。
 
-**Turbo 切换防闪烁 + 动画**：profile 标签链接均 `data-turbo-frame="user-profile-frame"`（`user-starred-repos` 嵌套其中、`.Layout-sidebar`/头像在 frame 外）。`turbo:before-frame-render` 用 `detail.newFrame` 判断目标是 Stars 内容才给 frame 加 `.gsm-turbo-hidden`（切去 Repositories 等绝不隐藏，另有非 Stars 内容兜底解除）；替换+转换完成后 `transformAndReveal()` 解除，4s 兜底。**Turbo 会按 id 保留嵌套 starred frame（src 未变不发 frame-render），profile-frame 渲染分支必须主动 `transformAndReveal(true)`**。解除隐藏前挂一帧 `html.gsm-anim-prepare`（恢复 296px 原始宽）再移除，靠 transition 平滑收缩到 180/120px。移动端全程不隐藏。
+**Turbo 导航模型**：profile 标签链接均 `data-turbo-frame="user-profile-frame"`（`user-starred-repos` 嵌套其中、侧边栏/头像在 frame 外持久存在）。**进**：`before-frame-render` 用 `detail.newFrame` 判断目标是 Stars 才藏 frame（切去 Repositories 绝不隐藏），`frame-render` 后 `transformAndReveal(true)`——**Turbo 按 id 保留嵌套 starred frame（src 未变不发 frame-render），profile-frame 分支必须主动调用**；入场动画 = `transformAndReveal` 开头先挂 `gsm-anim-prepare`（让样式注入瞬间停在 296 起点）→ 解除隐藏 → 强制 reflow → 摘 prepare（296→180 过渡）。**出**：`before-frame-render` 非目标 + `frame-render` 非 stars + `turbo:load` 非 stars 三处调 `exitStarsView()`（撤主样式表 → 原生恢复，transition 在常驻表里 → 180→296 带动画回弹）。4s 兜底 = `armNavFailsafe` + boot FAILSAFE。移动端全程不隐藏。
 
 ### 数据存储（已向用户说明）
 - 主存储 GM：`stars_tags_<userId>` / `stars_notes_<userId>` / `stars_repo_cache` / `stars_pending_delete`（取不到 userId 回退 `stars_tags`/`stars_notes`）；localStorage 镜像同键加前缀 `github-stars-grid::`。
@@ -52,7 +52,7 @@ dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用�
 
 ### 阻塞 / 风险 / 待确认
 
-1. **用户需重新安装 `dist/github-stars-grid.user.js`（3.0.2）并前台真机验证**：控制台无红色报错（尤其 GM 相关）、网格/标签/备注/缓存正常、**历史标签/备注数据仍在**；有新报错要原文。
+1. **用户重装 `dist/github-stars-grid.user.js`（3.0.3）前台验证三 bug**：① 直进 `github.com/YsLtr` → 点 Stars 标签出网格；② 直进 `?tab=stars` 无闪烁；③ 离开 Stars 头像/侧边栏恢复原生大小。若②仍闪，要控制台 `script loaded / 防闪烁隐藏已挂载 / 防闪烁解除: 原因 (耗时ms)` 行原文定位。
 2. **dev HMR 在 github.com 上需要浏览器放行 CSP**：GitHub 的 `script-src` 白名单不含 `127.0.0.1`，dev loader 的动态 import 必被拒（`Failed to fetch dynamically imported module`）。插件绕不过，需装 CSP 放行扩展 + 允许 Local Network Access 弹窗。详见 `DEVELOPER.md` §2「dev 模式在 github.com 上的两个前置条件」。
 3. **两个脚本不能同时启用**：`transformStarsList()` 见到 `.stars-grid-container` 就提前返回，正式版先跑会让 dev 版"改了没反应"。开发时在 Tampermonkey 里禁用正式版。
 4. 真机验证必须**前台**：Chrome 冻结后台标签页后测量/交互全部失真（曾误判样式失效）。
@@ -60,7 +60,7 @@ dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用�
 
 ### 下一步
 
-1. 等用户 3.0.2 验证结果；通过后可删 `index.ts` 的 3 处诊断日志（或保留）。
+1. 等用户 3.0.3 三 bug 验证结果；若②仍闪，据「防闪烁隐藏已挂载/解除」日志判断：挂载缺失=脚本没在 document-start 跑（安装/启用问题），解除原因异常=揭示过早。
 2. **快速构建阶段（2026-09-22 起，用户已定）**：不跑 `tests/smoke/`，不写测试 fixture/断言；改完只 `pnpm check`，由用户在真实页面判断是否成功。
 3. 若 GitHub 再改版：先跑 `tests/diag/selectors.js` 定位失配点，再改 `src/dom.ts` 的 helper（**只改 helper，不要在业务模块里写选择器**）。
 
@@ -69,7 +69,7 @@ dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用�
 ```bash
 pnpm check     # tsc --noEmit + build（改完必跑）
 pnpm build     # → dist/github-stars-grid.user.js（~100ms）
-pnpm dev       # HMR，需先解决上面第 3 条；URL: http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js
+pnpm dev       # HMR，需先解决上面第 2 条；URL: http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js
 ```
 
 真机调试（无 HMR 时最快的验证路径，`agent-browser-cli` 需在跑）：

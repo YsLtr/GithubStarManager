@@ -67,8 +67,10 @@ export function gmSet(key: string, value: unknown): void {
 }
 
 /** 原生 DOM 插入样式(不依赖 GM_addStyle;document.head 未就绪时挂到 html 上) */
-export function gmAddStyle(css: string): void {
+/** 原生 DOM 插入样式(不依赖 GM_addStyle;document.head 未就绪时挂到 html 上)。返回节点供调用方持有句柄。 */
+export function gmAddStyle(css: string): HTMLStyleElement {
   const style = document.createElement('style');
   style.textContent = css;
   (document.head || document.documentElement).appendChild(style);
+  return style;
 }

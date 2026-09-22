@@ -1,0 +1,28 @@
+/* 常驻样式：进 Stars 前注入、离开 Stars 也不移除（主样式表 base+wide 离开时整表移除）。
+   1) .stars-right-sidebar 是脚本追加到持久 .Layout 上的节点：没有这条默认隐藏，
+      离开 Stars 后主表一撤，它会以默认 display:block 挤进网格轨道，在
+      Repositories 等视图残留一块空列；
+   2) transition 规则：离开 Stars 时主表（含宽度规则）被移除、侧边栏 180→296
+      回弹，过渡必须仍然存在，否则尺寸会瞬间跳变。
+   注：常驻表先于主表注入，同特异性时主表（后插入）的
+   .stars-right-sidebar{display:block} 会在 Stars 视图正确覆盖这里的默认隐藏。 */
+@media (min-width: 768px) {
+  .stars-right-sidebar {
+    display: none !important;
+  }
+
+  .Layout.Layout--sidebarPosition-start {
+    transition: grid-template-columns 0.35s ease;
+  }
+  .Layout-sidebar {
+    transition: width 0.35s ease, min-width 0.35s ease;
+  }
+  .Layout-sidebar .avatar-user,
+  .Layout-sidebar a[href*="avatars"] img,
+  .Layout-sidebar a[href*="avatars"] {
+    transition: width 0.35s ease, height 0.35s ease;
+  }
+  .Layout-sidebar .user-status-circle-badge-container {
+    transition: top 0.35s ease, left 0.35s ease;
+  }
+}

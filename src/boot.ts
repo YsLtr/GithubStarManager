@@ -7,7 +7,11 @@
  *
  * 注意：
  * - document-start 时 DOM 里只有 <html>，style 只能挂在它下面；
- * - 转换失败/选择器失配时有 4s 兜底，最多退化为"延迟闪烁"，不会永久白屏。
+ * - 藏法用 `body { display: none }`：visibility 可被后代元素覆盖（且 GitHub 还有
+ *   app 层样式没查全），display 不可被后代覆盖，保证隐藏期间零绘制；
+ * - 转换失败/选择器失配时有 4s 兜底，最多退化为"延迟闪烁"，不会永久白屏；
+ * - 挂载/解除都打日志（带原因与耗时）：真机若仍报"闪一下"，
+ *   控制台一眼能看出隐藏挂没挂上、何时、因何解除。
  */
 
 import { isDesktop } from './utils';
@@ -15,6 +19,8 @@ import { isDesktop } from './utils';
 const HIDE_CLASS = 'gsm-boot-hidden';
 const HIDE_STYLE_ID = 'gsm-boot-hide-style';
 const FAILSAFE_MS = 4000;
+
+let hideInstalledAt = 0;
 
 export function isStarsPage(): boolean {
   return /[?&]tab=stars/.test(location.search);
@@ -31,23 +37,31 @@ export function installBootHide(): void {
   const style = document.createElement('style');
   style.id = HIDE_STYLE_ID;
   style.textContent = [
-    `html.${HIDE_CLASS},`,
-    `html.${HIDE_CLASS} body {`,
-    '  visibility: hidden !important;',
+    `html.${HIDE_CLASS} {`,
     // 用 GitHub 的主题变量给"加载中"空白页上底色，深色模式不闪白
     '  background-color: var(--bgColor-default, transparent) !important;',
+    '}',
+    // display:none 不可被后代覆盖 → 隐藏期间零绘制
+    `html.${HIDE_CLASS} body {`,
+    '  display: none !important;',
     '}',
   ].join('\n');
   root.appendChild(style);
   root.classList.add(HIDE_CLASS);
+  hideInstalledAt = performance.now();
+  console.log('[github-stars-grid] 防闪烁隐藏已挂载');
 
   // 兜底：无论后续发生什么，最多隐藏 FAILSAFE_MS
-  window.setTimeout(revealBootHide, FAILSAFE_MS);
+  window.setTimeout(() => revealBootHide('4s 兜底'), FAILSAFE_MS);
 }
 
-/** 页面内容转换完成后调用，解除隐藏。幂等。 */
-export function revealBootHide(): void {
-  document.documentElement.classList.remove(HIDE_CLASS);
+/** 解除隐藏。幂等；只在真正解除时打日志（原因 + 挂载以来耗时）。 */
+export function revealBootHide(reason = '未注明原因'): void {
+  const root = document.documentElement;
+  if (!root || !root.classList.contains(HIDE_CLASS)) return;
+  const elapsed = hideInstalledAt ? Math.round(performance.now() - hideInstalledAt) : 0;
+  console.log(`[github-stars-grid] 防闪烁解除: ${reason} (${elapsed}ms)`);
+  root.classList.remove(HIDE_CLASS);
   document.getElementById(HIDE_STYLE_ID)?.remove();
 }
 
