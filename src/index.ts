@@ -226,8 +226,17 @@ function registerNavListeners(): void {
     armNavFailsafe();
   });
 
+  // GitHub 的 profile frame 带 data-turbo-action：Turbo FrameController 在 frame 渲染完后会
+  // 经 proposeVisitIfNavigatedWithAction 补一次整页 Drive visit（实测 8ms 后、同 URL、
+  // updateHistory:false，纯重复渲染）。它会触发下面 before-render 的整页隐藏 → 用户看到
+  // "整页刷新"。记录 frame 渲染时刻，在 before-visit 上取消这次冗余 visit。
+  let lastFrameRenderAt = 0;
+
   document.addEventListener('turbo:frame-render', (event) => {
     const frameId = (event.target as Element).id;
+    if (frameId === 'user-profile-frame' || frameId === 'user-starred-repos') {
+      lastFrameRenderAt = performance.now();
+    }
     if (frameId === 'user-starred-repos') {
       const arrive = starsNavPending;
       setTimeout(() => transformAndReveal(arrive), 100);
@@ -248,6 +257,22 @@ function registerNavListeners(): void {
         }
       }, 100);
     }
+  });
+
+  // 取消 frame 渲染后 1s 内发起的同 URL 冗余整页 visit（Turbo proposeVisitIfNavigatedWithAction）。
+  // 被取消时 proposeVisit 直接短路，无 fallback 跳转；history 由 frame 的 action 自己维护，
+  // 被取消的 visit 本就 updateHistory:false，故前后退与历史条目均不受影响。
+  document.addEventListener('turbo:before-visit', (event) => {
+    if (!isDesktop()) return;
+    if (!lastFrameRenderAt || performance.now() - lastFrameRenderAt > 1000) return;
+    const url = (event as CustomEvent<{ url?: string }>).detail?.url;
+    if (!url) return;
+    try {
+      if (new URL(url, location.href).href !== location.href) return;
+    } catch {
+      return;
+    }
+    event.preventDefault();
   });
 
   // 整页 Turbo 访问（前进/后退等）：同样先藏后渲染

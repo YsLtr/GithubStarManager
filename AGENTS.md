@@ -5,10 +5,10 @@
 
 ---
 
-## 当前交接（2026-09-22 09:25 +0800）
+## 当前交接（2026-09-22 09:45 +0800）
 
 ### 目标
-GitHub 2026 改版适配（f117ef4）、Lists+FOUC（2c84884）、GM 兼容层+Turbo 动画（c376192）、mountGmApi（bc6b19d）、3.0.3 三 bug 修复（0d6e913）均已提交。本轮 = **3.0.4 补丁**（直载误播入场动画仍闪 + 兜底定时器 4s 后误撤样式「脚本失效」），待用户重装真机验证。
+GitHub 2026 改版适配（f117ef4）、Lists+FOUC（2c84884）、GM 兼容层+Turbo 动画（c376192）、mountGmApi（bc6b19d）、3.0.3 三 bug 修复（0d6e913）、3.0.4 直载动画+兜底误撤修复均已提交。本轮 = **3.0.5 补丁**（用户报「进入 ?tab=stars 仍整页刷新」→ 取消 Turbo 冗余整页 visit，tab 切换改纯局部刷新），真机热注入验证通过，待用户重装 dist 验证。
 
 ### 本轮改了什么（3.0.3 → 3.0.4，本次提交）
 
@@ -23,6 +23,7 @@ GitHub 2026 改版适配（f117ef4）、Lists+FOUC（2c84884）、GM 兼容层+T
 | `package.json` | 3.0.2 → **3.0.3** |
 
 **3.0.4 补丁（同日；用户对 3.0.3 反馈：仍闪 + 过一会恢复原始页面）**：① 直载时 Turbo 也会渲染初始 `user-profile-frame` → profile-frame 分支无条件 `transformAndReveal(true)` → 直载播了入场动画（网格淡入 + 侧边栏收缩）＝用户看到的「闪」→ 改为 `transformAndReveal(starsNavPending)`，并给 `revealAfterTransform` 加 `wasHidden` 幂等门（未处于隐藏绝不播动画，二次调用天然跳过）；② 首次 frame-render 时 `armNavFailsafe` 的 4s 定时器在成功揭示后**从未撤销**，到点误调 `exitStarsView` 整表撤样式 →「过一会脚本失效、恢复原始页面」→ 揭示成功即 `clearTimeout`，且回调自检仍隐藏才退出（残余定时器无害）。
+**3.0.5 补丁（同日 09:45；用户报「进入 ?tab=stars 仍旧整页刷新」）**：CDP 受信任点击抓链——GitHub 的 profile frame 带 `data-turbo-action`，Turbo FrameController 在 `fetchResponseLoaded → proposeVisitIfNavigatedWithAction` 于 frame 渲染完 **8ms 后补一次同 URL 整页 Drive visit**（`updateHistory:false`、`willRender:false`，纯重复）；该 visit 触发我们 `before-render → installBootHide` 的整页隐藏 + body 级渲染 = 用户看到的「整页刷新」（真机 boot 挂/摘日志与 152ms 空白窗口完全吻合，且 window/probe 状态未丢 = 非真刷新）。修法：`registerNavListeners()` 闭包记 `lastFrameRenderAt`（user-profile-frame/user-starred-repos 的 frame-render），`turbo:before-visit` 在 **1s 内且同 URL** 时 `preventDefault()`——下载 bundle 切片确认 `proposeVisit = allows && (...)`，取消即短路、无 `location.href` fallback；history 由 frame 的 action 自己维护（`changeHistory: if(this.action)`），被取消的 visit 本就 `updateHistory:false`，前进后退不受影响。**已热注入真机验证**：修复后两次 tab 往返无 `turbo:visit`/`before-render`/`turbo:load`、boot 0 次切换、grid 正常、URL 正确。**预期控制台变化**：tab 切换不再打印「防闪烁隐藏已挂载/解除」（before-render 不再触发，属正常）；仅直载/F5 与前进/后退仍走整页隐藏。
 
 **三 bug 根因（用户 2026-09-22 报告，本轮已修）**：① `@match */*` 匹配不到单段路径 `/YsLtr`，且 `init()` 在非 stars 页早退不挂导航监听 → profile 直入/点 Stars 均无效；② `visibility:hidden` 可被后代覆盖（GitHub 还有 app 层 CSS 未查全），且揭示后网格 `gsm-grid-in` 淡入 0.3s——「页面出现后内容再淡入」被当成闪；③ `gmAddStyle` 注入的布局样式**没有任何移除路径**，同文档 turbo 离开后 180px 侧边栏/120px 头像规则仍生效。
 **约束（永久生效）**：禁止 `import {GM_*} from '$'`（顶部一次性捕获与 document-start 不兼容，会固化成 undefined）；GM 一律走 `src/gm.ts`。
