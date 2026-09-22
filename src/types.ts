@@ -9,6 +9,8 @@ export interface RepoData {
   forks?: number;
   /** 展示用相对时间文本，如 `Updated 3 days ago` */
   updated?: string;
+  /** star 时间（ISO，P4 全量同步回填；Sort「Recently starred」排序依据） */
+  starredAt?: string;
   /** ISO 时间戳，用于排序 */
   updatedAt?: string;
   /** 缓存写入时间 */
@@ -61,4 +63,4 @@ export interface FilteredRepo {
   data: RepoData;
 }
 
-export type SortKey = 'stars' | 'updated';
+export type SortKey = 'stars' | 'updated' | 'created';

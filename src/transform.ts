@@ -2,6 +2,7 @@ import { getRepoIdFromItem, getRepoItems, getStarsMainColumn, hideListsSection }
 import { extractAndCacheRepoFromCard } from './extract';
 import { applyFilters } from './filters';
 import { interceptSearchForm } from './search';
+import { mountSyncButton } from './fullSync';
 import { createStarButton } from './ui/cards';
 import { renderNotes } from './ui/notes';
 import { renderTagFilterBar, renderTags } from './ui/tagFilter';
@@ -123,7 +124,9 @@ export function transformStarsList(): boolean {
 
   colLg9.appendChild(gridContainer);
   // “Starred repositories” 标题行右侧复制一份分页器（免滚动到底部才能翻页）
-  mountTopPager(colLg9, gridContainer);
+  const headerRow = mountTopPager(colLg9, gridContainer);
+  // 同步按钮（P4）：贴在顶部翻页器左侧
+  if (headerRow) mountSyncButton(headerRow);
 
   // 将 Starred topics 移到右侧边栏
   const colLg3 = turboFrame.querySelector('.col-lg-3');
@@ -155,11 +158,11 @@ export function transformStarsList(): boolean {
  * → 分页拦截与转圈动画对顶/底两份一视同仁。父容器加 `gsm-header-row` 变
  * flex 两端对齐实现「行右边」。随 transform 完整重建同步（原地翻页后自动更新）。
  */
-function mountTopPager(colLg9: HTMLElement, gridContainer: HTMLElement): void {
+function mountTopPager(colLg9: HTMLElement, gridContainer: HTMLElement): HTMLElement | null {
   const source = gridContainer.querySelector<HTMLElement>('.paginate-container');
   const h2 = colLg9.querySelector<HTMLElement>('h2.f3-light');
   const row = h2 && h2.parentElement;
-  if (!source || !row) return;
+  if (!source || !row) return null;
 
   row.classList.add('gsm-header-row');
   row.querySelector<HTMLElement>('.gsm-top-pager')?.remove();
@@ -167,4 +170,5 @@ function mountTopPager(colLg9: HTMLElement, gridContainer: HTMLElement): void {
   const top = source.cloneNode(true) as HTMLElement;
   top.classList.add('gsm-top-pager');
   row.appendChild(top);
+  return row;
 }

@@ -378,18 +378,26 @@
   }
 
 
-  /* 标题行右侧顶部翻页器：h2 行变 flex 两端对齐，克隆的分页器靠右 */
+  /* 标题行右侧工具簇：h2 撑满剩余宽度 → 同步按钮 + 顶部翻页器贴右（按钮在翻页器左侧） */
   .gsm-header-row {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 16px;
   }
 
-  .gsm-top-pager {
+  .gsm-header-row > h2 {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .gsm-top-pager,
+  .gsm-sync-btn {
     flex: none;
   }
 
+  .gsm-sync-btn .octicon {
+    margin-right: 4px;
+  }
   /* 翻页进行中：按钮内转圈（文字透明但占位保留 → 宽度不变无跳动；spinner 自带颜色） */
   .gsm-pager-loading {
     position: relative;

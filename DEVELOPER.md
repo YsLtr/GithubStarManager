@@ -71,6 +71,7 @@ src/
   pagination.ts      原地翻页拦截（window 捕获 + fetch 换入，不走 Turbo frame 导航）
   starCheck.ts       外部 unstar 确认层：PAT 菜单、API 双 404、速率守卫、裁决缓存
   snapshot.ts        到货页快照 diff + 位移挂起/结算：发现外部消失（核对候选），被挤出的到预期页结案
+  fullSync.ts        P4 全量同步：Sync 按钮、整表 diff、star 时间回填（REST star+json）
   storage/
     repoCache.ts      仓库缓存 CRUD
     tags.ts           标签存储 + 备注键规则 + 迁移
@@ -160,6 +161,7 @@ GitHub DOM
     "forks": 56,            // fork 数
     "updated": "Updated 3 days ago",  // 最后更新文本
     "updatedAt": "2026-09-01T00:00:00Z", // ISO 时间戳（排序用）
+    "starredAt": "2026-08-01T00:00:00Z", // star 时间（P4 Sync 回填；「Recently starred」排序用，可选）
     "ts": 1708000000000     // 缓存时间戳
   }
 }
@@ -234,6 +236,10 @@ unstar 时数据不会立即删除，而是移入 `stars_pending_delete` 并记�
 
 用户访问仓库详情页时，脚本提取元数据写入缓存，使从未在 Stars 页浏览过的仓库也能在跨页筛选时显示完整卡片。
 
+### P4 全量同步（Sync 按钮，3.1.0）
+
+`fullSync.ts`：`GET /user/starred?per_page=100&page=N` + `Accept: application/vnd.github.star+json`（该 Accept 才带 `starred_at`；页间 100ms、速率余量 <10 放弃、超 200 页放弃、任一条解析失败整体放弃）。整表 diff 三向——本地有远端无 → `applyExternalUnstar()` 走待删除区宽限管线（**整表拉取即权威确认**，跳过逐条双 404，写 7d 裁决）；远端有本地无 → `saveRepoData()` 建条目 / 宽限区内 `markRepoStarred()` 恢复（标签备注连同恢复）；交集 → 回填 `starredAt` + 刷新 desc/lang/stars/forks/updatedAt（`updated` 展示文本保留旧值）；顺带结算位移挂起。触发：标题行 **Sync** 按钮（`.gsm-sync-btn`，插在顶部翻页器左侧，loading 复用 `gsm-pager-loading`；无 token 先弹 `promptForToken()`）+ `snapshot.handleMissing` 消失 >12 且已配 token（单飞 + 60s 冷却）。**完整性红线**：任何不完整信号都抛错、catch 不改任何数据——半张表会把未拉到的页全部误判为外部 unstar。
+
 ### 星星按钮双模式
 
 - **当前页卡片** (`createStarButton`): 直接使用原始 DOM 中的 star/unstar 表单提交 CSRF token
@@ -245,7 +251,7 @@ unstar 时数据不会立即删除，而是移入 `stars_pending_delete` 并记�
 
 搜索走 `searchCacheRepos()`：把关键词按空白拆词，每个词都必须至少命中作者、仓库名、描述、标签、备注之一（**语言已退出全文匹配**（3.0.11）——避免 `ASC` 子串命中 `javascript`，语言只通过下拉筛选指定）；并联动当前激活的标签与语言筛选。搜索模式下重建的结果卡片会把命中词以 `<mark class="gsm-search-hit">` 高亮（标题 / 描述 / 标签 / 备注四字段，大小写不敏感、只包文本节点、跳过输入控件）。同时 `search.ts` 会异步拉取 GitHub 原生搜索结果页，把缓存里缺失的仓库补进缓存并重渲染（`filterState.nativeSearchResults`）。
 
-自建 Sort 菜单只有 Most stars / Recently active 两项：客户端排序依赖 `starred_at`（star 时间），`stars_repo_cache` 未存该字段，「Recently starred」排不了（`inheritNativeFilters()` 遇原生 Recently starred 回退 `stars` 属已知行为）；P4 用 PAT 回填 `starred_at` 后再补第 3 项（AGENTS D5）。
+自建 Sort 菜单现有三项：Most stars / Recently active / **Recently starred**（3.1.0 落地，AGENTS D5c/D6）。Recently starred 按 `starredAt` 降序（`sortResults()`：未回填的仓库沉底且保持到达序 = 原生服务端序）——`starredAt` 由 P4 Sync 回填（`fullSync.ts` 交集分支），未跑过同步时整表沉底属预期。`inheritNativeFilters()` 遇原生 Recently starred → `'created'`。
 
 ### 退出自定义模式
 
@@ -258,7 +264,7 @@ unstar 时数据不会立即删除，而是移入 `stars_pending_delete` 并记�
 ```ts
 filterState.tags            // 已选标签（多选，需全部命中）
 filterState.lang            // 语言筛选，'' = 全部
-filterState.sort            // 'stars' | 'updated'
+filterState.sort            // 'stars' | 'updated' | 'created'（created = Recently starred）
 filterState.tagMode         // 是否处于标签筛选模式
 filterState.searchQuery     // 当前搜索词，'' = 无搜索
 filterState.searchMode      // 是否处于搜索模式

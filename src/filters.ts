@@ -10,9 +10,18 @@ import { refreshTagPillStates, renderTagFilterBar, renderTags } from './ui/tagFi
 import { escapeHtml } from './utils';
 import type { FilteredRepo, SortKey } from './types';
 
-/** 按当前排序方式就地排序（stars 降序 / updated 降序，缺失值排最后） */
+/** 按当前排序方式就地排序（created/star 时间、stars、updated；缺失值沉底，稳定排序保到达序） */
 function sortResults(results: FilteredRepo[]): void {
-  if (filterState.sort === 'stars') {
+  if (filterState.sort === 'created') {
+    results.sort((a, b) => {
+      const av = a.data.starredAt || '';
+      const bv = b.data.starredAt || '';
+      if (!av && !bv) return 0;
+      if (!av) return 1;
+      if (!bv) return -1;
+      return bv.localeCompare(av);
+    });
+  } else if (filterState.sort === 'stars') {
     results.sort((a, b) => (b.data.stars || 0) - (a.data.stars || 0));
   } else {
     results.sort((a, b) => (b.data.updatedAt || '').localeCompare(a.data.updatedAt || ''));
@@ -142,8 +151,11 @@ export function inheritNativeFilters(): void {
       filterState.sort = 'stars';
     } else if (text.includes('Recently active')) {
       filterState.sort = 'updated';
+    } else if (text.includes('Recently starred')) {
+      filterState.sort = 'created';
     }
-    // "Recently starred" → 默认保持 'stars'，因为缓存里没有 star 时间
+    // 「Recently starred」→ 'created'：P4 回填 starredAt 后按 star 时间真排序；
+    // 未回填时 sortResults 把缺值沉底（到达序 = 原生服务端序）
   }
 }
 
@@ -224,11 +236,7 @@ export function applyFilters(): void {
       if (filterState.lang) {
         targetParams.set('language', filterState.lang.toLowerCase());
       }
-      if (filterState.sort === 'updated') {
-        targetParams.set('sort', 'updated');
-      } else if (filterState.sort === 'stars') {
-        targetParams.set('sort', 'stars');
-      }
+      targetParams.set('sort', filterState.sort);
 
       filterState.lang = '';
       filterState.sort = 'stars';
@@ -465,7 +473,8 @@ export function updateNativeFilters(tagMode: boolean): void {
 
     const sortOptions: Array<{ key: SortKey; label: string }> = [
       { key: 'stars', label: 'Most stars' },
-      { key: 'updated', label: 'Recently active' }
+      { key: 'updated', label: 'Recently active' },
+      { key: 'created', label: 'Recently starred' }
     ];
     const sortBtnLabel = 'Sort by: ' + (sortOptions.find(o => o.key === filterState.sort) || sortOptions[0]).label;
     const sortBtnEl = document.createElement('button');

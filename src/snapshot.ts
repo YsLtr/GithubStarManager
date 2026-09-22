@@ -25,7 +25,8 @@
 
 import { STORAGE_KEYS } from './constants';
 import { gmGet, gmSet } from './gm';
-import { enqueueVerify, onExternalUnstarConfirmed } from './starCheck';
+import { enqueueVerify, getGitHubPat, onExternalUnstarConfirmed } from './starCheck';
+import { scheduleFullSync } from './fullSync';
 import { isDesktop } from './utils';
 import type { PageSnapshots, ShiftPendingMap } from './types';
 
@@ -207,11 +208,18 @@ function deferMissing(missing: Missing[], expectKey: string, srcKey: string): vo
 
 /** 无法用位移模型解释的消失：直接交 API 核对（有界） */
 function handleMissing(missing: Missing[], reason: string): void {
-  if (missing.length > FULL_SYNC_THRESHOLD) {
+  if (missing.length > FULL_SYNC_THRESHOLD && getGitHubPat()) {
     console.log(
       `[github-stars-grid] 快照检测到 ${missing.length} 个仓库从本页消失（${reason}，> ${FULL_SYNC_THRESHOLD}，` +
-        `疑似整段位移或大范围变动）：本页仅核对前 ${PER_ARRIVAL_CAP} 个；` +
-        '全量比对（P4 全量拉取）落地后这类场景应优先走整表 diff'
+        '疑似大范围变动）：走 P4 全量拉取整表 diff（自动触发，60s 冷却）'
+    );
+    scheduleFullSync();
+    return;
+  }
+  if (missing.length > FULL_SYNC_THRESHOLD) {
+    console.log(
+      `[github-stars-grid] 快照检测到 ${missing.length} 个仓库从本页消失（${reason}，> ${FULL_SYNC_THRESHOLD}）：` +
+        `未配置 token，仅核对前 ${PER_ARRIVAL_CAP} 个；配置 token 后此类场景自动走 P4 全量比对`
     );
   } else {
     console.log(

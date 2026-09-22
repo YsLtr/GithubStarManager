@@ -47,33 +47,39 @@ function detectTokenKind(tok: string): TokenKind | null {
 }
 
 /** TM 菜单入口：输入/清除 PAT。任意 github.com 页面可设（init 无条件注册）。 */
+/** 输入/清除 PAT（TM 菜单与 P4 同步按钮无 token 时共用） */
+export function promptForToken(): void {
+  const cur = getGitHubPat();
+  const masked = cur ? `${cur.slice(0, 12)}…${cur.slice(-4)}` : '未设置';
+  const input = window.prompt(
+    'GitHub PAT，用于外部 unstar 核对（P2.5）与 P4 全量同步（Sync 按钮）。\n' +
+      '· classic：ghp_ 前缀；核对/同步私有仓库需勾选 repo scope（仅公开仓库可不勾）\n' +
+      '· fine-grained：github_pat_ 前缀；账号权限 Account permissions → Starring → Read，\n' +
+      '  仓库范围选 All repositories\n' +
+      '（留空 = 删除当前 token；保存后立即生效）\n\n' +
+      `当前：${masked}`,
+    ''
+  );
+  if (input === null) return;
+  const tok = input.trim();
+  if (!tok) {
+    gmSet(STORAGE_KEYS.githubPat, '');
+    console.log('[github-stars-grid] token 已清除，外部 unstar 核对与 P4 同步暂停');
+    return;
+  }
+  const kind = detectTokenKind(tok);
+  if (!kind) {
+    window.alert('无法识别的 token 前缀：预期 ghp_（classic）或 github_pat_（fine-grained）。未保存。');
+    return;
+  }
+  gmSet(STORAGE_KEYS.githubPat, tok);
+  console.log(`[github-stars-grid] token 已保存（${kind}），外部 unstar 核对与 P4 同步生效`);
+}
+
+/** TM 菜单入口：任意 github.com 页面可设（init 无条件注册） */
 export function registerTokenMenu(): void {
-  gmRegisterMenuCommand('⭐ 设置 GitHub Token（外部 unstar 核对）', () => {
-    const cur = getGitHubPat();
-    const masked = cur ? `${cur.slice(0, 12)}…${cur.slice(-4)}` : '未设置';
-    const input = window.prompt(
-      'GitHub PAT，用于核对「从 Stars 页消失的仓库」是否真的被取消 star。\n' +
-        '· classic：ghp_ 前缀；核对私有仓库需勾选 repo scope（仅公开仓库可不勾）\n' +
-        '· fine-grained：github_pat_ 前缀；账号权限 Account permissions → Starring → Read，\n' +
-        '  仓库范围选 All repositories\n' +
-        '（留空 = 删除当前 token；保存后从下次到货开始生效）\n\n' +
-        `当前：${masked}`,
-      ''
-    );
-    if (input === null) return;
-    const tok = input.trim();
-    if (!tok) {
-      gmSet(STORAGE_KEYS.githubPat, '');
-      console.log('[github-stars-grid] token 已清除，外部 unstar 核对暂停');
-      return;
-    }
-    const kind = detectTokenKind(tok);
-    if (!kind) {
-      window.alert('无法识别的 token 前缀：预期 ghp_（classic）或 github_pat_（fine-grained）。未保存。');
-      return;
-    }
-    gmSet(STORAGE_KEYS.githubPat, tok);
-    console.log(`[github-stars-grid] token 已保存（${kind}），外部 unstar 核对生效`);
+  gmRegisterMenuCommand('⭐ 设置 GitHub Token（核对 + P4 全量同步）', () => {
+    promptForToken();
   });
 }
 
@@ -373,4 +379,16 @@ function updateGridCard(repoId: string): void {
   // 正在标签筛选/搜索视图里：仓库已从缓存移除，重算筛选结果（无筛选条件时不触发，
   // 避免 applyFilters 的退出自定义模式分支引发整页导航）
   if (filterState.tags.length > 0 || filterState.searchQuery) applyFilters();
+}
+
+/* ---------------- P4 全量同步的复用入口 ---------------- */
+
+/** P4 整表已确认的外部 unstar（远端权威，跳过逐条双 404；管线与核对确认完全一致） */
+export function applyExternalUnstar(repoId: string, path: string): void {
+  confirmExternalUnstar(repoId, path);
+}
+
+/** P4 写裁决（unstarred 7d / starred 24h 内免重复核对） */
+export function recordVerdict(repoId: string, s: 'starred' | 'unstarred'): void {
+  setVerdict(repoId, s);
 }
