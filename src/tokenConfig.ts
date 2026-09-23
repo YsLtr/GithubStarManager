@@ -1,4 +1,4 @@
-// 快捷 Token 配置与失效弹窗（4.0.1）。
+// 快捷 Token 配置与失效上报（4.0.1 引入；4.0.2 起失效走初始化面板，不再居中弹窗）。
 //
 // 快捷获取：GitHub 2025-08-26 起支持 fine-grained PAT 创建页 Template URL
 // （query 参数预填 name/description/expires_in/<permission>，write 含 read），
@@ -8,7 +8,7 @@
 // - https://github.blog/changelog/2025-08-26-template-urls-for-fine-grained-pats-and-updated-permissions-ui/
 // - https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#pre-filling-fine-grained-personal-access-token-details-using-url-parameters
 //
-// 失效判定（官方 troubleshooting）：401 = Bad credentials（失效/撤销）弹窗；
+// 失效判定（官方 troubleshooting）：401 = Bad credentials（失效/撤销）→ 上报初始化面板；
 // 403 必须先排除限速（retry-after 或 x-ratelimit-remaining:0），剩下的才是权限不足。
 // https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api
 //
@@ -16,7 +16,7 @@
 // starCheck，cards 调它会形成循环导入；本模块只依赖 constants/gm。
 
 import { STORAGE_KEYS } from './constants';
-import { gmSet } from './gm';
+import { gmOpenInTab, gmSet } from './gm';
 
 export type TokenKind = 'classic' | 'fine-grained';
 
@@ -34,9 +34,9 @@ export const TOKEN_TEMPLATE_URL =
   '&expires_in=none' +
   '&starring=write';
 
-/** 打开预填好的创建页（必须在点击手势里调用，否则会被浏览器弹窗拦截） */
+/** 打开预填好的创建页：走 gmOpenInTab（TM 菜单回调无用户激活，裸 window.open 会被弹窗拦截静默吞掉） */
 export function openTokenCreator(): void {
-  window.open(TOKEN_TEMPLATE_URL, '_blank', 'noopener');
+  gmOpenInTab(TOKEN_TEMPLATE_URL);
 }
 
 /** 前缀校验后写入 GM（敏感键由 gm 层保证不落 localStorage 镜像）；null = 前缀不合法未保存 */
@@ -73,58 +73,16 @@ export async function pasteFromClipboard(input: HTMLInputElement): Promise<void>
   }
 }
 
-/** 401 / 403(非限速) 统一入口：弹一键更新窗（单例，重复调用只刷新文案） */
+type IssueHandler = (detail: string) => void;
+let issueHandler: IssueHandler | null = null;
+
+/** index.ts 注册：Token 问题 → 用初始化面板（横幅）呈现，不再用居中弹窗 */
+export function setTokenIssueHandler(fn: IssueHandler | null): void {
+  issueHandler = fn;
+}
+
+/** 401 / 403(非限速) 统一入口：上报初始化面板；面板未挂载（非 stars 页/dev）则仅日志兜底 */
 export function notifyTokenIssue(detail: string): void {
-  const exist = document.querySelector<HTMLElement>('.gsm-token-modal');
-  if (exist) {
-    const d = exist.querySelector<HTMLElement>('.gsm-token-modal-detail');
-    if (d) d.textContent = detail;
-    return;
-  }
-
-  const modal = document.createElement('div');
-  modal.className = 'gsm-token-modal';
-  modal.innerHTML =
-    '<div class="gsm-token-modal-box" role="dialog" aria-modal="true">' +
-    '<div class="gsm-token-modal-title">🔑 GitHub Token 需要配置</div>' +
-    '<div class="gsm-token-modal-detail"></div>' +
-    '<ol class="gsm-token-modal-steps">' +
-    '<li>点「打开创建页」——创建页已预填最小权限（Account permissions → Starring → write）</li>' +
-    '<li>点 <b>Generate token</b> 并复制生成的 token</li>' +
-    '<li>回来粘贴 →「保存并同步」即自动恢复</li>' +
-    '</ol>' +
-    '<input type="text" spellcheck="false" autocomplete="off" placeholder="github_pat_… 或 ghp_（也可直接 Ctrl+V 到框里）">' +
-    '<div class="gsm-token-modal-actions">' +
-    '<span class="gsm-token-msg"></span>' +
-    '<button type="button" class="btn" data-act="jump">打开创建页</button>' +
-    '<button type="button" class="btn" data-act="paste">从剪贴板粘贴</button>' +
-    '<button type="button" class="btn" data-act="later">稍后</button>' +
-    '<button type="button" class="btn btn-primary" data-act="save">保存并同步</button>' +
-    '</div></div>';
-  document.body.appendChild(modal);
-  modal.querySelector<HTMLElement>('.gsm-token-modal-detail')!.textContent = detail;
-
-  const input = modal.querySelector<HTMLInputElement>('input')!;
-  const msg = modal.querySelector<HTMLElement>('.gsm-token-msg')!;
-  modal.addEventListener('click', (e) => {
-    const t = e.target as HTMLElement;
-    if (t === modal) {
-      modal.remove();
-      return;
-    }
-    const act = t.closest('[data-act]')?.getAttribute('data-act');
-    if (act === 'jump') openTokenCreator();
-    else if (act === 'paste') void pasteFromClipboard(input);
-    else if (act === 'later') modal.remove();
-    else if (act === 'save') {
-      const kind = saveToken(input.value);
-      if (!kind) {
-        msg.textContent = '前缀不对：预期 github_pat_（fine-grained）或 ghp_（classic）';
-        return;
-      }
-      console.log(`[github-stars-grid] Token 已更新（${kind}），自动触发全量同步`);
-      modal.remove();
-      notifyTokenSaved();
-    }
-  });
+  console.error(`[github-stars-grid] Token 问题：${detail}`);
+  if (issueHandler) issueHandler(detail);
 }

@@ -14,6 +14,7 @@
 declare const GM_getValue: (<T>(key: string, defaultValue: T) => T) | undefined;
 declare const GM_setValue: ((key: string, value: unknown) => void) | undefined;
 declare const GM_registerMenuCommand: ((name: string, fn: () => void) => unknown) | undefined;
+declare const GM_openInTab: ((url: string, options?: { active?: boolean }) => unknown) | undefined;
 
 const LS_PREFIX = 'github-stars-grid::';
 /** 敏感键：只存 GM、绝不进 localStorage 镜像（PAT 已是强制 API 的硬门槛，泄露面必须收紧） */
@@ -105,4 +106,18 @@ export function gmRegisterMenuCommand(name: string, fn: () => void): void {
   } else {
     console.info('[github-stars-grid] GM_registerMenuCommand 不可用（非 TM 环境），无法打开 token 设置菜单');
   }
+}
+
+/** 打开新标签页（调用时判定）：TM 菜单回调没有用户激活，window.open 会被弹窗拦截器
+ *  静默吞掉（无报错无跳转）；GM_openInTab 不走弹窗拦截。非 TM 环境回退 window.open。 */
+export function gmOpenInTab(url: string): void {
+  if (typeof GM_openInTab === 'function') {
+    try {
+      GM_openInTab(url, { active: true });
+      return;
+    } catch (e) {
+      console.error('[github-stars-grid] GM_openInTab 失败，回退 window.open', e);
+    }
+  }
+  window.open(url, '_blank', 'noopener');
 }

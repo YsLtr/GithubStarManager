@@ -9,7 +9,14 @@ import { exitCustomMode } from './filters';
 import { hasApiData, runFullSync, scheduleProbeSync } from './fullSync';
 import { interceptPagination } from './pagination';
 import { promptForToken, registerTokenMenu } from './starCheck';
-import { notifyTokenSaved, openTokenCreator, pasteFromClipboard, saveToken, setTokenSavedHandler } from './tokenConfig';
+import {
+  notifyTokenSaved,
+  openTokenCreator,
+  pasteFromClipboard,
+  saveToken,
+  setTokenIssueHandler,
+  setTokenSavedHandler,
+} from './tokenConfig';
 import { cleanupExpiredUnstarred, markRepoStarred, markRepoUnstarred } from './storage/pendingDelete';
 import { migrateTagsIfNeeded } from './storage/tags';
 import { transformStarsList } from './transform';
@@ -221,16 +228,23 @@ function transformAndReveal(animate: boolean, retries = 12): void {
  * 「设置 token」打开 TM 菜单同款输入框；「立即同步」跑 P4 全量拉取，
  * 成功后 hasApiData 变 true → 重新 transformAndReveal 出网格。
  */
-function showSetupBanner(): void {
-  if (document.querySelector('.gsm-setup-banner')) return;
+function showSetupBanner(issueDetail?: string): void {
+  const exist = document.querySelector<HTMLElement>('.gsm-setup-banner');
+  if (exist) {
+    if (issueDetail) {
+      const m = exist.querySelector<HTMLElement>('.gsm-setup-msg');
+      if (m) m.textContent = bannerMessage(issueDetail);
+    }
+    return;
+  }
   const colLg9 = getStarsMainColumn();
   const host = colLg9 || document.getElementById('user-starred-repos');
   if (!host) return;
 
   const bar = document.createElement('div');
   bar.className = 'gsm-setup-banner';
-  bar.innerHTML =
-    '<span>⭐ Stars Grid 4.0 需要一次性全量同步（GitHub API）：可一键预填权限创建 Token，或手动填写，再立即同步。</span>';
+  bar.innerHTML = '<span class=gsm-setup-msg></span>';
+  bar.querySelector('.gsm-setup-msg')!.textContent = bannerMessage(issueDetail);
   const setup = document.createElement('button');
 
   // 快捷获取：官方 Template URL 预填 Starring: write 最小权限；生成复制后回粘（粘贴行默认收起，点快捷键展开）
@@ -311,6 +325,12 @@ function showSetupBanner(): void {
     (slot && slot.querySelector(':scope > div.blankslate')) || (slot && slot.querySelector(':scope > #profile-lists-container'));
   if (slotTarget) slotTarget.replaceWith(bar);
   else host.prepend(bar);
+}
+
+/** 面板主文案：默认 = 首次配置引导；issueDetail = Token 失效/权限不足等具体问题（4.0.2 面板化） */
+function bannerMessage(issueDetail?: string): string {
+  if (issueDetail) return `🔑 ${issueDetail} —— 请用下方按钮重新配置 Token，保存后会自动全量同步恢复。`;
+  return '⭐ Stars Grid 4.0 需要一次性全量同步（GitHub API）：可一键预填权限创建 Token，或手动填写，再立即同步。';
 }
 
 function registerNavListeners(): void {
@@ -435,6 +455,9 @@ function init(): void {
       if (sum && isStarsPage() && !document.querySelector('.stars-grid-container')) transformAndReveal(false);
     });
   });
+
+  // Token 问题（401 / 403 非限速）→ 初始化面板呈现（4.0.2：替代居中弹窗），已有横幅则刷新文案
+  setTokenIssueHandler((detail) => showSetupBanner(detail));
 
   const repoIdMeta = getRepoIdMeta();
   const isRepoDetailPage = !isStarsPage() && !!repoIdMeta;

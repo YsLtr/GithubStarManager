@@ -96,6 +96,7 @@ async function pullAllStarred(tok: string): Promise<{ items: RemoteStar[]; pages
   let etag: string | undefined;
   for (let page = 1; page <= MAX_PAGES; page++) {
     const resp = await fetch(`https://api.github.com/user/starred?per_page=${PAGE_SIZE}&page=${page}`, {
+      cache: 'no-store', // 不读不写浏览器缓存：否则 60s 内的缓存命中/304 合并会让 JS 看到假 200
       headers: {
         Authorization: `Bearer ${tok}`,
         Accept: 'application/vnd.github.star+json',
@@ -106,13 +107,13 @@ async function pullAllStarred(tok: string): Promise<{ items: RemoteStar[]; pages
     if (page === 1) etag = resp.headers.get('etag') ?? undefined;
     if (resp.status === 401) {
       notifyTokenIssue('401 Bad credentials：Token 已失效或被撤销');
-      throw new Error('token 无效（401），已弹出一键更新窗');
+      throw new Error('token 无效（401），已上报到初始化面板');
     }
     if (resp.status === 403) {
       const retryAfter = resp.headers.get('retry-after');
       const exhausted = resp.headers.get('x-ratelimit-remaining') === '0';
       if (!retryAfter && !exhausted) {
-        // 排除限速后的 403 才是权限问题：弹一键更新（官方 troubleshooting 判定）
+        // 排除限速后的 403 才是权限问题：上报初始化面板（官方 troubleshooting 判定）
         notifyTokenIssue('403 权限不足：fine-grained 需 Account permissions → Starring → Write + All repositories');
       }
       throw new Error(
@@ -259,6 +260,7 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
     document.querySelector('.gsm-setup-banner')?.remove(); // 同步成功即撤配置横幅（缓存已就绪）
     // 写元数据：ETag 快筛基线 + lastFullSyncAt（TTL/isApiData 判定）+ 本地分页总数
     gmSet(STORAGE_KEYS.fullSyncMeta, { etag, lastFullSyncAt: Date.now(), count: items.length });
+    console.log(`[github-stars-grid] ETag 基线：${etag ? '已保存（下次进页 304 免额度快筛）' : '未获得（响应无 etag 头，后续每次进页都会整表）'}`);
     return summary;
   } catch (err) {
     console.error(
@@ -303,6 +305,7 @@ async function probeAndSync(): Promise<void> {
     let resp: Response;
     try {
       resp = await fetch(`https://api.github.com/user/starred?per_page=${PAGE_SIZE}&page=1`, {
+        cache: 'no-store', // 关键：否则浏览器可能直接回缓存 200（不发请求），或把 304 合并成 200 → 误判有变化
         headers: {
           Authorization: `Bearer ${tok}`,
           Accept: 'application/vnd.github.star+json',
@@ -322,6 +325,9 @@ async function probeAndSync(): Promise<void> {
       console.log(`[github-stars-grid] ETag 探测 HTTP ${resp.status}，本次跳过`);
       return;
     }
+    console.log('[github-stars-grid] ETag 探测 200：列表有变化 → 整表同步');
+  } else {
+    console.log('[github-stars-grid] ETag 快筛跳过（' + (meta.etag ? '超 TTL' : '无基线') + '）→ 整表同步');
   }
 
   await runFullSync('auto');
