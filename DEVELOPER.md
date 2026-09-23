@@ -58,7 +58,7 @@ GitHub 的 CSP 是 `script-src github.githubassets.com 'nonce-…'`，白名单�
 src/
   index.ts            入口：页面类型检测、初始化、Turbo / MutationObserver 事件、样式注入
   constants.ts        断点、宽限期、存储键、SVG 常量、SORT/TYPE 菜单项
-  langColors.ts       语言 → Linguist 色表（694 语言；github-linguist/linguist languages.yml 生成）+ getLangColor 回退链
+  langColors.ts       语言色引擎（4.3.0 运行时获取，不硬编码）：linguist languages.yml 拉取（gmFetchText）+ 行扫描提取 + GM 缓存 + 未命中单次补拉/回退重检 + 色点原地重涂
   types.ts            存储模型类型（RepoData / PendingDeleteEntry / TagMap / NoteMap ...）
   state.ts            筛选状态对象 filterState + hasActiveFilter() 派生判断（唯一可变全局状态）
   utils.ts            escapeHtml / isDesktop
@@ -163,7 +163,7 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
     "name": "owner/repo",   // 仓库全名
     "desc": "...",          // 描述
     "lang": "TypeScript",   // 主语言
-    "langColor": "#3178c6", // 语言色块颜色
+    // 4.3.0 起不再存 langColor：颜色只由语言名决定，渲染走 stars_lang_colors 全局映射（运行时从 linguist languages.yml 获取）
     "stars": 1234,          // star 数
     "forks": 56,            // fork 数
     "updated": "Updated 3 days ago",  // 最后更新文本

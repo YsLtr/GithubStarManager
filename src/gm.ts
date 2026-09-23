@@ -17,6 +17,14 @@ declare const GM_registerMenuCommand: ((name: string, fn: () => void) => unknown
 declare const GM_openInTab: ((url: string, options?: { active?: boolean }) => unknown) | undefined;
 
 declare const GM_deleteValue: ((key: string) => void) | undefined;
+declare const GM_xmlHttpRequest: ((details: {
+  method?: string;
+  url: string;
+  timeout?: number;
+  onload?: (res: { status: number; responseText: string }) => void;
+  onerror?: () => void;
+  ontimeout?: () => void;
+}) => unknown) | undefined;
 
 const LS_PREFIX = 'github-stars-grid::';
 /** 敏感键：只存 GM、绝不进 localStorage 镜像（PAT 已是强制 API 的硬门槛，泄露面必须收紧） */
@@ -140,4 +148,31 @@ export function gmOpenInTab(url: string): void {
     }
   }
   window.open(url, '_blank', 'noopener');
+}
+
+/** 跨域文本获取（调用时判定）：GM_xmlHttpRequest 不受页面 CSP/CORS 限制；非 TM 环境回退 fetch */
+export function gmFetchText(url: string): Promise<string> {
+  if (typeof GM_xmlHttpRequest === 'function') {
+    return new Promise((resolve, reject) => {
+      try {
+        GM_xmlHttpRequest({
+          method: 'GET',
+          url,
+          timeout: 20000,
+          onload: (res) => {
+            if (res.status >= 200 && res.status < 300) resolve(res.responseText);
+            else reject(new Error(`HTTP ${res.status}`));
+          },
+          onerror: () => reject(new Error('网络错误')),
+          ontimeout: () => reject(new Error('超时')),
+        });
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+  return fetch(url, { cache: 'no-cache' }).then((r) => {
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.text();
+  });
 }

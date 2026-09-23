@@ -3,6 +3,7 @@ import { applyFilters } from './filters';
 import { interceptSearchForm } from './search';
 import { mountSyncButton } from './fullSync';
 import { renderTagFilterBar } from './ui/tagFilter';
+import { initLangColors } from './langColors';
 import { isDesktop } from './utils';
 
 /**
@@ -11,6 +12,7 @@ import { isDesktop } from './utils';
  */
 export function transformStarsList(): boolean {
   if (!isDesktop()) return false;
+  initLangColors(); // 语言色（4.3.0）：网格初始化即从数据源获取并缓存（每页一次；移动端不出卡片不拉）
 
   // Lists 区块（标题行 + 内容）与卡片网格无关，尽早隐藏；
   // 放在所有 early return 之前，turbo-frame 重渲染后再进来一次也不会漏。

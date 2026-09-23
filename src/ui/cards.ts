@@ -41,9 +41,9 @@ export function buildCardFromCache(repoId: string, data: RepoData): HTMLDivEleme
 
   // 语言（匹配页面卡片结构：<span class="ml-0 mr-3"> + <span itemprop="programmingLanguage">）
   if (data.lang) {
-    const colorStyle = `background-color: ${getLangColor(data.lang, data.langColor)}`; // langColor 缺失（API 同步条目）→ Linguist 色表回退
+    const colorStyle = `background-color: ${getLangColor(data.lang)}`; // 4.3.0：全局 Linguist 映射（未命中灰、获取落地后原地重涂）
     mainParts += `<span class="ml-0 mr-3">` +
-      `<span class="repo-language-color" style="${colorStyle}"></span> ` +
+      `<span class="repo-language-color" data-gsm-lang="${encodeURIComponent(data.lang)}" style="${colorStyle}"></span> ` +
       `<span itemprop="programmingLanguage">${escapeHtml(data.lang)}</span></span>`;
   }
 

@@ -19,7 +19,7 @@ export default defineConfig({
         match: ['https://github.com/*'],
         // 不靠 `$` 导入自动推断 grant(那会在 document-start 顶部捕获 GM_*),显式声明
         // （GM_registerMenuCommand: TM 菜单「设置 GitHub Token」入口）
-        grant: ['GM_getValue', 'GM_setValue', 'GM_registerMenuCommand', 'GM_openInTab', 'GM_deleteValue'],
+        grant: ['GM_getValue', 'GM_setValue', 'GM_registerMenuCommand', 'GM_openInTab', 'GM_deleteValue', 'GM_xmlHttpRequest'],
         'run-at': 'document-start',
       },
       build: {

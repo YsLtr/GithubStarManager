@@ -78,11 +78,10 @@ export function extractAndCacheRepoFromDetailPage(): void {
     desc = descEl ? (descEl.textContent || '').trim() : '';
   }
 
-  // 主语言 + 语言色。
+  // 主语言（4.3.0 起不再按仓库存语言色——颜色只由语言名决定，渲染走 langColors 全局映射）。
   // 新版：语言链接指向 /owner/repo/search?l=javascript，列表第一个即主语言；
-  // 旧版：`.list-style-none li` + `.Progress-item` 的背景色。
+  // 旧版：`.list-style-none li` 第一个 span。
   let lang = '';
-  let langColor = '';
   const langScope = document.querySelector('[class*="SidebarLanguages"]') || document;
   const langLink = langScope.querySelector<HTMLAnchorElement>('a[href*="search?l="]') ||
     document.querySelector<HTMLAnchorElement>('a[href*="search?l="]');
@@ -93,21 +92,10 @@ export function extractAndCacheRepoFromDetailPage(): void {
       const m = (langLink.getAttribute('href') || '').match(/[?&]l=([^&]+)/);
       if (m) lang = decodeURIComponent(m[1]);
     }
-    const dot = langLink.querySelector('[class*="languageDot"]');
-    if (dot instanceof HTMLElement) {
-      langColor = dot.style.backgroundColor || getComputedStyle(dot).backgroundColor || '';
-    }
   }
   if (!lang) {
     const firstLangSpan = document.querySelector('.list-style-none li span');
     if (firstLangSpan) lang = (firstLangSpan.textContent || '').trim();
-  }
-  if (!langColor) {
-    const progressItems = document.querySelectorAll<HTMLElement>('.Progress-item');
-    for (const pi of Array.from(progressItems)) {
-      const bg = pi.style.backgroundColor;
-      if (bg) { langColor = bg; break; }
-    }
   }
 
   // Star / Fork 数（新版 JSON 里是精确值，含真 0；DOM 兜底解析出的 0 视为「未解析」——
@@ -154,7 +142,6 @@ export function extractAndCacheRepoFromDetailPage(): void {
   const patch: Partial<RepoData> = { name };
   if (desc) patch.desc = desc;
   if (lang) patch.lang = lang;
-  if (langColor) patch.langColor = langColor;
   if (jsonStars !== null || stars > 0) patch.stars = stars;
   if (jsonForks !== null || forks > 0) patch.forks = forks;
   if (updated) patch.updated = updated;

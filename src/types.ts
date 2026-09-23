@@ -3,8 +3,6 @@ export interface RepoData {
   name: string;
   desc?: string;
   lang?: string;
-  /** CSS 颜色值，如 `#3178c6` */
-  langColor?: string;
   stars?: number;
   forks?: number;
   /** 展示用相对时间文本，如 `Updated 3 days ago` */
