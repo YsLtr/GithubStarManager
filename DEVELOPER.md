@@ -72,7 +72,7 @@ src/
   starCheck.ts       PAT 菜单、裁决缓存、外部 unstar 宽限管线（4.0.0：双 404 核对队列已删，P4 整表即权威确认；4.0.6：confirmExternalUnstar 幂等+自愈——已入宽限区不重复写区但**仍删缓存回写脏态**，applyExternalUnstar 返回「是否新确认」，整表 A 循环只对新确认 recordVerdict+计数，修复「每次同步恒外部 unstar 1」的并存脏态重复计数）
   tokenConfig.ts       快捷 Token 配置（Template URL 预填 starring=write + expires_in=90、剪贴板粘贴、保存回调）与 401/403(非限速) 失效上报（4.0.2：面板化 setTokenIssueHandler 替代居中弹窗，经 gm.gmOpenInTab 开页；独立成模块防 starCheck→filters→cards 循环导入）
   snapshot.ts        确认 unstar 后清历史快照（4.0.0：recordArrival/位移挂起链已删，仅留 purge 回调）
-  fullSync.ts        P4 全量同步：整表 diff、star 时间回填（REST star+json）；4.0.4 手动三入口（TM 菜单 / 横幅「立即同步」/ 标题行 Sync），runFullSync 先 quickCheck 逐页 If-None-Match（全 304 免额度早退），pullAllStarred 无条件整表并收集 etags 基线
+  fullSync.ts        P4 全量同步：整表 diff、star 时间回填（REST star+json）；4.0.4 手动三入口（TM 菜单 / 横幅「立即同步」/ 标题行 Sync），runFullSync 先 quickCheck 逐页 If-None-Match（全 304 免额度早退），pullAllStarred 无条件整表并收集 etags 基线；**4.0.7 起 quickCheck/pullAllStarred 均经 runWaves() 波次并发（5/波、发波 ≥1s），整表第 1 页 Link 头预知总页**
   storage/
     repoCache.ts      仓库缓存 CRUD
     tags.ts           标签存储 + 备注键规则 + 迁移
@@ -123,7 +123,7 @@ scripts/
 
 GitHub API (PAT)                                GitHub DOM（无缓存 / 详情页）
     │                                                │
-    ├─ probeAndSync() 进页 idle 自动（冷却 60s + 有 PAT → 统一 runFullSync('auto')：quickCheck 逐页条件快筛——4.0.6 起无窗口门、条件请求每次必发，全 304 免额度、页 200 转 changed-byte 整表比对，基线缺 / 超 TTL 转整表）
+    ├─ probeAndSync() 进页 idle 自动（冷却 60s + 有 PAT → 统一 runFullSync('auto')：quickCheck 逐页条件快筛——4.0.6 起无窗口门、条件请求每次必发，**4.0.7 起波次并发 5/波、首个 200 即早停**，全 304 免额度、页 200 转 changed-byte 整表比对，基线缺 / 超 TTL 转整表）
     │        │                                      ├─ 详情页 ─► extractAndCacheRepoFromDetailPage()
     │        └─ pullAllStarred() 整表 diff          └─ 无缓存首访 ─► 原生页 + .gsm-setup-banner
     │             │                                   （配置入口 = TM 菜单/横幅；保存成功 savedHandler 自动 runFullSync → transformAndReveal；手动同步只在 TM 菜单）
@@ -242,7 +242,7 @@ unstar 时数据不会立即删除，而是移入 `stars_pending_delete` 并记�
 
 用户访问仓库详情页时，脚本提取元数据写入缓存，使从未在 Stars 页浏览过的仓库也能在跨页筛选时显示完整卡片。
 
-### P4 全量同步与进页自动探测（3.1.0；4.0.0 升 API 主模式；4.0.4 逐页 ETag 快筛 + 手动三入口恢复；4.0.5 字节窗口自适应 + ETag 规范形；4.0.6 撤字节窗口门 = 条件快筛每次必发）
+### P4 全量同步与进页自动探测（3.1.0；4.0.0 升 API 主模式；4.0.4 逐页 ETag 快筛 + 手动三入口恢复；4.0.5 字节窗口自适应 + ETag 规范形；4.0.6 撤字节窗口门 = 条件快筛每次必发；4.0.7 波次并发）
 
 `fullSync.ts`：`GET /user/starred?per_page=100&page=N` + `Accept: application/vnd.github.star+json`（带 `starred_at`；页间 100ms、速率余量 <10 放弃、超 200 页放弃、任一条解析失败整体放弃）。整表 diff 三向——本地有远端无 → `applyExternalUnstar()` 走待删除区宽限管线（**整表拉取即权威确认**，跳过逐条双 404，写 7d 裁决）；远端有本地无 → `saveRepoData()` 建条目 / 宽限区内 `markRepoStarred()` 恢复；交集 → 回填 `starredAt` + 刷新 desc/lang/stars/forks/updatedAt（`updated` 展示文本保留旧值）。**完整性红线**：任何不完整信号都抛错、catch 不改任何数据。
 **4.0.0 增强**：`pullAllStarred` 带 `If-None-Match` 条件请求（304 免额度免拉），元数据写 `stars_full_sync_meta`（`etag`/`lastFullSyncAt`/`count`）；transform 成功后 `probeAndSync()` 进页 idle 自动探（无变化免拉、超 TTL 强制整表）；`hasApiData()` = 有 PAT + `meta.count>0` 决定渲染模式；触发（4.0.3 起）= TM 菜单「🔄 立即全量同步」手动（无 token 先弹 `promptForToken`；标题行 Sync 按钮 4.0.3 已删）+ 进页自动 probe（原「快照消失 >12 → scheduleFullSync」入口 4.0.0 已删）。

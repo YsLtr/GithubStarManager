@@ -2,7 +2,7 @@
 //
 // 数据源：GET /user/starred?per_page=100&page=N，Accept: application/vnd.github.star+json
 // → [{ starred_at, repository }]（官方 Starring 文档：该 Accept 才带 starred_at；
-//   参考项目同法实现，页间 100ms）。
+//   4.0.7 起波次并发拉取：5 并发/波、发波间隔 ≥1s，第 1 页 Link 头预知总页）。
 //
 // 权威边界（AGENTS「数据同步设计决策」）：
 // - 远端权威 = 星标成员关系、star 时间、仓库元数据（desc/lang/stars/forks/updatedAt）；
@@ -51,7 +51,8 @@ export interface SyncSummary {
 
 const PAGE_SIZE = 100;
 const MAX_PAGES = 200;
-const PAGE_GAP_MS = 100;
+const WAVE_CONCURRENCY = 5; // 波内并发数（次级限流硬限 100 并发；官方容忍区间 4-6 取中）
+const WAVE_GAP_MS = 1000; // 相邻发波最小间隔（官方建议：并发请求之间至少留 1s）
 const RATE_FLOOR = 10;
 /** ETag 快筛冷却：进页/frame 重渲染风暴下最多 60s 探一次 */
 const PROBE_COOLDOWN_MS = 60_000;
@@ -92,77 +93,153 @@ function parseItem(raw: unknown): RemoteStar | null {
   };
 }
 
-/** 分页拉全量（无条件整表）；任何不完整信号都抛错（调用方保证不落地半张表）。逐页收集 ETag 作快筛基线。 */
+/** starred 列表 Link 头 → 总页数（CORS 暴露 Link；无 Link = 单页列表） */
+function parseTotalPages(link: string | null): number | null {
+  const m = link?.match(/page=(\d+)>;\s*rel="last"/);
+  return m ? Number(m[1]) : null;
+}
+
+interface PageFetch {
+  page: number;
+  etag: string;
+  link: string | null;
+  body: unknown[];
+}
+
+/** 拉取单页（401/403/非 2xx/速率余量/非数组一律抛错——调用方保证不落地半张表） */
+async function fetchStarredPage(tok: string, page: number, signal: AbortSignal): Promise<PageFetch> {
+  const resp = await fetch(pageUrl(page), {
+    cache: 'no-store', // 不读不写浏览器缓存：否则 60s 内的缓存命中/304 合并会让 JS 看到假 200
+    signal,
+    headers: {
+      Authorization: `Bearer ${tok}`,
+      Accept: 'application/vnd.github.star+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    },
+  });
+  if (resp.status === 401) {
+    notifyTokenIssue('401 Bad credentials：Token 已失效或被撤销');
+    throw new Error('token 无效（401），已上报到初始化面板');
+  }
+  if (resp.status === 403) {
+    const retryAfter = resp.headers.get('retry-after');
+    const exhausted = resp.headers.get('x-ratelimit-remaining') === '0';
+    if (!retryAfter && !exhausted) {
+      // 排除限速后的 403 才是权限问题：上报初始化面板（官方 troubleshooting 判定）
+      notifyTokenIssue('403 权限不足：fine-grained 需 Account permissions → Starring → Write + All repositories');
+    }
+    throw new Error(
+      retryAfter
+        ? `触发次级速率限制（retry-after ${retryAfter}s），稍后再试`
+        : exhausted
+          ? '主速率限制已用尽，稍后再试'
+          : '403 权限不足（fine-grained 需 Starring → Write）'
+    );
+  }
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+  const remainingHeader = resp.headers.get('x-ratelimit-remaining');
+  const remaining = remainingHeader === null ? NaN : Number(remainingHeader);
+  if (Number.isFinite(remaining) && remaining < RATE_FLOOR) {
+    throw new Error(`速率余量 ${remaining} < ${RATE_FLOOR}，本次放弃（留量给核对队列）`);
+  }
+
+  const body: unknown = await resp.json();
+  if (!Array.isArray(body)) throw new Error('响应不是数组（Accept 头未生效？）');
+  return {
+    page,
+    etag: normEtag(resp.headers.get('etag') || ''), // 4.0.5 剥 W/ weak 前缀，存强校验规范形
+    link: resp.headers.get('link'),
+    body,
+  };
+}
+
+/** 并发拒绝中取真实根因（我们主动 abort 产生的 AbortError 不能顶掉真正的错误） */
+function pickRealError(reasons: unknown[]): unknown {
+  return reasons.find((e) => !(e instanceof Error && e.name === 'AbortError')) ?? reasons[0];
+}
+
+/**
+ * 波次并发执行器（4.0.7，用户令「实现并行」）：按 WAVE_CONCURRENCY 分波发射，
+ * 发波间隔 ≥ WAVE_GAP_MS（GitHub 次级限流官方建议并发请求间至少留 1s；慢网下
+ * 每波自身耗时自然拉大间隔，快网下靠 sleep 补足整 1s）。
+ * 任一任务失败 → 中止在途请求（AbortController）并停止后续波，真实错误原样上抛；
+ * 信号被外部主动中止（快筛已定论）同样停止后续波，不算错误。
+ */
+async function runWaves(
+  pagesRange: number[],
+  ctrl: AbortController,
+  worker: (page: number) => Promise<void>,
+): Promise<void> {
+  let firstErr: unknown = null;
+  for (let i = 0; i < pagesRange.length; i += WAVE_CONCURRENCY) {
+    if (firstErr !== null || ctrl.signal.aborted) break;
+    const waveStart = Date.now();
+    const settled = await Promise.allSettled(
+      pagesRange.slice(i, i + WAVE_CONCURRENCY).map((p) => worker(p)),
+    );
+    const reasons = settled
+      .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+      .map((r) => r.reason);
+    if (reasons.length > 0) {
+      firstErr = pickRealError(reasons);
+      ctrl.abort();
+      break;
+    }
+    if (ctrl.signal.aborted) break; // 已定论（快筛）：不等待也不发下一波
+    const remain = WAVE_GAP_MS - (Date.now() - waveStart);
+    if (remain > 0 && i + WAVE_CONCURRENCY < pagesRange.length) await sleep(remain);
+  }
+  if (firstErr !== null) throw firstErr;
+}
+
+/**
+ * 分页拉全量（无条件整表；4.0.7 改波次并发）；任何不完整信号都抛错
+ * （调用方保证不落地半张表——半张表绝不能当整表用）。
+ * 第 1 页先行拿 Link 头预知总页 → 页 2..N 分波并发 → 结果按页序组装；
+ * 逐页 ETag 基线下标即页码（快筛依赖该对应关系，绝不能乱序）。
+ */
 async function pullAllStarred(tok: string): Promise<{ items: RemoteStar[]; pages: number; etag: string | undefined; etags: string[] }> {
+  const ctrl = new AbortController();
+  const first = await fetchStarredPage(tok, 1, ctrl.signal);
+  const totalPages = parseTotalPages(first.link) ?? 1;
+  if (totalPages > MAX_PAGES) {
+    throw new Error(`超过 ${MAX_PAGES} 页上限（Link 预知 ${totalPages} 页），结果不完整，整体放弃`);
+  }
+
+  const results = new Array<PageFetch | undefined>(totalPages + 1);
+  results[1] = first;
+  if (totalPages > 1) {
+    const rest: number[] = [];
+    for (let p = 2; p <= totalPages; p++) rest.push(p);
+    await runWaves(rest, ctrl, async (page) => {
+      results[page] = await fetchStarredPage(tok, page, ctrl.signal);
+    });
+  }
+
+  // 按页序组装 + 完整性校验：缺页 / 解析失败 / 拉到解不出 → 抛错，一行数据都不落地
   const items: RemoteStar[] = [];
-  let pages = 0;
+  const etags: string[] = [];
   let rawSeen = 0;
   let parseMisses = 0;
-  let etag: string | undefined;
-  const etags: string[] = [];
-  for (let page = 1; page <= MAX_PAGES; page++) {
-    const resp = await fetch(`https://api.github.com/user/starred?per_page=${PAGE_SIZE}&page=${page}`, {
-      cache: 'no-store', // 不读不写浏览器缓存：否则 60s 内的缓存命中/304 合并会让 JS 看到假 200
-      headers: {
-        Authorization: `Bearer ${tok}`,
-        Accept: 'application/vnd.github.star+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
-    });
-    if (resp.status === 401) {
-      notifyTokenIssue('401 Bad credentials：Token 已失效或被撤销');
-      throw new Error('token 无效（401），已上报到初始化面板');
-    }
-    if (resp.status === 403) {
-      const retryAfter = resp.headers.get('retry-after');
-      const exhausted = resp.headers.get('x-ratelimit-remaining') === '0';
-      if (!retryAfter && !exhausted) {
-        // 排除限速后的 403 才是权限问题：上报初始化面板（官方 troubleshooting 判定）
-        notifyTokenIssue('403 权限不足：fine-grained 需 Account permissions → Starring → Write + All repositories');
-      }
-      throw new Error(
-        retryAfter
-          ? `触发次级速率限制（retry-after ${retryAfter}s），稍后再试`
-          : exhausted
-            ? '主速率限制已用尽，稍后再试'
-            : '403 权限不足（fine-grained 需 Starring → Write）'
-      );
-    }
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-
-    const remainingHeader = resp.headers.get('x-ratelimit-remaining');
-    const remaining = remainingHeader === null ? NaN : Number(remainingHeader);
-    if (Number.isFinite(remaining) && remaining < RATE_FLOOR) {
-      throw new Error(`速率余量 ${remaining} < ${RATE_FLOOR}，本次放弃（留量给核对队列）`);
-    }
-
-    // 收集每页 ETag（4.0.4 逐页快筛基线）；首页另存 etag 兼容旧字段
-    const pageEtag = normEtag(resp.headers.get('etag') || ''); // 4.0.5 剥 W/ weak前缀，存强校验规范形
-    if (page === 1) etag = pageEtag || undefined;
-    etags.push(pageEtag);
-    const body: unknown = await resp.json();
-    if (!Array.isArray(body)) throw new Error('响应不是数组（Accept 头未生效？）');
-    pages += 1;
-    rawSeen += body.length;
-    if (body.length === 0) break;
-
-    for (const raw of body) {
+  for (let p = 1; p <= totalPages; p++) {
+    const r = results[p];
+    if (!r) throw new Error(`第 ${p} 页未取回（并发中断），整体放弃`);
+    etags.push(r.etag);
+    rawSeen += r.body.length;
+    for (const raw of r.body) {
       const parsed = parseItem(raw);
       if (parsed) items.push(parsed);
       else parseMisses += 1;
     }
-    if (parseMisses > 0) {
-      throw new Error(`${parseMisses}/${rawSeen} 条解析失败（响应形态不符），整体放弃`);
-    }
-    if (body.length < PAGE_SIZE) break;
-    if (page >= MAX_PAGES) throw new Error(`超过 ${MAX_PAGES} 页上限，结果不完整，整体放弃`);
-    await sleep(PAGE_GAP_MS);
   }
-
+  if (parseMisses > 0) {
+    throw new Error(`${parseMisses}/${rawSeen} 条解析失败（响应形态不符），整体放弃`);
+  }
   if (rawSeen > 0 && items.length === 0) {
     throw new Error(`拉到 ${rawSeen} 条但解析为 0（响应形态不符），整体放弃`);
   }
-  return { items, pages, etag, etags };
+  return { items, pages: totalPages, etag: etags[0] || undefined, etags };
 }
 
 /** 仍 star 的位移挂起直接结案（成员关系已被整表证实；unstar 的由宽限管线清） */
@@ -190,9 +267,10 @@ function pageUrl(page: number): string {
 type QuickVerdict = 'unchanged' | 'changed' | 'changed-byte' | 'error';
 
 /**
- * 逐页 ETag 条件快筛（4.0.4，修「首页 304 就跳过、中部变化漏检」）：
+ * 逐页 ETag 条件快筛（4.0.4 修「首页 304 就跳过、中部变化漏检」；4.0.7 改波次并发）：
  * - 每页各带自己的 If-None-Match（官方每页独立 ETag；304 不计主限流）；全部 304 才算无变化；
- * - 任一页 200 = 有变化即停（位移会让后续页全部失效，不浪费请求）→ 调用方整表；
+ * - 波次并发扫描（5 并发/波、发波间隔 ≥1s），任一页 200 = 字节已变即定论——停发后续波
+ *   并中止在途请求（位移会让后续页全部失效，不浪费请求）→ 调用方整表；
  * - 基线之外再无条件探一页：有条目 = 总数变长（新增落点不可预设）仍判有变化；
  * - 基线缺失/含空值、超 48h TTL → 直接 changed（整表重建基线）；
  * - 401 / 403（非限速）→ notifyTokenIssue 上报初始化面板（常驻填 token 框），返回 error。
@@ -207,37 +285,70 @@ async function quickCheck(tok: string, meta: FullSyncMeta): Promise<QuickVerdict
     console.log('[github-stars-grid] ETag 快筛：无逐页基线（旧版单 etag 或缺数据）→ 整表重建基线');
     return 'changed';
   }
-  for (let i = 0; i < etags.length; i++) {
+
+  const ctrl = new AbortController();
+  let verdict: QuickVerdict | null = null; // 定论后 runWaves 见信号即停发后续波
+  let changedPage = 0;
+  const decide = (v: QuickVerdict, page = 0): void => {
+    // changed-byte（真变化信号）优先于 error：同波另有请求失败时整表也只会因
+    // 同样的失败走红线安全退出（数据不受影响），而 error 会把这次真变化信号丢掉。
+    if (v === 'changed-byte' && verdict !== 'changed-byte') {
+      verdict = v;
+      changedPage = page;
+    } else if (verdict === null) {
+      verdict = v;
+    } else {
+      return; // 已有定论，不覆盖
+    }
+    ctrl.abort(); // 中止在途请求（省带宽/额度）
+  };
+
+  const checks: number[] = [];
+  for (let i = 0; i < etags.length; i++) checks.push(i + 1);
+  await runWaves(checks, ctrl, async (page) => {
+    if (verdict !== null) return; // 定论后同波尚未发车的任务直接让路
     let resp: Response;
     try {
-      resp = await fetch(pageUrl(i + 1), {
+      resp = await fetch(pageUrl(page), {
         cache: 'no-store',
+        signal: ctrl.signal,
         headers: {
           Authorization: `Bearer ${tok}`,
           Accept: 'application/vnd.github.star+json',
           'X-GitHub-Api-Version': '2022-11-28',
-          'If-None-Match': etags[i],
+          'If-None-Match': etags[page - 1],
         },
       });
     } catch (err) {
-      console.log('[github-stars-grid] ETag 快筛网络失败，本次跳过:', err instanceof Error ? err.message : err);
-      return 'error';
+      if (verdict === null) { // 主动中止不算失败
+        console.log('[github-stars-grid] ETag 快筛网络失败，本次跳过:', err instanceof Error ? err.message : err);
+        decide('error');
+      }
+      return;
     }
+    if (verdict !== null) return; // 定论后的迟到响应直接丢弃
     if (resp.status === 200) {
-      console.log(`[github-stars-grid] ETag 快筛：第 ${i + 1} 页 200 → 字节已变（可能只是仓库元数据抖动，非收藏变动）→ 整表比对确认`);
-      return 'changed-byte';
+      decide('changed-byte', page);
+      return;
     }
     if (resp.status !== 304) {
       reportAuthIssue(resp);
       console.log(`[github-stars-grid] ETag 快筛 HTTP ${resp.status}，本次跳过`);
-      return 'error';
+      decide('error');
     }
-    if (i < etags.length - 1) await sleep(PAGE_GAP_MS);
+  });
+
+  if (verdict === 'changed-byte') {
+    console.log(`[github-stars-grid] ETag 快筛：第 ${changedPage} 页 200 → 字节已变（可能只是仓库元数据抖动，非收藏变动）→ 整表比对确认`);
+    return 'changed-byte';
   }
+  if (verdict === 'error') return 'error';
+
   // 尾页之外再探一页（无条件）：有条目 = 总数变长，仍判有变化
   try {
     const extra = await fetch(pageUrl(etags.length + 1), {
       cache: 'no-store',
+      signal: ctrl.signal,
       headers: {
         Authorization: `Bearer ${tok}`,
         Accept: 'application/vnd.github.star+json',
