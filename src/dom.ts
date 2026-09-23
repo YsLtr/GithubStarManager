@@ -98,7 +98,7 @@ export function getNativeFilterBar(container: ParentNode): HTMLElement | null {
 export const LISTS_HIDDEN_CLASS = 'stars-lists-hidden';
 
 /**
- * 隐藏 Stars 页的 Lists 区块（标题行 + 内容区）。
+ * 隐藏 Stars 页的 Lists 区块（标题行 + 内容区 + 空态 blankslate）。
  *
  * 两个坑：
  * 1. 标题行容器类名已从 `my-3` 变成 `tmp-my-3`（2026 改版给间距工具类加了 `tmp-` 前缀），
@@ -118,7 +118,9 @@ export function hideListsSection(): void {
 
     const heading = child.querySelector('h2.f3-light');
     const isListsRow = !!heading && (heading.textContent || '').includes('Lists');
-    if (!isListsRow && child.id !== 'profile-lists-container') return;
+    // 0 个 list 时空态 blankslate（「Create your first list」）也是 wrapper 的直接子节点
+    const isListsEmpty = child.classList.contains('blankslate');
+    if (!isListsRow && !isListsEmpty && child.id !== 'profile-lists-container') return;
 
     child.classList.add(LISTS_HIDDEN_CLASS);
     child.style.setProperty('display', 'none', 'important');

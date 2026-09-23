@@ -70,6 +70,7 @@ src/
   boot.ts            document-start 防闪烁隐藏生命周期（FOUC）
   pagination.ts      本地分页拦截（4.0.0：只拦 data-gsm-page 零网络；原 fetch 换入路径已删）
   starCheck.ts       PAT 菜单、裁决缓存、外部 unstar 宽限管线（4.0.0：双 404 核对队列已删，P4 整表即权威确认）
+  tokenConfig.ts       快捷 Token 配置（Template URL 预填 starring=write、剪贴板粘贴、保存回调）与 401/403(非限速) 失效弹窗（4.0.1 新增；独立成模块防 starCheck→filters→cards 循环导入）
   snapshot.ts        确认 unstar 后清历史快照（4.0.0：recordArrival/位移挂起链已删，仅留 purge 回调）
   fullSync.ts        P4 全量同步：Sync 按钮、整表 diff、star 时间回填（REST star+json）
   storage/
@@ -245,6 +246,7 @@ unstar 时数据不会立即删除，而是移入 `stars_pending_delete` 并记�
 
 `fullSync.ts`：`GET /user/starred?per_page=100&page=N` + `Accept: application/vnd.github.star+json`（带 `starred_at`；页间 100ms、速率余量 <10 放弃、超 200 页放弃、任一条解析失败整体放弃）。整表 diff 三向——本地有远端无 → `applyExternalUnstar()` 走待删除区宽限管线（**整表拉取即权威确认**，跳过逐条双 404，写 7d 裁决）；远端有本地无 → `saveRepoData()` 建条目 / 宽限区内 `markRepoStarred()` 恢复；交集 → 回填 `starredAt` + 刷新 desc/lang/stars/forks/updatedAt（`updated` 展示文本保留旧值）。**完整性红线**：任何不完整信号都抛错、catch 不改任何数据。
 **4.0.0 增强**：`pullAllStarred` 带 `If-None-Match` 条件请求（304 免额度免拉），元数据写 `stars_full_sync_meta`（`etag`/`lastFullSyncAt`/`count`）；transform 成功后 `probeAndSync()` 进页 idle 自动探（无变化免拉、超 TTL 强制整表）；`hasApiData()` = 有 PAT + `meta.count>0` 决定渲染模式；触发 = 标题行 **Sync** 手动（无 token 先弹 `promptForToken`）+ 进页自动 probe（原「快照消失 >12 → scheduleFullSync」入口已删）。
+**4.0.1 增强**：①配置面板顶窗落位——`showSetupBanner` 替换 Lists 槽位的空态 `div.blankslate`（0 list）或 `#profile-lists-container`（有 list，本就隐藏），都不在则退回 prepend；网格态由 `hideListsSection`（blankslate 判定）+ base.css 静态 `> div.blankslate{display:none!important}` 静默隐藏（「有 list 也整体隐藏」不变）；②PAT 三入口统一走 `tokenConfig.ts`：横幅内联粘贴行 / 快速获取官方 Template URL（`starring=write` 一跳预填最小权限）/ TM 菜单，保存回调 `notifyTokenSaved` → savedHandler 撤横幅 + 自动 `runFullSync('button')`；③`notifyTokenIssue` 在 401 与「排除限速的 403」（无 retry-after 且 x-ratelimit-remaining≠0）弹一键更新窗，依据官方 troubleshooting 判定。
 
 ### 星星按钮（4.0.0：纯 API）
 

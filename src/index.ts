@@ -9,6 +9,7 @@ import { exitCustomMode } from './filters';
 import { hasApiData, runFullSync, scheduleProbeSync } from './fullSync';
 import { interceptPagination } from './pagination';
 import { promptForToken, registerTokenMenu } from './starCheck';
+import { notifyTokenSaved, openTokenCreator, pasteFromClipboard, saveToken, setTokenSavedHandler } from './tokenConfig';
 import { cleanupExpiredUnstarred, markRepoStarred, markRepoUnstarred } from './storage/pendingDelete';
 import { migrateTagsIfNeeded } from './storage/tags';
 import { transformStarsList } from './transform';
@@ -229,16 +230,57 @@ function showSetupBanner(): void {
   const bar = document.createElement('div');
   bar.className = 'gsm-setup-banner';
   bar.innerHTML =
-    '<span>⭐ Stars Grid 4.0 需要一次性全量同步（GitHub API）。请先配置 Token，或立即同步。</span>';
-
+    '<span>⭐ Stars Grid 4.0 需要一次性全量同步（GitHub API）：可一键预填权限创建 Token，或手动填写，再立即同步。</span>';
   const setup = document.createElement('button');
-  setup.className = 'btn BtnGroup-item';
+
+  // 快捷获取：官方 Template URL 预填 Starring: write 最小权限；生成复制后回粘（粘贴行默认收起，点快捷键展开）
+  const quick = document.createElement('button');
+  quick.className = 'btn btn-primary';
+  quick.type = 'button';
+  quick.textContent = '快速获取 Token';
+  quick.title = '打开 GitHub 创建页（已预填 Account permissions → Starring: write），生成并复制后回来粘贴';
+  quick.addEventListener('click', () => {
+    openTokenCreator();
+    tokRow.hidden = false;
+    tokInput.focus();
+  });
+
+  const tokRow = document.createElement('span');
+  tokRow.className = 'gsm-token-row';
+  tokRow.hidden = true;
+  const tokInput = document.createElement('input');
+  tokInput.type = 'text';
+  tokInput.spellcheck = false;
+  tokInput.placeholder = 'github_pat_… 或 ghp_（也可直接 Ctrl+V 到框里）';
+  const tokMsg = document.createElement('span');
+  tokMsg.className = 'gsm-token-msg';
+  const tokPaste = document.createElement('button');
+  tokPaste.className = 'btn';
+  tokPaste.type = 'button';
+  tokPaste.textContent = '从剪贴板粘贴';
+  tokPaste.addEventListener('click', () => void pasteFromClipboard(tokInput));
+  const tokSave = document.createElement('button');
+  tokSave.className = 'btn btn-primary';
+  tokSave.type = 'button';
+  tokSave.textContent = '保存并同步';
+  tokSave.addEventListener('click', () => {
+    const kind = saveToken(tokInput.value);
+    if (!kind) {
+      tokMsg.textContent = '前缀不对：预期 github_pat_（fine-grained）或 ghp_（classic）';
+      return;
+    }
+    console.log(`[github-stars-grid] Token 已保存（${kind}），自动触发全量同步`);
+    bar.remove();
+    notifyTokenSaved();
+  });
+  tokRow.append(tokInput, tokMsg, tokPaste, tokSave);
+  setup.className = 'btn';
   setup.type = 'button';
-  setup.textContent = '设置 Token';
+  setup.textContent = '手动设置';
   setup.addEventListener('click', () => promptForToken());
 
   const sync = document.createElement('button');
-  sync.className = 'btn BtnGroup-item';
+  sync.className = 'btn';
   sync.type = 'button';
   sync.textContent = '立即同步';
   sync.addEventListener('click', () => {
@@ -261,8 +303,14 @@ function showSetupBanner(): void {
     })();
   });
 
-  bar.append(setup, sync);
-  host.prepend(bar);
+  bar.append(quick, setup, sync, tokRow);
+  // 顶窗落位：替换 Lists 槽位里的空态（0 个 list）或已建 list 容器（有 list 时该容器
+  // 本就被 hideListsSection/CSS 隐藏）；都不在则退回旧行为挂列首
+  const slot = document.querySelector('#user-profile-frame > div');
+  const slotTarget =
+    (slot && slot.querySelector(':scope > div.blankslate')) || (slot && slot.querySelector(':scope > #profile-lists-container'));
+  if (slotTarget) slotTarget.replaceWith(bar);
+  else host.prepend(bar);
 }
 
 function registerNavListeners(): void {
@@ -379,6 +427,14 @@ function init(): void {
   registerNavListeners();
   // TM 菜单：任意匹配页都可设置/清除核对用 PAT
   registerTokenMenu();
+
+  // Token 保存成功（横幅内联 / 失效弹窗 / TM 菜单 prompt 任一入口）→ 撤配置横幅 + 自动全量同步
+  setTokenSavedHandler(() => {
+    document.querySelector('.gsm-setup-banner')?.remove();
+    void runFullSync('button').then((sum) => {
+      if (sum && isStarsPage() && !document.querySelector('.stars-grid-container')) transformAndReveal(false);
+    });
+  });
 
   const repoIdMeta = getRepoIdMeta();
   const isRepoDetailPage = !isStarsPage() && !!repoIdMeta;

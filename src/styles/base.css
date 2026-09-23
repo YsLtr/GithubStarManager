@@ -122,7 +122,8 @@
      标题行带 `d-flex`，GitHub 的 `.d-flex{display:flex!important}` 会压过内联
      display:none，所以 JS 那边用 setProperty(..., 'important')，这里也用 !important。 */
   .stars-lists-hidden,
-  turbo-frame#user-profile-frame > div > #profile-lists-container {
+  turbo-frame#user-profile-frame > div > #profile-lists-container,
+  turbo-frame#user-profile-frame > div > div.blankslate {
     display: none !important;
   }
   /* CSS-only 兜底：脚本执行前的一瞬，容忍 my-3 / tmp-my-3 两代类名 */
@@ -562,3 +563,83 @@ html.gsm-turbo-entry .stars-grid-container {
 }
 
 .gsm-setup-banner .btn { flex: none; }
+
+/* 4.0.1 快捷 Token 配置：横幅内联粘贴行 + 失效弹窗（Primer 配色变量自适应暗色） */
+.gsm-token-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.gsm-token-row[hidden] {
+  display: none !important; /* 必须盖过 .gsm-token-row 的 display:inline-flex（author 样式会压过 UA 的 [hidden]） */
+}
+.gsm-token-row .gsm-token-msg {
+  margin-right: auto;
+}
+.gsm-token-row input,
+.gsm-token-modal input {
+  flex: 1;
+  min-width: 240px;
+  padding: 6px 10px;
+  border: 1px solid var(--borderColor-default, #d0d7de);
+  border-radius: 6px;
+  background: var(--bgColor-default, #fff);
+  color: var(--fgColor-default, #1f2328);
+  font-size: 13px;
+}
+.gsm-token-msg {
+  color: var(--fgColor-danger, #d1242f);
+  font-size: 12px;
+}
+.gsm-token-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(31 35 40 / 45%);
+}
+.gsm-token-modal-box {
+  width: min(540px, 92vw);
+  padding: 20px;
+  border: 1px solid var(--borderColor-default, #d0d7de);
+  border-radius: 8px;
+  background: var(--bgColor-default, #fff);
+  box-shadow: 0 8px 24px rgb(140 149 159 / 20%);
+  font-size: 14px;
+}
+.gsm-token-modal-title {
+  margin-bottom: 6px;
+  font-size: 16px;
+  font-weight: 600;
+}
+.gsm-token-modal-detail {
+  margin-bottom: 8px;
+  color: var(--fgColor-muted, #59636e);
+}
+.gsm-token-modal-steps {
+  margin: 0 0 12px;
+  padding-left: 20px;
+  color: var(--fgColor-muted, #59636e);
+}
+.gsm-token-modal-steps li {
+  margin: 3px 0;
+}
+.gsm-token-modal input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 12px;
+}
+.gsm-token-modal-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.gsm-token-modal-actions .gsm-token-msg {
+  margin-right: auto;
+}

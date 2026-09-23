@@ -25,29 +25,23 @@ import { renderNotes } from './ui/notes';
 import { renderTags } from './ui/tagFilter';
 import type { PendingDeleteMap, RepoCache, VerdictMap } from './types';
 
+import { detectTokenKind, notifyTokenSaved, openTokenCreator } from './tokenConfig';
 /* ---------------- token ---------------- */
-
-export type TokenKind = 'classic' | 'fine-grained';
 
 export function getGitHubPat(): string {
   return gmGet<string>(STORAGE_KEYS.githubPat, '') || '';
 }
 
-function detectTokenKind(tok: string): TokenKind | null {
-  if (tok.startsWith('github_pat_')) return 'fine-grained';
-  if (tok.startsWith('ghp_')) return 'classic';
-  return null;
-}
 
 /** TM 菜单入口：输入/清除 PAT。任意 github.com 页面可设（init 无条件注册）。 */
 /** 输入/清除 PAT（TM 菜单与 P4 同步按钮无 token 时共用） */
-export function promptForToken(): void {
+export function promptForToken(notify = true): void {
   const cur = getGitHubPat();
   const masked = cur ? `${cur.slice(0, 12)}…${cur.slice(-4)}` : '未设置';
   const input = window.prompt(
     'GitHub PAT，用于外部 unstar 核对（P2.5）与 P4 全量同步（Sync 按钮）。\n' +
       '· classic：ghp_ 前缀；核对/同步私有仓库需勾选 repo scope（仅公开仓库可不勾）\n' +
-      '· fine-grained：github_pat_ 前缀；账号权限 Account permissions → Starring → Read，\n' +
+      '· fine-grained：github_pat_ 前缀；账号权限 Account permissions → Starring → Write（读列表 Read 也行，但本脚本加星/去星按钮要 Write），\n' +
       '  仓库范围选 All repositories\n' +
       '（留空 = 删除当前 token；保存后立即生效）\n\n' +
       `当前：${masked}`,
@@ -67,12 +61,16 @@ export function promptForToken(): void {
   }
   gmSet(STORAGE_KEYS.githubPat, tok);
   console.log(`[github-stars-grid] token 已保存（${kind}），外部 unstar 核对与 P4 同步生效`);
+  if (notify) notifyTokenSaved(); // 保存成功 → 撤配置横幅 + 自动全量同步（index.ts 注册的 handler）
 }
 
 /** TM 菜单入口：任意 github.com 页面可设（init 无条件注册） */
 export function registerTokenMenu(): void {
   gmRegisterMenuCommand('⭐ 设置 GitHub Token（核对 + P4 全量同步）', () => {
     promptForToken();
+  });
+  gmRegisterMenuCommand('🔑 快捷创建 GitHub Token（预填最小权限）', () => {
+    openTokenCreator();
   });
 }
 

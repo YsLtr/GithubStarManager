@@ -1,6 +1,7 @@
 import { FORK_META_SVG, STAR_EMPTY_SVG, STAR_FILL_SVG, STAR_META_SVG } from '../constants';
 import { markRepoStarred, markRepoUnstarred } from '../storage/pendingDelete';
 import { getGitHubPat } from '../starCheck';
+import { notifyTokenIssue } from '../tokenConfig';
 import { escapeHtml } from '../utils';
 import type { RepoData } from '../types';
 
@@ -131,6 +132,15 @@ export function createStarButtonForCached(card: HTMLElement, data: RepoData): vo
         }
       );
       if (resp.ok) toggleStarButtonState(btn, card, !currentlyStarred);
+      else if (resp.status === 401) notifyTokenIssue('401 Bad credentials：Token 已失效或被撤销');
+      else if (
+        resp.status === 403 &&
+        !resp.headers.get('retry-after') &&
+        resp.headers.get('x-ratelimit-remaining') !== '0'
+      ) {
+        // 排除限速后的 403 才是权限问题（官方 troubleshooting 判定）
+        notifyTokenIssue('403 权限不足：fine-grained 需 Account permissions → Starring → Write');
+      }
     } catch {
       // 网络错误 — 不做处理
     } finally {

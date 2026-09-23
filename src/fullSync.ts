@@ -28,6 +28,7 @@
 import { STORAGE_KEYS, SYNC_SVG } from './constants';
 import { gmGet, gmSet } from './gm';
 import { applyExternalUnstar, getGitHubPat, promptForToken, recordVerdict } from './starCheck';
+import { notifyTokenIssue } from './tokenConfig';
 import { loadPendingDelete, markRepoStarred } from './storage/pendingDelete';
 import { loadRepoCache, saveRepoCache, saveRepoData } from './storage/repoCache';
 import type { FullSyncMeta, RepoData, ShiftPendingMap } from './types';
@@ -103,13 +104,23 @@ async function pullAllStarred(tok: string): Promise<{ items: RemoteStar[]; pages
     });
     // 首页 ETag 抓一次（后续 probeAndSync 的 If-None-Match 基线）
     if (page === 1) etag = resp.headers.get('etag') ?? undefined;
-    if (resp.status === 401) throw new Error('token 无效（401），TM 菜单可重新设置');
+    if (resp.status === 401) {
+      notifyTokenIssue('401 Bad credentials：Token 已失效或被撤销');
+      throw new Error('token 无效（401），已弹出一键更新窗');
+    }
     if (resp.status === 403) {
       const retryAfter = resp.headers.get('retry-after');
+      const exhausted = resp.headers.get('x-ratelimit-remaining') === '0';
+      if (!retryAfter && !exhausted) {
+        // 排除限速后的 403 才是权限问题：弹一键更新（官方 troubleshooting 判定）
+        notifyTokenIssue('403 权限不足：fine-grained 需 Account permissions → Starring → Write + All repositories');
+      }
       throw new Error(
         retryAfter
           ? `触发次级速率限制（retry-after ${retryAfter}s），稍后再试`
-          : '403 权限不足（fine-grained 需 Account permissions → Starring → Read + All repositories）'
+          : exhausted
+            ? '主速率限制已用尽，稍后再试'
+            : '403 权限不足（fine-grained 需 Starring → Write）'
       );
     }
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -164,7 +175,7 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
   if (syncing) return null;
   let tok = getGitHubPat();
   if (!tok && source === 'button') {
-    promptForToken();
+    promptForToken(false); // 自动触发场景不弹重复 prompt；保存成功后的同步由 savedHandler 接管
     tok = getGitHubPat();
   }
   if (!tok) {
@@ -245,6 +256,7 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
         `恢复 ${restored}、外部 unstar ${unstarred}、回填 star 时间 ${backfilled}、` +
         `元数据刷新 ${refreshed}、位移挂起结算 ${shiftCleared}`
     );
+    document.querySelector('.gsm-setup-banner')?.remove(); // 同步成功即撤配置横幅（缓存已就绪）
     // 写元数据：ETag 快筛基线 + lastFullSyncAt（TTL/isApiData 判定）+ 本地分页总数
     gmSet(STORAGE_KEYS.fullSyncMeta, { etag, lastFullSyncAt: Date.now(), count: items.length });
     return summary;
