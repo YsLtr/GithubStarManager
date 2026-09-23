@@ -488,10 +488,6 @@
   .gsm-sort-group > .gsm-dir-btn:focus {
     z-index: 1; /* 悬停/聚焦边框压过重叠线 */
   }
-  .gsm-sort-group.has-active > .Button {
-    border-color: var(--fgColor-accent, #0969da) !important;
-    color: var(--fgColor-accent, #0969da) !important;
-  }
   /* ===== 星星按钮 ===== */
   .stars-card-header {
     display: flex !important;

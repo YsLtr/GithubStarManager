@@ -1,4 +1,5 @@
 import { FORK_META_SVG, STAR_EMPTY_SVG, STAR_FILL_SVG, STAR_META_SVG } from '../constants';
+import { getLangColor } from '../langColors';
 import { markRepoStarred, markRepoUnstarred } from '../storage/pendingDelete';
 import { getGitHubPat } from '../starCheck';
 import { notifyTokenIssue } from '../tokenConfig';
@@ -40,7 +41,7 @@ export function buildCardFromCache(repoId: string, data: RepoData): HTMLDivEleme
 
   // 语言（匹配页面卡片结构：<span class="ml-0 mr-3"> + <span itemprop="programmingLanguage">）
   if (data.lang) {
-    const colorStyle = data.langColor ? `background-color: ${data.langColor}` : '';
+    const colorStyle = `background-color: ${getLangColor(data.lang, data.langColor)}`; // langColor 缺失（API 同步条目）→ Linguist 色表回退
     mainParts += `<span class="ml-0 mr-3">` +
       `<span class="repo-language-color" style="${colorStyle}"></span> ` +
       `<span itemprop="programmingLanguage">${escapeHtml(data.lang)}</span></span>`;

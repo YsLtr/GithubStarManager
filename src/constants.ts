@@ -1,4 +1,4 @@
-import type { SortKey } from './types';
+import type { SortKey, TypeFilter } from './types';
 
 /** 视口宽度 >= 此值时启用桌面端布局（与 styles/base.css 中的 @media 断点保持一致） */
 export const MOBILE_BREAKPOINT = 768;
@@ -16,6 +16,16 @@ export const SORT_OPTIONS: ReadonlyArray<{ key: SortKey; label: string }> = [
   { key: 'updated', label: 'Recently active' },
   { key: 'stars', label: 'Most stars' },
   { key: 'forks', label: 'Most Forks' },
+];
+
+/** Type 菜单项（4.2.0，对齐原生 7 个可判项；Can be sponsored 无 API 字段，D2 已定案省略。顺序 = 原生序） */
+export const TYPE_OPTIONS: ReadonlyArray<{ value: TypeFilter; label: string }> = [
+  { value: 'public', label: 'Public' },
+  { value: 'private', label: 'Private' },
+  { value: 'source', label: 'Sources' },
+  { value: 'fork', label: 'Forks' },
+  { value: 'mirror', label: 'Mirrors' },
+  { value: 'template', label: 'Templates' },
 ];
 
 export const STORAGE_KEYS = {

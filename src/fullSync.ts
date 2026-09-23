@@ -86,6 +86,11 @@ function parseItem(raw: unknown): RemoteStar | null {
   if (typeof repo.stargazers_count === 'number') meta.stars = repo.stargazers_count;
   if (typeof repo.forks_count === 'number') meta.forks = repo.forks_count;
   if (typeof repo.updated_at === 'string') meta.updatedAt = repo.updated_at;
+  // Type 筛选四标志（4.2.0）：REST repo 对象恒有 private/fork/is_template/mirror_url，逐项校验后写入
+  if (typeof repo.private === 'boolean') meta.private = repo.private;
+  if (typeof repo.fork === 'boolean') meta.fork = repo.fork;
+  if (typeof repo.is_template === 'boolean') meta.isTemplate = repo.is_template;
+  if ('mirror_url' in repo) meta.mirror = repo.mirror_url != null;
   // 展示文本 updated（"Updated 3 days ago"）API 还原不出来 → 省略该键，合并时保留旧值
 
   return {
@@ -262,7 +267,7 @@ function buildLocalSlices(cache: RepoCache): RemoteStar[][] | null {
         repoId,
         path: e.name || '',
         starredAt: e.starredAt,
-        meta: { name: e.name, desc: e.desc, lang: e.lang, stars: e.stars, forks: e.forks, updatedAt: e.updatedAt },
+        meta: { name: e.name, desc: e.desc, lang: e.lang, stars: e.stars, forks: e.forks, updatedAt: e.updatedAt, private: e.private, fork: e.fork, isTemplate: e.isTemplate, mirror: e.mirror },
       })),
     );
   }
@@ -350,6 +355,17 @@ async function fullPullOutcome(tok: string): Promise<ScanOutcome> {
   };
 }
 
+/** Type 四标志完整性（4.2.0 升级回补阀门）：任一缓存条目缺标志 → 切片与 Type 筛选不可信，需整表回补 */
+function typeFlagsComplete(cache: RepoCache): boolean {
+  for (const id in cache) {
+    const e = cache[id];
+    if (e.private === undefined || e.fork === undefined || e.isTemplate === undefined || e.mirror === undefined) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /**
  * 单遍扫描（4.0.8，合并原 quickCheck + pullAllStarred，用户定「无须两个函数」）：
  * - 有基线（≤48h TTL、逐页 etags 完整）→ 波次条件扫 1..N+1 页（尾页带 tailEtag 条件探增长，304=仍空免额度）：
@@ -366,6 +382,11 @@ async function scanStarred(tok: string, meta: FullSyncMeta): Promise<ScanOutcome
     !!meta.lastFullSyncAt &&
     Date.now() - meta.lastFullSyncAt <= FULL_SYNC_TTL_MS &&
     !!baseline && baseline.length > 0 && baseline.every((e) => !!e);
+  // 升级回补阀门（4.2.0）：缓存缺 Type 四标志 → 无条件整表回补一次（parseItem 会给全部条目写满标志，之后回归条件扫描）
+  if (!typeFlagsComplete(loadRepoCache())) {
+    console.log('[github-stars-grid] 缓存缺 Type 标志（升级回补）→ 无条件整表拉取一次');
+    return fullPullOutcome(tok);
+  }
   if (!baselineOk) {
     console.log('[github-stars-grid] 无逐页基线/超 48h TTL → 无条件整表拉取（重建基线）');
     return fullPullOutcome(tok);
@@ -591,6 +612,10 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
       if (m.stars !== undefined && entry.stars !== m.stars) { entry.stars = m.stars; metaChanged = true; }
       if (m.forks !== undefined && entry.forks !== m.forks) { entry.forks = m.forks; metaChanged = true; }
       if (m.updatedAt !== undefined && entry.updatedAt !== m.updatedAt) { entry.updatedAt = m.updatedAt; metaChanged = true; }
+      if (m.private !== undefined && entry.private !== m.private) { entry.private = m.private; metaChanged = true; }
+      if (m.fork !== undefined && entry.fork !== m.fork) { entry.fork = m.fork; metaChanged = true; }
+      if (m.isTemplate !== undefined && entry.isTemplate !== m.isTemplate) { entry.isTemplate = m.isTemplate; metaChanged = true; }
+      if (m.mirror !== undefined && entry.mirror !== m.mirror) { entry.mirror = m.mirror; metaChanged = true; }
       if (metaChanged) refreshed += 1;
     }
     saveRepoCache(cache);

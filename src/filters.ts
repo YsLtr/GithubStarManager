@@ -4,6 +4,7 @@ import {
   NATIVE_PAGE_SIZE,
   SORT_OPTIONS,
   TRIANGLE_DOWN_SVG,
+  TYPE_OPTIONS,
 } from './constants';
 import { getNativeFilterBar, getNativeFilterRow, getStarsMainColumn } from './dom';
 import { filterState, hasActiveFilter } from './state';
@@ -14,19 +15,19 @@ import { buildCardFromCache, createStarButtonForCached } from './ui/cards';
 import { renderNotes } from './ui/notes';
 import { refreshTagPillStates, renderTagFilterBar, renderTags } from './ui/tagFilter';
 import { escapeHtml } from './utils';
-import type { FilteredRepo } from './types';
+import type { FilteredRepo, RepoData, TypeFilter } from './types';
 
 /**
- * 筛选/排序引擎（4.1.0 全本地化）：
- * - `queryRepos()`：唯一查询管线（lang → tags AND → search → 排序），
+ * 筛选/排序引擎（4.1.0 全本地化；4.2.0 Type 接管）：
+ * - `queryRepos()`：唯一查询管线（type → lang → tags AND → search → 排序），
  *   browse 态、标签筛选、搜索、facet 候选计算全部走它（R2）；
  * - `sortResults()`：4 排序键 × asc/desc + 缺失值恒沉底 + 名称决胜（R1/R4/R5）；
  * - `initFiltersFromUrl()`：进页时从 URL 参数初始化（URL 只读不写，R6/D3）；
- * - `updateLocalFilterControls()`：常驻本地 Language / Sort(+方向) 接管原生菜单。
+ * - `updateLocalFilterControls()`：常驻本地 Type/Language/Sort(+方向) 接管原生菜单。
  */
 
-/** facet 候选计算时可跳过的约束维度（4.2.0 扩展 'type'） */
-export type QuerySkip = 'lang';
+/** facet 候选计算时可跳过的约束维度 */
+export type QuerySkip = 'lang' | 'type';
 
 /**
  * 按 filterState.sort/direction 就地排序。
@@ -60,7 +61,30 @@ function sortResults(results: FilteredRepo[]): void {
   });
 }
 
-/** 唯一查询管线：lang 约束 → tags AND → search 全文 → 排序。skip = 算该 facet 候选时忽略自身约束（D1 替换语义）。 */
+/**
+ * Type 判定（4.2.0）：对齐原生 7 项（Can be sponsored 无 API 字段，D2 已定案省略）。
+ * 四标志缺省（undefined）按 false 处理——4.2.0 升级回补阀门保证 star 条目首轮整表后必有值。
+ */
+function typeMatches(data: RepoData, type: TypeFilter): boolean {
+  switch (type) {
+    case 'public':
+      return !data.private;
+    case 'private':
+      return !!data.private;
+    case 'source':
+      return !data.fork;
+    case 'fork':
+      return !!data.fork;
+    case 'mirror':
+      return !!data.mirror;
+    case 'template':
+      return !!data.isTemplate;
+    default:
+      return true;
+  }
+}
+
+/** 唯一查询管线：type → lang 约束 → tags AND → search 全文 → 排序。skip = 算该 facet 候选时忽略自身约束（D1 替换语义）。 */
 export function queryRepos(skip?: QuerySkip): FilteredRepo[] {
   const cache = loadRepoCache();
   const allTags = loadAllTags();
@@ -70,6 +94,8 @@ export function queryRepos(skip?: QuerySkip): FilteredRepo[] {
 
   for (const repoId in cache) {
     const data = cache[repoId];
+    // Type 筛选（单选，替换语义）
+    if (skip !== 'type' && filterState.type && !typeMatches(data, filterState.type)) continue;
     // 语言筛选（单选，替换语义）
     if (
       skip !== 'lang' &&
@@ -144,6 +170,21 @@ export function computeLanguageCandidates(): string[] {
   }
   if (filterState.lang) langs.add(filterState.lang);
   return Array.from(langs).sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Type 候选（单选替换语义，同上忽略自身当前值）：
+ * `queryRepos('type')` 结果里能命中的 type 值 ∪ 当前 type；菜单顺序固定为原生序。
+ */
+export function computeTypeCandidates(): TypeFilter[] {
+  const present = new Set<TypeFilter>();
+  for (const { data } of queryRepos('type')) {
+    for (const opt of TYPE_OPTIONS) {
+      if (typeMatches(data, opt.value)) present.add(opt.value);
+    }
+  }
+  if (filterState.type) present.add(filterState.type); // 已选恒可见（可切回 All）
+  return TYPE_OPTIONS.map((o) => o.value).filter((v) => present.has(v));
 }
 
 /** 4.0.0 纯本地浏览态：缓存 → 查询管线 → 切页渲染（无筛选激活时分页浏览全部缓存） */
@@ -225,7 +266,7 @@ function highlightMatchesInCard(card: HTMLElement, terms: string[]): void {
   });
 }
 
-/** 渲染结果计数信息条（含 Clear filter）：tags/lang/search 任一激活即出现 */
+/** 渲染结果计数信息条（含 Clear filter）：tags/lang/type/search 任一激活即出现 */
 export function renderFilterInfoBar(count: number): void {
   // 移除旧信息条
   document.querySelectorAll('.stars-tag-info-bar').forEach((el) => el.remove());
@@ -256,6 +297,10 @@ export function renderFilterInfoBar(count: number): void {
   }
   if (filterState.tags.length > 0) {
     desc += ' with tags: ' + filterState.tags.map((t) => '<strong>' + escapeHtml(t) + '</strong>').join(', ');
+  }
+  if (filterState.type) {
+    const label = TYPE_OPTIONS.find((o) => o.value === filterState.type)?.label || filterState.type;
+    desc += ' · type: <strong>' + escapeHtml(label) + '</strong>';
   }
   if (filterState.lang) {
     desc += ' · language: <strong>' + escapeHtml(filterState.lang) + '</strong>';
@@ -288,7 +333,7 @@ export function applyFilters(): void {
   const gridContainer = document.querySelector('.stars-grid-container');
   const paginator = gridContainer ? gridContainer.querySelector<HTMLElement>('.paginate-container') : null;
 
-  // 常驻本地控件（Language / Sort+方向）：状态驱动重建，同时保证原生菜单持续隐藏
+  // 常驻本地控件（Type / Language / Sort+方向）：状态驱动重建，同时保证原生菜单持续隐藏
   updateLocalFilterControls();
 
   // 2. 无任何筛选激活（sort/direction 属浏览状态）→ browse 态：本地分页
@@ -310,7 +355,7 @@ export function applyFilters(): void {
     return;
   }
 
-  // 3. 筛选态（tags/lang/search 任一激活）：结果平铺不分页（D5）
+  // 3. 筛选态（tags/lang/type/search 任一激活）：结果平铺不分页（D5）
   cards.forEach((card) => card.classList.add('stars-tag-filtered'));
   if (paginator) paginator.style.display = 'none';
   // 顶部分页器同藏（它在 headerRow 里，不在 gridContainer 内）
@@ -350,10 +395,11 @@ export function applyFilters(): void {
   renderFilterInfoBar(results.length);
 }
 
-/** 退出全部筛选（Clear filter 本地化）：清 tags/lang/search，保留 sort/direction（D4）→ 干净地址栏 */
+/** 退出全部筛选（Clear filter 本地化）：清 tags/lang/type/search，保留 sort/direction（D4）→ 干净地址栏 */
 export function exitCustomMode(): void {
   filterState.tags = [];
   filterState.lang = '';
+  filterState.type = '';
   filterState.searchQuery = '';
   filterState.page = 1;
   const searchInput = document.querySelector<HTMLInputElement>(
@@ -372,16 +418,19 @@ export function exitCustomMode(): void {
 /* ================================================================
  * URL 入口匹配（R6）：URL 只读不写（D3）。
  *
- * 进页 / turbo 到达时解析 sort/direction/language 初始化 filterState；
+ * 进页 / turbo 到达时解析 sort/direction/language/type 初始化 filterState；
  * 防覆盖：只在「筛选相关参数」变化时才覆盖状态 —— frame 重渲染、
- * exitCustomMode 的 pushState、原生菜单写入的无关参数（如 type）都不会
- * 冲掉用户本地选择。q 沿用 search.ts 现有自动激活，不在此处理。
+ * exitCustomMode 的 pushState、无关参数（page 等）都不会冲掉用户本地选择。
+ * q 沿用 search.ts 现有自动激活，不在此处理。
  * ================================================================ */
 let lastParsedUrlSignature: string | null = null;
 
 function urlFilterSignature(): string {
   const p = new URLSearchParams(location.search);
-  return `sort=${p.get('sort') ?? ''}|direction=${p.get('direction') ?? ''}|language=${p.get('language') ?? ''}`;
+  return (
+    `sort=${p.get('sort') ?? ''}|direction=${p.get('direction') ?? ''}|` +
+    `language=${p.get('language') ?? ''}|type=${p.get('type') ?? ''}`
+  );
 }
 
 /** 把当前 URL 的筛选参数登记为「已解析」（下次不覆盖状态） */
@@ -389,7 +438,7 @@ function markUrlParsed(): void {
   lastParsedUrlSignature = urlFilterSignature();
 }
 
-/** 进页时 Sort/方向/语言 与 URL 参数匹配（仅 URL 筛选参数变化时覆盖本地状态） */
+/** 进页时 Sort/方向/语言/Type 与 URL 参数匹配（仅 URL 筛选参数变化时覆盖本地状态） */
 export function initFiltersFromUrl(): void {
   const sig = urlFilterSignature();
   if (sig === lastParsedUrlSignature) return;
@@ -405,23 +454,37 @@ export function initFiltersFromUrl(): void {
   filterState.direction = p.get('direction') === 'asc' ? 'asc' : 'desc';
   // URLSearchParams 已解码（`jupyter+notebook` → 空格、`c%23` → `c#`），匹配时大小写不敏感
   filterState.lang = p.get('language') || '';
+  const type = p.get('type');
+  filterState.type =
+    type === 'public' ||
+    type === 'private' ||
+    type === 'source' ||
+    type === 'fork' ||
+    type === 'mirror' ||
+    type === 'template'
+      ? type
+      : '';
   filterState.page = 1;
 }
 
 /* ================================================================
- * 常驻本地筛选控件（R2 + R5）：一次性接管，不再随「自定义模式」切换
+ * 常驻本地筛选控件（R2 + R5，4.2.0 Type 接管）：一次性接管，不再随模式切换
  * ================================================================ */
 
-/** 常驻隐藏原生 Language/Sort action-menu（节点保留：getNativeFilterRow 依赖其锚点；Type 4.2.0 接管后一并隐藏） */
+/** 常驻隐藏原生 Type/Language/Sort action-menu（节点保留：getNativeFilterRow 依赖其锚点） */
 function hideNativeFilterMenus(): void {
-  for (const id of ['stars-language-filter-menu-button', 'stars-sort-menu-button']) {
+  for (const id of [
+    'stars-type-filter-menu-button',
+    'stars-language-filter-menu-button',
+    'stars-sort-menu-button',
+  ]) {
     const btn = document.getElementById(id);
     const menu = btn ? btn.closest('action-menu') : null;
     if (menu instanceof HTMLElement) menu.style.display = 'none';
   }
 }
 
-/** 重建常驻本地控件（Language 菜单 + Sort 合并组）；幂等，applyFilters 每次调用 */
+/** 重建常驻本地控件（Type / Language 菜单 + Sort 合并组）；幂等，applyFilters 每次调用 */
 function updateLocalFilterControls(): void {
   hideNativeFilterMenus();
   document.querySelectorAll('.stars-custom-filter').forEach((el) => el.remove());
@@ -429,21 +492,93 @@ function updateLocalFilterControls(): void {
   const filterRow = getNativeFilterRow();
   if (!filterRow) return;
 
-  // 插入锚点：原生 Type 菜单之后（视觉位置 = Tags 之后第 2 位）；4.2.0 本地 Type 接管后自然落到 Tags 之后
-  const typeMenu = document.getElementById('stars-type-filter-menu-button')?.closest('action-menu');
+  // 布局 [Tags][Type][Language][Sort by│↓]：锚点 = Tags 之后（无 Tags 时行首）
   const tagFilter = filterRow.querySelector('.stars-tag-filter');
-  const anchorNode: ChildNode | null =
-    (typeMenu instanceof HTMLElement ? typeMenu : null) || tagFilter || filterRow.firstChild;
+  const anchorNode: ChildNode | null = tagFilter || filterRow.firstChild;
 
+  const typeContainer = buildTypeMenu();
   const langContainer = buildLangMenu();
   const sortContainer = buildSortGroup();
   if (anchorNode && anchorNode.parentNode === filterRow) {
-    filterRow.insertBefore(langContainer, anchorNode.nextSibling);
-    filterRow.insertBefore(sortContainer, langContainer.nextSibling);
+    filterRow.insertBefore(typeContainer, anchorNode.nextSibling);
   } else {
-    filterRow.appendChild(langContainer);
-    filterRow.appendChild(sortContainer);
+    filterRow.appendChild(typeContainer);
   }
+  filterRow.insertBefore(langContainer, typeContainer.nextSibling);
+  filterRow.insertBefore(sortContainer, langContainer.nextSibling);
+}
+
+/** 自定义 Type 按钮 + 菜单（候选 = computeTypeCandidates 动态收窄，D1 替换语义；All 恒在） */
+function buildTypeMenu(): HTMLElement {
+  const typeContainer = document.createElement('div');
+  typeContainer.className = 'stars-custom-filter mb-1 mb-lg-0';
+
+  const activeOpt = TYPE_OPTIONS.find((o) => o.value === filterState.type);
+  const typeBtnEl = document.createElement('button');
+  typeBtnEl.type = 'button';
+  typeBtnEl.id = 'stars-custom-type-button';
+  typeBtnEl.setAttribute('popovertarget', 'stars-custom-type-overlay');
+  typeBtnEl.setAttribute('aria-haspopup', 'true');
+  typeBtnEl.className = 'Button--secondary Button--medium Button';
+  if (filterState.type) typeBtnEl.classList.add('has-active');
+  typeBtnEl.innerHTML =
+    '<span class="Button-content"><span class="Button-label"></span></span>' +
+    '<span class="Button-visual Button-trailingAction">' +
+    TRIANGLE_DOWN_SVG +
+    '</span>';
+  const typeLabelEl = typeBtnEl.querySelector('.Button-label');
+  if (typeLabelEl) typeLabelEl.textContent = activeOpt ? 'Type: ' + activeOpt.label : 'Type';
+
+  const typeOverlay = document.createElement('anchored-position');
+  typeOverlay.id = 'stars-custom-type-overlay';
+  typeOverlay.setAttribute('anchor', 'stars-custom-type-button');
+  typeOverlay.setAttribute('align', 'start');
+  typeOverlay.setAttribute('side', 'outside-bottom');
+  typeOverlay.setAttribute('anchor-offset', 'normal');
+  typeOverlay.setAttribute('popover', 'auto');
+
+  const typeInner = document.createElement('div');
+  typeInner.className = 'Overlay Overlay--size-auto';
+  const typeBody = document.createElement('div');
+  typeBody.className = 'Overlay-body Overlay-body--paddingNone';
+  const typeList = document.createElement('ul');
+  typeList.className = 'ActionListWrap--inset ActionListWrap';
+  typeList.setAttribute('role', 'menu');
+
+  const addItem = (label: string, value: TypeFilter): void => {
+    const li = document.createElement('li');
+    li.className = 'ActionListItem';
+    li.setAttribute('role', 'none');
+    const content = document.createElement('a');
+    content.className = 'ActionListContent';
+    content.setAttribute('role', 'menuitemradio');
+    content.setAttribute('aria-checked', String(filterState.type === value));
+    const labelEl = document.createElement('span');
+    labelEl.className = 'ActionListItem-label';
+    labelEl.textContent = label;
+    content.appendChild(labelEl);
+    content.addEventListener('click', (e) => {
+      e.preventDefault();
+      filterState.type = value;
+      typeOverlay.hidePopover();
+      applyFilters();
+    });
+    li.appendChild(content);
+    typeList.appendChild(li);
+  };
+
+  addItem('All', '');
+  for (const value of computeTypeCandidates()) {
+    const opt = TYPE_OPTIONS.find((o) => o.value === value);
+    if (opt) addItem(opt.label, value);
+  }
+
+  typeBody.appendChild(typeList);
+  typeInner.appendChild(typeBody);
+  typeOverlay.appendChild(typeInner);
+  typeContainer.appendChild(typeBtnEl);
+  typeContainer.appendChild(typeOverlay);
+  return typeContainer;
 }
 
 /** 自定义 Language 按钮 + 菜单（候选 = computeLanguageCandidates 动态收窄，D1 替换语义） */
@@ -538,7 +673,7 @@ function buildLangMenu(): HTMLElement {
 /**
  * Sort 合并组（R5 split button）：左段 = Sort by 菜单，右段 = 纯方向 icon
  * （无文字，点击切换 asc/desc），中间只有一条竖线分隔（CSS 边框重叠）。
- * asc（非默认）时整组 has-active 高亮。
+ * 方向态只由 icon（↑/↓）表达——不加 has-active 蓝圈（用户 4.2.0 反馈：多余）。
  */
 function buildSortGroup(): HTMLElement {
   const sortContainer = document.createElement('div');
@@ -546,7 +681,6 @@ function buildSortGroup(): HTMLElement {
 
   const group = document.createElement('div');
   group.className = 'gsm-sort-group';
-  if (filterState.direction === 'asc') group.classList.add('has-active');
 
   // --- 左段：Sort by 菜单 ---
   const sortBtnEl = document.createElement('button');

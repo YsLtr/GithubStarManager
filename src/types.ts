@@ -13,6 +13,14 @@ export interface RepoData {
   starredAt?: string;
   /** ISO 时间戳，用于排序 */
   updatedAt?: string;
+  /** Type 筛选四标志（4.2.0）：REST repo 对象的 private / fork / is_template / mirror_url，parseItem 回填 */
+  private?: boolean;
+  /** 是否 fork（API `fork`） */
+  fork?: boolean;
+  /** 是否模板（API `is_template`） */
+  isTemplate?: boolean;
+  /** 是否镜像（API `mirror_url != null`） */
+  mirror?: boolean;
   /** 缓存写入时间 */
   ts?: number;
   /** 仅在待删除区条目上存在 */
@@ -45,6 +53,9 @@ export type SortKey = 'stars' | 'updated' | 'created' | 'forks';
 
 /** 排序方向（desc = 默认；asc = 反向，缺失值仍恒沉底） */
 export type SortDirection = 'desc' | 'asc';
+
+/** Type 筛选（'' = All；对齐原生 7 个可判项，D2 已定案省略 Can be sponsored） */
+export type TypeFilter = '' | 'public' | 'private' | 'source' | 'fork' | 'mirror' | 'template';
 
 /** P4 全量同步元数据（4.0.0 API 主模式：ETag 条件快筛 + TTL 兜底 + 本地分页总数） */
 export interface FullSyncMeta {
