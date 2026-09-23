@@ -100,35 +100,40 @@ export function onExternalUnstarConfirmed(fn: ConfirmedHandler): void {
 }
 
 /**
- * 双 404 确认外部 unstar：走与脚本内 unstar 相同的宽限区管线
+ * 确认外部 unstar：走与脚本内 unstar 相同的宽限区管线
  * （缓存条目移入 pendingDelete + 标签/备注备份后清空），复 star 可完整恢复。
- * 幂等：已在 pendingDelete 中则不重复写。
+ * 幂等 + 自愈：已在 pendingDelete 中不重复写入区，但**仍清掉缓存中的回写脏态**
+ * （详情页提取等路径可能把已取关仓库写回缓存，与宽限区并存 → 整表 diff 每轮重复计数，
+ * 实测案例：zai-org/ZCode 每次同步恒报 1 个外部 unstar）。
+ * @returns 是否「新确认」（首次入宽限区）；已在宽限区的自愈返回 false，供计数去重。
  */
-function confirmExternalUnstar(repoId: string, path: string): void {
+function confirmExternalUnstar(repoId: string, path: string): boolean {
   const pending: PendingDeleteMap = loadPendingDelete();
-  if (pending[repoId]) return;
-
+  const existed = !!pending[repoId];
   const cache: RepoCache = loadRepoCache();
-  const entry: PendingDeleteMap[string] = Object.assign({}, cache[repoId] || { name: path.replace(/^\//, '') }, {
-    unstarredAt: Date.now(),
-    _tags: getTags(repoId),
-    _note: getNote(repoId),
-  });
-  pending[repoId] = entry;
-  savePendingDelete(pending);
+  if (!existed) {
+    pending[repoId] = Object.assign({}, cache[repoId] || { name: path.replace(/^\//, '') }, {
+      unstarredAt: Date.now(),
+      _tags: getTags(repoId),
+      _note: getNote(repoId),
+    });
+    savePendingDelete(pending);
+  }
   if (cache[repoId]) {
     delete cache[repoId];
     saveRepoCache(cache);
   }
   if (getTags(repoId).length > 0) saveTags(repoId, []);
   if (getNote(repoId)) saveNote(repoId, '');
-
-  console.log(
-    `[github-stars-grid] ★ 核对确认外部 unstar: ${path}（标签/备注已备份入 24h 宽限期区，` +
-      '期间在详情页重新 star 可恢复）'
-  );
-  onConfirmed?.(repoId);
+  if (!existed) {
+    console.log(
+      `[github-stars-grid] ★ 核对确认外部 unstar: ${path}（标签/备注已备份入 24h 宽限期区，` +
+        '期间在详情页重新 star 可恢复）'
+    );
+    onConfirmed?.(repoId);
+  }
   updateGridCard(repoId);
+  return !existed;
 }
 
 /** 视图同步：卡片原地翻成未 star 态并刷新标签/备注（与手动点星星按钮的表现一致） */
@@ -156,9 +161,12 @@ function updateGridCard(repoId: string): void {
 
 /* ---------------- P4 全量同步的复用入口 ---------------- */
 
-/** P4 整表已确认的外部 unstar（远端权威，跳过逐条双 404；管线与核对确认完全一致） */
-export function applyExternalUnstar(repoId: string, path: string): void {
-  confirmExternalUnstar(repoId, path);
+/**
+ * P4 整表已确认的外部 unstar（远端权威，跳过逐条双 404；管线与核对确认完全一致）。
+ * @returns 是否「新确认」；false = 已在宽限区的缓存回写脏态自愈，不计入本轮 unstar 计数。
+ */
+export function applyExternalUnstar(repoId: string, path: string): boolean {
+  return confirmExternalUnstar(repoId, path);
 }
 
 /** P4 写裁决（unstarred 7d / starred 24h 内免重复核对） */

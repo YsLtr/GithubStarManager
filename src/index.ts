@@ -8,7 +8,7 @@ import { extractAndCacheRepoFromDetailPage } from './extract';
 import { exitCustomMode } from './filters';
 import { hasApiData, registerSyncMenu, runFullSync, scheduleProbeSync } from './fullSync';
 import { interceptPagination } from './pagination';
-import { promptForToken, registerTokenMenu } from './starCheck';
+import { registerTokenMenu } from './starCheck';
 import {
   notifyTokenSaved,
   openTokenCreator,
@@ -225,8 +225,8 @@ function transformAndReveal(animate: boolean, retries = 12): void {
 
 /**
  * 4.0.0 配置横幅：无全量缓存（首次升级 / 未配 token）时显示在列表上方。
- * 「设置 token」打开 TM 菜单同款输入框；保存成功自动全量同步，手动同步入口只在 TM 菜单，
- * 成功后 hasApiData 变 true → 重新 transformAndReveal 出网格。
+ * 内联填 token 框常驻（401/403 自动出现）+ 快速获取 + 立即同步按钮（4.0.4 恢复；原「手动设置」
+ * prompt 按钮按用户更正移除）；保存成功自动全量同步 → hasApiData 变 true → 重新出网格。
  */
 function showSetupBanner(issueDetail?: string): void {
   const exist = document.querySelector<HTMLElement>('.gsm-setup-banner');
@@ -245,9 +245,9 @@ function showSetupBanner(issueDetail?: string): void {
   bar.className = 'gsm-setup-banner';
   bar.innerHTML = '<span class=gsm-setup-msg></span>';
   bar.querySelector('.gsm-setup-msg')!.textContent = bannerMessage(issueDetail);
-  const setup = document.createElement('button');
+  const sync = document.createElement('button');
 
-  // 快捷获取：官方 Template URL 预填 Starring: write 最小权限；生成复制后回粘（粘贴行默认收起，点快捷键展开）
+  // 快捷获取：官方 Template URL 预填 Starring: write 最小权限；生成复制后回粘（填 token 框常驻显示，点快捷键聚焦）
   const quick = document.createElement('button');
   quick.className = 'btn btn-primary';
   quick.type = 'button';
@@ -261,7 +261,7 @@ function showSetupBanner(issueDetail?: string): void {
 
   const tokRow = document.createElement('span');
   tokRow.className = 'gsm-token-row';
-  tokRow.hidden = true;
+  tokRow.hidden = false; // 4.0.4：填 token 框常驻（401/403 后面板一出现即可直接粘贴）
   const tokInput = document.createElement('input');
   tokInput.type = 'text';
   tokInput.spellcheck = false;
@@ -288,13 +288,16 @@ function showSetupBanner(issueDetail?: string): void {
     notifyTokenSaved();
   });
   tokRow.append(tokInput, tokMsg, tokPaste, tokSave);
-  setup.className = 'btn';
-  setup.type = 'button';
-  setup.textContent = '手动设置';
-  setup.addEventListener('click', () => promptForToken());
+  sync.className = 'btn';
+  sync.type = 'button';
+  sync.textContent = '立即同步';
+  sync.title = '用当前 Token 立即比对 GitHub（逐页 ETag 快筛，无变化零流量）';
+  sync.addEventListener('click', () => {
+    void runFullSync('button');
+  });
 
 
-  bar.append(quick, setup, tokRow);
+  bar.append(quick, sync, tokRow);
   // 顶窗落位：替换 Lists 槽位里的空态（0 个 list）或已建 list 容器（有 list 时该容器
   // 本就被 hideListsSection/CSS 隐藏）；都不在则退回旧行为挂列首
   const slot = document.querySelector('#user-profile-frame > div');

@@ -1,6 +1,7 @@
 import { getRepoItems, getStarsMainColumn, hideListsSection } from './dom';
 import { applyFilters } from './filters';
 import { interceptSearchForm } from './search';
+import { mountSyncButton } from './fullSync';
 import { renderTagFilterBar } from './ui/tagFilter';
 import { isDesktop } from './utils';
 
@@ -39,7 +40,9 @@ export function transformStarsList(): boolean {
   gridContainer.appendChild(buildLocalPager());
   colLg9.appendChild(gridContainer);
   // “Starred repositories” 标题行右侧复制一份分页器（免滚动到底部才能翻页）
-  mountTopPager(colLg9, gridContainer);
+  const headerRow = mountTopPager(colLg9, gridContainer);
+  // 同步按钮（4.0.4 恢复）：贴在顶部翻页器左侧
+  if (headerRow) mountSyncButton(headerRow);
 
   // 将 Starred topics 移到右侧边栏
   const colLg3 = turboFrame.querySelector('.col-lg-3');

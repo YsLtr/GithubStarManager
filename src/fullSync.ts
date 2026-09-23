@@ -18,14 +18,14 @@
 // 完整性红线：分页中断 / 解析失败 / 超页数上限一律整体放弃（catch 里不改任何数据）——
 // 半张表绝不能当整表用，否则未拉到的页会被全部误判成外部 unstar。
 //
-// 触发：TM 菜单「🔄 立即全量同步」（手动，无 token 先弹配置）+ 进页 ETag 探测到变化时自动；
-// （runFullSync 首页同样带 If-None-Match：304 免额度直接跳过整表）。写放大控制：交集回填 load/save 各一次整表，
+// 触发：TM 菜单「🔄 立即全量同步」/ 配置横幅「立即同步」/ 标题行 Sync（手动，无 token 先弹配置）+ 进页自动（2s 后，60s 冷却，逐页 ETag 快筛）。
+// 「立即同步」各入口；runFullSync 先逐页 If-None-Match 条件快筛（304 不计主限流，全部 304 免额度退出），命中才整表。
 // 新增/恢复/确认各自走既有管线（写次数 = 差异数）。
 //
 // 已知局限：classic token 无 repo scope 时私有仓库的 star 不在列表里 → 会被误判
 // unstar（与 P2.5 核对的 404 歧义同源）；fine-grained 选 All repositories 无此问题。
 
-import { STORAGE_KEYS } from './constants';
+import { STORAGE_KEYS, SYNC_SVG } from './constants';
 import { gmGet, gmRegisterMenuCommand, gmSet } from './gm';
 import { applyExternalUnstar, getGitHubPat, promptForToken, recordVerdict } from './starCheck';
 import { notifyTokenIssue } from './tokenConfig';
@@ -63,6 +63,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+/** etag 规范化：GitHub 现返回 weak 形式 W/"..."；RFC 7232 §2.3.2 弱比较下与 "..." 等价（curl 原样/去 W/ 双测 + 浏览器 cache:no-store 实测均回 304）。统一剥 W/ → 存储字段干净、发送形式一致。 */
+function normEtag(e: string): string {
+  return e.startsWith('W/') ? e.slice(2) : e;
+}
+
 /** star+json 条目 → 内部结构；防御 repository / repo / 裸 repo 对象三种形态 */
 function parseItem(raw: unknown): RemoteStar | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -87,26 +92,23 @@ function parseItem(raw: unknown): RemoteStar | null {
   };
 }
 
-/** 分页拉全量；任何不完整信号都抛错（调用方保证不落地半张表） */
-async function pullAllStarred(tok: string, ifNoneMatch?: string): Promise<{ items: RemoteStar[]; pages: number; etag: string | undefined; notModified?: boolean }> {
+/** 分页拉全量（无条件整表）；任何不完整信号都抛错（调用方保证不落地半张表）。逐页收集 ETag 作快筛基线。 */
+async function pullAllStarred(tok: string): Promise<{ items: RemoteStar[]; pages: number; etag: string | undefined; etags: string[] }> {
   const items: RemoteStar[] = [];
   let pages = 0;
   let rawSeen = 0;
   let parseMisses = 0;
   let etag: string | undefined;
+  const etags: string[] = [];
   for (let page = 1; page <= MAX_PAGES; page++) {
     const resp = await fetch(`https://api.github.com/user/starred?per_page=${PAGE_SIZE}&page=${page}`, {
       cache: 'no-store', // 不读不写浏览器缓存：否则 60s 内的缓存命中/304 合并会让 JS 看到假 200
       headers: {
-        ...(ifNoneMatch ? { 'If-None-Match': ifNoneMatch } : {}),
         Authorization: `Bearer ${tok}`,
         Accept: 'application/vnd.github.star+json',
         'X-GitHub-Api-Version': '2022-11-28',
       },
     });
-    // 首页 ETag 抓一次（后续 probeAndSync 的 If-None-Match 基线）
-    if (page === 1) etag = resp.headers.get('etag') ?? undefined;
-    if (page === 1 && resp.status === 304) return { items: [], pages: 0, etag, notModified: true };
     if (resp.status === 401) {
       notifyTokenIssue('401 Bad credentials：Token 已失效或被撤销');
       throw new Error('token 无效（401），已上报到初始化面板');
@@ -134,6 +136,10 @@ async function pullAllStarred(tok: string, ifNoneMatch?: string): Promise<{ item
       throw new Error(`速率余量 ${remaining} < ${RATE_FLOOR}，本次放弃（留量给核对队列）`);
     }
 
+    // 收集每页 ETag（4.0.4 逐页快筛基线）；首页另存 etag 兼容旧字段
+    const pageEtag = normEtag(resp.headers.get('etag') || ''); // 4.0.5 剥 W/ weak前缀，存强校验规范形
+    if (page === 1) etag = pageEtag || undefined;
+    etags.push(pageEtag);
     const body: unknown = await resp.json();
     if (!Array.isArray(body)) throw new Error('响应不是数组（Accept 头未生效？）');
     pages += 1;
@@ -156,7 +162,7 @@ async function pullAllStarred(tok: string, ifNoneMatch?: string): Promise<{ item
   if (rawSeen > 0 && items.length === 0) {
     throw new Error(`拉到 ${rawSeen} 条但解析为 0（响应形态不符），整体放弃`);
   }
-  return { items, pages, etag };
+  return { items, pages, etag, etags };
 }
 
 /** 仍 star 的位移挂起直接结案（成员关系已被整表证实；unstar 的由宽限管线清） */
@@ -173,6 +179,101 @@ function clearShiftPendingForStarred(starredIds: Set<string>): number {
   return n;
 }
 
+/** starred 列表第 page 页 URL */
+function pageUrl(page: number): string {
+  return `https://api.github.com/user/starred?per_page=${PAGE_SIZE}&page=${page}`;
+}
+
+
+/** 快筛判定：unchanged=逐页全 304（无变化免额度）；changed-byte=任一页 200 字节已变（可能仅元数据抖动）→ 整表比对确认；
+ *  changed=结构性变化（尾页变长/基线缺失/超 48h TTL）；error=网络/鉴权问题本次跳过 */
+type QuickVerdict = 'unchanged' | 'changed' | 'changed-byte' | 'error';
+
+/**
+ * 逐页 ETag 条件快筛（4.0.4，修「首页 304 就跳过、中部变化漏检」）：
+ * - 每页各带自己的 If-None-Match（官方每页独立 ETag；304 不计主限流）；全部 304 才算无变化；
+ * - 任一页 200 = 有变化即停（位移会让后续页全部失效，不浪费请求）→ 调用方整表；
+ * - 基线之外再无条件探一页：有条目 = 总数变长（新增落点不可预设）仍判有变化；
+ * - 基线缺失/含空值、超 48h TTL → 直接 changed（整表重建基线）；
+ * - 401 / 403（非限速）→ notifyTokenIssue 上报初始化面板（常驻填 token 框），返回 error。
+ */
+async function quickCheck(tok: string, meta: FullSyncMeta): Promise<QuickVerdict> {
+  if (!meta.lastFullSyncAt || Date.now() - meta.lastFullSyncAt > FULL_SYNC_TTL_MS) {
+    console.log(`[github-stars-grid] ETag 快筛跳过（${meta.lastFullSyncAt ? '超 48h TTL' : '无基线'}）→ 整表同步`);
+    return 'changed';
+  }
+  const etags = meta.etags?.map(normEtag); // 存量 W/ 前缀读取时统一剥掉（弱比较等价，实测 304）
+  if (!etags || etags.length === 0 || etags.some((e) => !e)) {
+    console.log('[github-stars-grid] ETag 快筛：无逐页基线（旧版单 etag 或缺数据）→ 整表重建基线');
+    return 'changed';
+  }
+  for (let i = 0; i < etags.length; i++) {
+    let resp: Response;
+    try {
+      resp = await fetch(pageUrl(i + 1), {
+        cache: 'no-store',
+        headers: {
+          Authorization: `Bearer ${tok}`,
+          Accept: 'application/vnd.github.star+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'If-None-Match': etags[i],
+        },
+      });
+    } catch (err) {
+      console.log('[github-stars-grid] ETag 快筛网络失败，本次跳过:', err instanceof Error ? err.message : err);
+      return 'error';
+    }
+    if (resp.status === 200) {
+      console.log(`[github-stars-grid] ETag 快筛：第 ${i + 1} 页 200 → 字节已变（可能只是仓库元数据抖动，非收藏变动）→ 整表比对确认`);
+      return 'changed-byte';
+    }
+    if (resp.status !== 304) {
+      reportAuthIssue(resp);
+      console.log(`[github-stars-grid] ETag 快筛 HTTP ${resp.status}，本次跳过`);
+      return 'error';
+    }
+    if (i < etags.length - 1) await sleep(PAGE_GAP_MS);
+  }
+  // 尾页之外再探一页（无条件）：有条目 = 总数变长，仍判有变化
+  try {
+    const extra = await fetch(pageUrl(etags.length + 1), {
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${tok}`,
+        Accept: 'application/vnd.github.star+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    });
+    if (extra.status !== 200) {
+      reportAuthIssue(extra);
+      console.log(`[github-stars-grid] ETag 快筛尾页 HTTP ${extra.status}，本次跳过`);
+      return 'error';
+    }
+    const tail: unknown = await extra.json();
+    if (Array.isArray(tail) && tail.length > 0) {
+      console.log(`[github-stars-grid] ETag 快筛：尾页之外还有 ${tail.length} 条 → 列表变长，整表同步`);
+      return 'changed';
+    }
+  } catch (err) {
+    console.log('[github-stars-grid] ETag 快筛尾页探测失败，本次跳过:', err instanceof Error ? err.message : err);
+    return 'error';
+  }
+  return 'unchanged';
+}
+
+/** 鉴权失败统一上报：401 与非限速 403 → 初始化面板（常驻填 token 框）；限速类只由上层日志 */
+function reportAuthIssue(resp: Response): void {
+  if (resp.status === 401) {
+    notifyTokenIssue('401 Bad credentials：Token 已失效或被撤销');
+  } else if (resp.status === 403) {
+    const retryAfter = resp.headers.get('retry-after');
+    const exhausted = resp.headers.get('x-ratelimit-remaining') === '0';
+    if (!retryAfter && !exhausted) {
+      notifyTokenIssue('403 权限不足：fine-grained 需 Account permissions → Starring → Write + All repositories');
+    }
+  }
+}
+
 /** 手动/自动的共同入口；失败返回 null 且不改动任何数据 */
 export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummary | null> {
   if (syncing) return null;
@@ -187,19 +288,25 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
   }
 
   syncing = true;
-  console.log('[github-stars-grid] ★ P4 全量拉取开始（GET /user/starred，每页 100）…');
   try {
-    // ETag 查重（4.0.3）：任何入口（菜单/保存后/进页探测落空）的整表都先带 If-None-Match，
-    // 304 = 无变化免额度跳过；超 TTL 不带条件（强制全量刷新元数据）
+    // 条件快筛（4.0.4）：逐页 If-None-Match（每页独立 ETag），全部 304 才算无变化；
+    // 任一页 200 / 基线缺失或不完整 / 超 48h TTL → 整表。快筛中的 401/403（非限速）上报初始化面板。
     const storedMeta = gmGet<FullSyncMeta>(STORAGE_KEYS.fullSyncMeta, {});
-    const metaFresh = !!storedMeta.lastFullSyncAt && Date.now() - storedMeta.lastFullSyncAt <= FULL_SYNC_TTL_MS;
-    const ifNoneMatch = storedMeta.etag && metaFresh ? storedMeta.etag : undefined;
-    const { items, pages, etag, notModified } = await pullAllStarred(tok, ifNoneMatch);
-    if (notModified) {
-      console.log('[github-stars-grid] ETag 304：star 列表无变化（免额度），跳过整表比对');
-      gmSet(STORAGE_KEYS.fullSyncMeta, { etag: etag ?? ifNoneMatch, lastFullSyncAt: Date.now(), count: storedMeta.count ?? 0 });
+    const verdict = await quickCheck(tok, storedMeta);
+    if (verdict === 'unchanged') {
+      console.log(`[github-stars-grid] ETag 304：${(storedMeta.etags ?? []).length} 页全部无变化（免额度），跳过整表比对`);
+      // 修 304/200 交替：校验值发出去的就是服务端验证过的值，绝不从 304 响应头回读覆盖；
+      const healedEt = storedMeta.etags?.map(normEtag);
+      gmSet(STORAGE_KEYS.fullSyncMeta, {
+        ...storedMeta,
+        ...(healedEt ? { etags: healedEt } : {}),
+        lastFullSyncAt: Date.now(),
+      });
       return { pages: 0, total: storedMeta.count ?? 0, added: 0, restored: 0, unstarred: 0, backfilled: 0, shiftCleared: 0 };
     }
+    if (verdict === 'error') return null;
+    console.log('[github-stars-grid] ★ P4 全量拉取开始（GET /user/starred，每页 100）…');
+    const { items, pages, etag, etags } = await pullAllStarred(tok);
     const remoteMap = new Map(items.map((it) => [it.repoId, it]));
 
     // A. 外部 unstar：本地缓存有、远端无 → 整表即权威确认，走既有宽限管线
@@ -207,9 +314,10 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
     let unstarred = 0;
     for (const repoId of Object.keys(cacheBefore)) {
       if (remoteMap.has(repoId)) continue;
-      applyExternalUnstar(repoId, cacheBefore[repoId].name || '');
-      recordVerdict(repoId, 'unstarred');
-      unstarred += 1;
+      if (applyExternalUnstar(repoId, cacheBefore[repoId].name || '')) {
+        recordVerdict(repoId, 'unstarred');
+        unstarred += 1;
+      }
     }
 
     // B. 远端有、本地无：宽限区内 = re-star 恢复；否则 = 新 star 建条目
@@ -270,9 +378,11 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
         `元数据刷新 ${refreshed}、位移挂起结算 ${shiftCleared}`
     );
     document.querySelector('.gsm-setup-banner')?.remove(); // 同步成功即撤配置横幅（缓存已就绪）
-    // 写元数据：ETag 快筛基线 + lastFullSyncAt（TTL/isApiData 判定）+ 本地分页总数
-    gmSet(STORAGE_KEYS.fullSyncMeta, { etag, lastFullSyncAt: Date.now(), count: items.length });
-    console.log(`[github-stars-grid] ETag 基线：${etag ? '已保存（下次进页 304 免额度快筛）' : '未获得（响应无 etag 头，后续每次进页都会整表）'}`);
+    // 写元数据（4.0.5）：逐页 ETag 基线（剥 W/ 规范形）+ 首页 etag（兼容旧字段）+ lastFullSyncAt（TTL/isApiData）+ 总数；
+    const outMeta: FullSyncMeta = { etag, etags, lastFullSyncAt: Date.now(), count: items.length };
+    gmSet(STORAGE_KEYS.fullSyncMeta, outMeta);
+    const noEtag = etags.filter((e) => !e).length;
+    console.log(`[github-stars-grid] ETag 基线：${etags.length} 页已保存${noEtag ? `（${noEtag} 页响应缺 ETag 头，下次快筛直接整表）` : '（下次快筛逐页 304 免额度）'}`);
     return summary;
   } catch (err) {
     console.error(
@@ -285,11 +395,46 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
   }
 }
 
-/** TM 菜单：立即全量同步（唯一手动同步入口；横幅与标题行按钮已 4.0.3 移除，手动同步只留菜单） */
+/** TM 菜单手动同步入口（4.0.4：横幅「立即同步」与标题行 Sync 按钮同时恢复，三处等价） */
 export function registerSyncMenu(): void {
   gmRegisterMenuCommand('🔄 立即全量同步（GitHub API）', () => {
     void runFullSync('button');
   });
+}
+
+/** 标题行 Sync 按钮（4.0.4 恢复）：贴在顶部翻页器左侧，点击 → runFullSync('button') */
+export function mountSyncButton(row: HTMLElement): void {
+  row.querySelector('.gsm-sync-btn')?.remove();
+  const pager = row.querySelector('.gsm-top-pager');
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'Button Button--secondary Button--medium gsm-sync-btn';
+  btn.title = '同步 GitHub 全量 star 列表（逐页 ETag 快筛 + 整表比对 + 回填 star 时间）';
+  btn.innerHTML = SYNC_SVG + ' Sync';
+  btn.addEventListener('click', () => {
+    void syncFromButton(btn);
+  });
+
+  if (pager) row.insertBefore(btn, pager);
+  else row.appendChild(btn);
+}
+
+async function syncFromButton(btn: HTMLButtonElement): Promise<void> {
+  if (syncing || btn.classList.contains('gsm-pager-loading')) return;
+  btn.classList.add('gsm-pager-loading');
+  btn.setAttribute('aria-busy', 'true');
+  try {
+    const sum = await runFullSync('button');
+    if (sum) {
+      btn.title =
+        `上次同步：${sum.total} 个 star / ${sum.pages} 页 — 新增 ${sum.added}、恢复 ${sum.restored}、` +
+        `外部 unstar ${sum.unstarred}、回填 star 时间 ${sum.backfilled}`;
+    }
+  } finally {
+    btn.classList.remove('gsm-pager-loading');
+    btn.removeAttribute('aria-busy');
+  }
 }
 
 /** API 数据就绪 = 至少完整整表过一次（全量缓存可渲染 = API 主模式前提） */
@@ -306,49 +451,14 @@ export function scheduleProbeSync(): void {
 }
 
 /**
- * ETag 条件快筛 → 变更时整表：
- * - 距上次整表 < 48h 且有 etag → If-None-Match 探首页：304 = 无变化（免额度）直接返回；
- * - 200（有变化）/ 无 etag / 超 TTL → 整表（runFullSync 自己写新 etag）；
- * - 探测 401/403/网络失败 → 跳过本次（权限问题留给手动 Sync 报详细错误）。
+ * 进页自动同步（transform 成功后触发）：60s 冷却后走统一 runFullSync('auto')——
+ * 内部逐页条件快筛（全部 304 零开销退出），401/403（非限速）自动上报初始化面板。
  */
 async function probeAndSync(): Promise<void> {
   if (syncing) return;
   if (Date.now() - lastProbeAt < PROBE_COOLDOWN_MS) return;
-  const tok = getGitHubPat();
-  if (!tok) return;
+  if (!getGitHubPat()) return;
   lastProbeAt = Date.now();
-
-  const meta = gmGet<FullSyncMeta>(STORAGE_KEYS.fullSyncMeta, {});
-  const stale = !meta.lastFullSyncAt || Date.now() - meta.lastFullSyncAt > FULL_SYNC_TTL_MS;
-  if (meta.etag && !stale) {
-    let resp: Response;
-    try {
-      resp = await fetch(`https://api.github.com/user/starred?per_page=${PAGE_SIZE}&page=1`, {
-        cache: 'no-store', // 关键：否则浏览器可能直接回缓存 200（不发请求），或把 304 合并成 200 → 误判有变化
-        headers: {
-          Authorization: `Bearer ${tok}`,
-          Accept: 'application/vnd.github.star+json',
-          'X-GitHub-Api-Version': '2022-11-28',
-          'If-None-Match': meta.etag,
-        },
-      });
-    } catch (err) {
-      console.log('[github-stars-grid] ETag 探测网络失败，本次跳过:', err instanceof Error ? err.message : err);
-      return;
-    }
-    if (resp.status === 304) {
-      console.log('[github-stars-grid] ETag 304：star 列表无变化（免额度快筛）');
-      return;
-    }
-    if (resp.status !== 200) {
-      console.log(`[github-stars-grid] ETag 探测 HTTP ${resp.status}，本次跳过`);
-      return;
-    }
-    console.log('[github-stars-grid] ETag 探测 200：列表有变化 → 整表同步');
-  } else {
-    console.log('[github-stars-grid] ETag 快筛跳过（' + (meta.etag ? '超 TTL' : '无基线') + '）→ 整表同步');
-  }
-
   await runFullSync('auto');
 }
 

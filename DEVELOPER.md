@@ -69,10 +69,10 @@ src/
   gm.ts              GM API 兼容层（调用时判定；localStorage 兜底与迁移）
   boot.ts            document-start 防闪烁隐藏生命周期（FOUC）
   pagination.ts      本地分页拦截（4.0.0：只拦 data-gsm-page 零网络；原 fetch 换入路径已删）
-  starCheck.ts       PAT 菜单、裁决缓存、外部 unstar 宽限管线（4.0.0：双 404 核对队列已删，P4 整表即权威确认）
+  starCheck.ts       PAT 菜单、裁决缓存、外部 unstar 宽限管线（4.0.0：双 404 核对队列已删，P4 整表即权威确认；4.0.6：confirmExternalUnstar 幂等+自愈——已入宽限区不重复写区但**仍删缓存回写脏态**，applyExternalUnstar 返回「是否新确认」，整表 A 循环只对新确认 recordVerdict+计数，修复「每次同步恒外部 unstar 1」的并存脏态重复计数）
   tokenConfig.ts       快捷 Token 配置（Template URL 预填 starring=write + expires_in=90、剪贴板粘贴、保存回调）与 401/403(非限速) 失效上报（4.0.2：面板化 setTokenIssueHandler 替代居中弹窗，经 gm.gmOpenInTab 开页；独立成模块防 starCheck→filters→cards 循环导入）
   snapshot.ts        确认 unstar 后清历史快照（4.0.0：recordArrival/位移挂起链已删，仅留 purge 回调）
-  fullSync.ts        P4 全量同步：整表 diff、star 时间回填（REST star+json）；4.0.3 手动入口 = TM 菜单 registerSyncMenu，runFullSync 首页带 If-None-Match（TTL 内 304 免额度早退）
+  fullSync.ts        P4 全量同步：整表 diff、star 时间回填（REST star+json）；4.0.4 手动三入口（TM 菜单 / 横幅「立即同步」/ 标题行 Sync），runFullSync 先 quickCheck 逐页 If-None-Match（全 304 免额度早退），pullAllStarred 无条件整表并收集 etags 基线
   storage/
     repoCache.ts      仓库缓存 CRUD
     tags.ts           标签存储 + 备注键规则 + 迁移
@@ -123,7 +123,7 @@ scripts/
 
 GitHub API (PAT)                                GitHub DOM（无缓存 / 详情页）
     │                                                │
-    ├─ probeAndSync() 进页 idle 自动探（ETag 304/未变免拉、超 TTL 强制整表）
+    ├─ probeAndSync() 进页 idle 自动（冷却 60s + 有 PAT → 统一 runFullSync('auto')：quickCheck 逐页条件快筛——4.0.6 起无窗口门、条件请求每次必发，全 304 免额度、页 200 转 changed-byte 整表比对，基线缺 / 超 TTL 转整表）
     │        │                                      ├─ 详情页 ─► extractAndCacheRepoFromDetailPage()
     │        └─ pullAllStarred() 整表 diff          └─ 无缓存首访 ─► 原生页 + .gsm-setup-banner
     │             │                                   （配置入口 = TM 菜单/横幅；保存成功 savedHandler 自动 runFullSync → transformAndReveal；手动同步只在 TM 菜单）
@@ -242,13 +242,16 @@ unstar 时数据不会立即删除，而是移入 `stars_pending_delete` 并记�
 
 用户访问仓库详情页时，脚本提取元数据写入缓存，使从未在 Stars 页浏览过的仓库也能在跨页筛选时显示完整卡片。
 
-### P4 全量同步与进页自动探测（3.1.0；4.0.0 升 API 主模式；4.0.3 手动入口收敛 TM 菜单 + 一律 ETag 条件化）
+### P4 全量同步与进页自动探测（3.1.0；4.0.0 升 API 主模式；4.0.4 逐页 ETag 快筛 + 手动三入口恢复；4.0.5 字节窗口自适应 + ETag 规范形；4.0.6 撤字节窗口门 = 条件快筛每次必发）
 
 `fullSync.ts`：`GET /user/starred?per_page=100&page=N` + `Accept: application/vnd.github.star+json`（带 `starred_at`；页间 100ms、速率余量 <10 放弃、超 200 页放弃、任一条解析失败整体放弃）。整表 diff 三向——本地有远端无 → `applyExternalUnstar()` 走待删除区宽限管线（**整表拉取即权威确认**，跳过逐条双 404，写 7d 裁决）；远端有本地无 → `saveRepoData()` 建条目 / 宽限区内 `markRepoStarred()` 恢复；交集 → 回填 `starredAt` + 刷新 desc/lang/stars/forks/updatedAt（`updated` 展示文本保留旧值）。**完整性红线**：任何不完整信号都抛错、catch 不改任何数据。
 **4.0.0 增强**：`pullAllStarred` 带 `If-None-Match` 条件请求（304 免额度免拉），元数据写 `stars_full_sync_meta`（`etag`/`lastFullSyncAt`/`count`）；transform 成功后 `probeAndSync()` 进页 idle 自动探（无变化免拉、超 TTL 强制整表）；`hasApiData()` = 有 PAT + `meta.count>0` 决定渲染模式；触发（4.0.3 起）= TM 菜单「🔄 立即全量同步」手动（无 token 先弹 `promptForToken`；标题行 Sync 按钮 4.0.3 已删）+ 进页自动 probe（原「快照消失 >12 → scheduleFullSync」入口 4.0.0 已删）。
 **4.0.1 增强**：①配置面板顶窗落位——`showSetupBanner` 替换 Lists 槽位的空态 `div.blankslate`（0 list）或 `#profile-lists-container`（有 list，本就隐藏），都不在则退回 prepend；网格态由 `hideListsSection`（blankslate 判定）+ base.css 静态 `> div.blankslate{display:none!important}` 静默隐藏（「有 list 也整体隐藏」不变）；②PAT 三入口统一走 `tokenConfig.ts`：横幅内联粘贴行 / 快速获取官方 Template URL（`starring=write` 一跳预填最小权限）/ TM 菜单，保存回调 `notifyTokenSaved` → savedHandler 撤横幅 + 自动 `runFullSync('button')`；③`notifyTokenIssue` 在 401 与「排除限速的 403」（无 retry-after 且 x-ratelimit-remaining≠0）弹一键更新窗，依据官方 troubleshooting 判定。
 **4.0.2 修正**：①`probeAndSync` 与 `pullAllStarred` 的 fetch 加 `cache:'no-store'`——GitHub API 回 `Cache-Control: public, max-age=60`，浏览器缓存会直接回 200（不发请求）或把本地 304 合并成 200 返回 JS，导致每次进页误判「有变化」而整表；配合三条诊断日志（ETag 基线保存 / 探测 200 / 快筛跳过原因）。官方规则（best-practices「Use conditional requests」）：正确带 Authorization 的 304 不计主限流；②开新页统一走 `gm.gmOpenInTab`（TM 菜单回调无用户激活，裸 window.open 被弹窗拦截静默吞掉），`@grant` 增 GM_openInTab；③失效上报 `setTokenIssueHandler` → `showSetupBanner(detail)` 面板文案刷新，modal 及其 CSS 已删。
 **4.0.3 增强**：①**任何整表入口都条件化**——原 菜单/保存后 手动调 `runFullSync` → `pullAllStarred` 不带 If-None-Match 永远 200 整表；现 runFullSync 读 meta，TTL(48h) 内首页带条件，304 → `notModified` 早退（只刷 `lastFullSyncAt` 保基线），超 TTL 不带条件强制全量；probe 判定不变。②**手动同步收敛 TM 菜单**——新增 `registerSyncMenu()`（init 注册，无 token 自动弹配置）；横幅「立即同步」按钮与 `mountSyncButton/syncFromButton` 删除（`SYNC_SVG`、`.gsm-sync-btn` CSS、transform 调用同清），保存成功自动同步（savedHandler）不变。③Template URL `expires_in=none` → `90`（官方参数表：1–366 整数或 `none`，默认 30 天）。④`promptForToken` 留空：原本只清存储静默 return，现补 `notifyTokenIssue('Token 已清除')` → 初始化面板重现。⑤界面/菜单去 P2.5/P4 等开发表述（仅控制台与注释保留）。
+**4.0.4 修正与恢复（本段修订 4.0.3 的两条判断）**：①「首页单 etag 304 即跳过整表」判据过弱（**中部页变化/移位会漏检**）且 `etag ?? ifNoneMatch` 在响应缺头时落空 → 下次不带条件又 200，形成 **304/200 交替**；改为 **`quickCheck` 逐页条件快筛**：`FullSyncMeta.etags: string[]`（`pullAllStarred` 每页收 `resp.headers.get('etag')`，**空串也入列**——基线含空则下次直接整表重建基线）；`runFullSync` 逐页 If-None-Match（GitHub 每页独立 ETag；304 不计主限流；页间 200ms）：全部 304 → 只写 `{ ...storedMeta, lastFullSyncAt }`（**校验值原样保留，绝不从 304 响应头回读**）；任一 200 → 即刻转整表（该页起后续页已因位移失效）；基线外无条件探 `page=N+1`：有条目 = 总数变长 → 转整表（防「只在尾页追加」漏检）；401/403（非限速）→ `notifyTokenIssue` 报面板、error 早退不整表；`cache:'no-store'` 与 48h TTL 语义不变；`probeAndSync` 瘦身为「冷却 + PAT → `runFullSync('auto')`」。②**手动入口恢复**（撤回 4.0.3 的收敛）：横幅「立即同步」（替换原「手动设置」prompt）+ 标题行 `mountSyncButton`（`SYNC_SVG` 回补 `constants.ts`，spinner 复用 `gsm-pager-loading`）+ TM 菜单 `registerSyncMenu`——三处全走同一条件化 `runFullSync`；横幅填 token 行改 `hidden=false` 常驻（401/403 后面板一出现即可粘贴）。
+**4.0.6 撤字节窗口门（修订 4.0.5 的一条设计）**：`byteViableMs` 自适应窗口整套删除（quickCheck 窗口外跳过判定、runFullSync 判亏收缩 `max(30s,龄/2)` 与全 304 回抬、`FullSyncMeta.byteViableMs` 字段——存量 JSON 残键无害）。理由：条件请求带过期 ETag 回 200 与无条件**同价**（响应体本来就要拉）、304 免额度，门只省独立试探阶段 1 个注定 200 的请求，却放弃安静期全 304 整表白嫖、且造成「条件请求失效」观感。保留：48h TTL / 缺基线转整表、`normEtag` 规范形、`changed-byte` 判定与日志、尾页 N+1 探测。
+**4.0.6 补充（外部 unstar 恒 1 修复，同批未提交）**：真机探针实锤 `zai-org/ZCode` 同时在 `stars_pending_delete` 与 `stars_repo_cache`（真取关后被某回写路径写回缓存），A 循环每轮调 applyExternalUnstar → confirm 见候选早退但计数已 +1 → 恒报 1。修复：confirm 幂等+自愈（候选在区也清缓存脏态）、applyExternalUnstar 返回是否新确认、A 循环只对新确认计数+写裁决；下次同步自愈归 0。同期答疑：快筛 200 = 响应字节真变（元数据抖动，诚实判定）；只首页 304 判据过弱（中部变化/位移漏检 + etag 落空交替坑），逐页全 304 为正确取舍（304 免额度无 body）。
 
 ### 星星按钮（4.0.0：纯 API）
 
