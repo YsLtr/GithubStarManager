@@ -1,6 +1,6 @@
 import { isStarsPage } from './boot';
 import { renderBrowsePage } from './filters';
-import { filterState } from './state';
+import { filterState, hasActiveFilter } from './state';
 import { isDesktop } from './utils';
 
 /**
@@ -12,7 +12,7 @@ import { isDesktop } from './utils';
  * - 不 pushState：地址栏保持 ?tab=stars（与原生 frame 翻页不改地址栏一致）；
  * - 渲染是同步的（缓存切片 + 卡片重建 <30ms），无需 spinner / 防连点标志；
  * - 中键/Ctrl/Shift/Alt 不拦截（保持浏览器原生多标签语义）；
- * - 筛选态（tagMode/searchMode）下分页器已被 applyFilters 闏掉，这里防御性双保险。
+ * - 筛选态（tags/lang/search 任一激活）下分页器已被 applyFilters 藏掉，这里防御性双保险。
  */
 export function interceptPagination(): void {
   window.addEventListener(
@@ -30,8 +30,7 @@ export function interceptPagination(): void {
       e.preventDefault();
       e.stopImmediatePropagation();
 
-      if (filterState.tagMode || filterState.searchMode) return;
-      if (filterState.tags.length > 0 || filterState.searchQuery) return;
+      if (hasActiveFilter()) return;
 
       const target = link.dataset.gsmPage || '';
       const cur = filterState.page || 1;

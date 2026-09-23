@@ -467,6 +467,31 @@
     overflow-y: auto;
   }
 
+  /* ===== Sort 合并组（R5 split button）：左 Sort by 菜单 + 单条竖线 + 右方向 icon（无文字） ===== */
+  .gsm-sort-group {
+    display: inline-flex;
+    align-items: stretch;
+  }
+  .gsm-sort-group > .Button {
+    border-radius: 0;
+  }
+  .gsm-sort-group > .Button:first-child {
+    border-radius: 6px 0 0 6px;
+  }
+  .gsm-sort-group > .gsm-dir-btn {
+    margin-left: -1px; /* 与左段边框重叠 → 中间只留一条竖线 */
+    border-radius: 0 6px 6px 0;
+    padding: 0 8px; /* icon-only 收窄 */
+    position: relative;
+  }
+  .gsm-sort-group > .gsm-dir-btn:hover,
+  .gsm-sort-group > .gsm-dir-btn:focus {
+    z-index: 1; /* 悬停/聚焦边框压过重叠线 */
+  }
+  .gsm-sort-group.has-active > .Button {
+    border-color: var(--fgColor-accent, #0969da) !important;
+    color: var(--fgColor-accent, #0969da) !important;
+  }
   /* ===== 星星按钮 ===== */
   .stars-card-header {
     display: flex !important;

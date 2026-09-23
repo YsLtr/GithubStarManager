@@ -1,3 +1,5 @@
+import type { SortKey } from './types';
+
 /** 视口宽度 >= 此值时启用桌面端布局（与 styles/base.css 中的 @media 断点保持一致） */
 export const MOBILE_BREAKPOINT = 768;
 /** 视口宽度 >= 此值时启用三栏布局（与 styles/wide.css 中的 @media 断点保持一致） */
@@ -7,6 +9,14 @@ export const GRACE_PERIOD = 24 * 60 * 60 * 1000;
 
 /** 每页卡片数（与 GitHub 原生分页一致；4.0.0 本地切页用） */
 export const NATIVE_PAGE_SIZE = 30;
+
+/** Sort 菜单项（顺序 = Recently starred / Recently active / Most stars / Most Forks；Most Forks 为本地扩展，原生无） */
+export const SORT_OPTIONS: ReadonlyArray<{ key: SortKey; label: string }> = [
+  { key: 'created', label: 'Recently starred' },
+  { key: 'updated', label: 'Recently active' },
+  { key: 'stars', label: 'Most stars' },
+  { key: 'forks', label: 'Most Forks' },
+];
 
 export const STORAGE_KEYS = {
   repoCache: 'stars_repo_cache',
@@ -39,6 +49,11 @@ export const FORK_META_SVG = '<svg aria-label="fork" role="img" height="16" view
 export const TRIANGLE_DOWN_SVG = '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" width="16" class="octicon octicon-triangle-down">' +
   '<path d="m4.427 7.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 7H4.604a.25.25 0 0 0-.177.427Z"></path>' +
   '</svg>';
+
+/** Primer octicons arrow-down-16（Sort 方向按钮：降序） */
+export const ARROW_DOWN_SVG = '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" class="octicon octicon-arrow-down"><path d="M13.03 8.22a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L3.47 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018l2.97 2.97V3.75a.75.75 0 0 1 1.5 0v7.44l2.97-2.97a.75.75 0 0 1 1.06 0Z"></path></svg>';
+/** Primer octicons arrow-up-16（Sort 方向按钮：升序） */
+export const ARROW_UP_SVG = '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" class="octicon octicon-arrow-up"><path d="M3.47 7.78a.75.75 0 0 1 0-1.06l4.25-4.25a.75.75 0 0 1 1.06 0l4.25 4.25a.751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018L9 4.81v7.44a.75.75 0 0 1-1.5 0V4.81L4.53 7.78a.75.75 0 0 1-1.06 0Z"></path></svg>';
 
 /** GitHub Primer sync 图标（同步按钮；来源 primer/octicons sync-16.svg） */
 export const SYNC_SVG = '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" width="16" class="octicon octicon-sync"><path d="M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z"></path></svg>';

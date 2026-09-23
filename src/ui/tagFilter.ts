@@ -1,8 +1,8 @@
 import { TRIANGLE_DOWN_SVG } from '../constants';
 import { getNativeFilterRow } from '../dom';
 import { filterState } from '../state';
-import { applyFilters } from '../filters';
-import { getAllUniqueTags, getTags, saveTags } from '../storage/tags';
+import { applyFilters, computeTagCandidates } from '../filters';
+import { getTags, saveTags } from '../storage/tags';
 
 /** 同步 Tags 筛选按钮的文案与高亮态 */
 export function updateTagFilterButton(): void {
@@ -25,8 +25,9 @@ export function renderTagFilterBar(): void {
   const existing = filterRow.querySelector('.stars-tag-filter');
   if (existing) existing.remove();
 
-  const allTags = getAllUniqueTags();
-  if (allTags.length === 0 && filterState.tags.length === 0) return;
+  // R3 动态收窄：候选 = 当前约束下共现的标签 ∪ 已选；无可选项就不渲染按钮
+  const candidates = computeTagCandidates();
+  if (candidates.length === 0) return;
 
   const container = document.createElement('div');
   container.className = 'stars-tag-filter mb-1 mb-lg-0 mr-2';
@@ -65,13 +66,31 @@ export function renderTagFilterBar(): void {
   const overlayBody = document.createElement('div');
   overlayBody.className = 'Overlay-body Overlay-body--paddingNone';
 
-  // 菜单列表容器 — 使用原生 ActionList 结构
+  // 菜单列表容器 — 使用原生 ActionList 结构（勾选后由 renderTagFilterList 原位重绘）
   const menuList = document.createElement('ul');
   menuList.id = 'stars-tag-filter-list';
   menuList.className = 'ActionListWrap--inset ActionListWrap';
   menuList.setAttribute('role', 'menu');
+  renderTagFilterList(menuList);
 
-  allTags.forEach((tag) => {
+  overlayBody.appendChild(menuList);
+  overlayInner.appendChild(overlayBody);
+  overlay.appendChild(overlayInner);
+
+  container.appendChild(btn);
+  container.appendChild(overlay);
+
+  filterRow.insertBefore(container, filterRow.firstChild);
+}
+
+/**
+ * 菜单列表级重绘（R3）：候选随约束动态收窄 + 勾选态同步。
+ * 勾选是多选场景，必须**原位更新**（整体重建会把开着的 popover 拆掉）。
+ */
+export function renderTagFilterList(menuList: HTMLUListElement): void {
+  menuList.innerHTML = '';
+
+  computeTagCandidates().forEach((tag) => {
     const li = document.createElement('li');
     li.className = 'ActionListItem';
     li.setAttribute('role', 'none');
@@ -101,30 +120,19 @@ export function renderTagFilterBar(): void {
       const idx = filterState.tags.indexOf(tag);
       if (idx >= 0) {
         filterState.tags.splice(idx, 1);
-        cb.checked = false;
-        content.setAttribute('aria-checked', 'false');
       } else {
         filterState.tags.push(tag);
-        cb.checked = true;
-        content.setAttribute('aria-checked', 'true');
       }
       updateTagFilterButton();
       applyFilters();
+      // 原位重绘：共现收窄 + 勾选态，popover 保持打开（R3 验收点）
+      renderTagFilterList(menuList);
       refreshTagPillStates();
     });
 
     li.appendChild(content);
     menuList.appendChild(li);
   });
-
-  overlayBody.appendChild(menuList);
-  overlayInner.appendChild(overlayBody);
-  overlay.appendChild(overlayInner);
-
-  container.appendChild(btn);
-  container.appendChild(overlay);
-
-  filterRow.insertBefore(container, filterRow.firstChild);
 }
 
 /** 同步卡片上标签 pill 的选中态 */

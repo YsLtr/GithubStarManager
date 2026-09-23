@@ -41,7 +41,10 @@ export interface FilteredRepo {
   data: RepoData;
 }
 
-export type SortKey = 'stars' | 'updated' | 'created';
+export type SortKey = 'stars' | 'updated' | 'created' | 'forks';
+
+/** 排序方向（desc = 默认；asc = 反向，缺失值仍恒沉底） */
+export type SortDirection = 'desc' | 'asc';
 
 /** P4 全量同步元数据（4.0.0 API 主模式：ETag 条件快筛 + TTL 兜底 + 本地分页总数） */
 export interface FullSyncMeta {

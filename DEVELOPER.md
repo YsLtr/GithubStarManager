@@ -59,12 +59,12 @@ src/
   index.ts            入口：页面类型检测、初始化、Turbo / MutationObserver 事件、样式注入
   constants.ts        断点、宽限期、存储键、SVG 常量
   types.ts            存储模型类型（RepoData / PendingDeleteEntry / TagMap / NoteMap ...）
-  state.ts            筛选状态对象 filterState（唯一可变全局状态）
+  state.ts            筛选状态对象 filterState + hasActiveFilter() 派生判断（唯一可变全局状态）
   utils.ts            escapeHtml / isDesktop
   dom.ts              getRepoIdMeta / getToggler / isStarredInToggler（DOM 查询小工具）
   extract.ts          详情页数据提取 → 写缓存（4.0.0：列表卡提取已删，API 为权威源）
   transform.ts        列表 → 卡片网格转换
-  filters.ts          筛选引擎：标签/语言/排序/搜索、信息条、原生筛选联动
+  filters.ts          筛选引擎（4.1.0 全本地化）：queryRepos 统一查询管线、4 排序键×双向+名称决胜、facet 候选收窄、URL 入口匹配 initFiltersFromUrl、常驻本地筛选栏（Language/Sort+方向 split button）
   search.ts           搜索表单拦截（4.0.0：纯本地，原生结果补充已删）
   gm.ts              GM API 兼容层（调用时判定；localStorage 兜底与迁移）
   boot.ts            document-start 防闪烁隐藏生命周期（FOUC）
@@ -80,7 +80,7 @@ src/
     pendingDelete.ts  待删除区（unstar 宽限期，含标签/备注备份）
   ui/
     cards.ts          卡片构建 + API 星星按钮（4.0.0：PUT/DELETE Bearer PAT，CSRF 双模式已删）
-    tagFilter.ts      标签 pill、筛选栏、pill 选中态同步
+    tagFilter.ts      标签 pill、筛选栏（R3：菜单列表原位重绘 = 共现收窄，勾选不关 popover）、pill 选中态同步
     notes.ts          备注渲染与编辑
   styles/
     base.css          >= 768px 布局与组件样式
@@ -145,8 +145,8 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
          │
          ├─ 分页：pagination.ts 拦 data-gsm-page ─► renderBrowsePage()（零网络零 Turbo）
          ├─ 退出：exitCustomMode() ─► pushState('?tab=stars')（整页导航已删）
-         └─ 搜索：searchCacheRepos() 纯本地（原生结果补充已删）
-                  └─ applyFilters() ─► renderFilterInfoBar() + updateNativeFilters()
+         └─ 搜索：queryRepos() 纯本地全文（语言不参与匹配；原生结果补充已删）
+                  └─ applyFilters() ─► queryRepos() + renderFilterInfoBar() + updateLocalFilterControls()（常驻本地 Language/Sort+方向，原生 Language/Sort 常驻隐藏）
 
 ## 5. 存储模型
 
@@ -262,13 +262,11 @@ unstar 时数据不会立即删除，而是移入 `stars_pending_delete` 并记�
 
 ### 全缓存搜索与筛选联动
 
-搜索走 `searchCacheRepos()`：把关键词按空白拆词，每个词都必须至少命中作者、仓库名、描述、标签、备注之一（**语言已退出全文匹配**（3.0.11）——避免 `ASC` 子串命中 `javascript`，语言只通过下拉筛选指定）；并联动当前激活的标签与语言筛选。命中词以 `<mark class="gsm-search-hit">` 高亮（标题 / 描述 / 标签 / 备注四字段，大小写不敏感、只包文本节点、跳过输入控件）。**4.0.0 起纯本地**：原生结果补充（`fetchNativeSearchResults` / `nativeSearchResults`）已删，结果集 = 全量缓存 ∩ 关键词 ∩ 标签 ∩ 语言。
+搜索与筛选统一走 `queryRepos()` 单管线（4.1.0）：把关键词按空白拆词，每个词都必须至少命中作者、仓库名、描述、标签、备注之一（**语言不参与全文匹配**——避免 `ASC` 子串命中 `javascript`，语言只通过下拉筛选指定）；lang/标签 AND/搜索三重约束叠加。命中词以 `<mark class="gsm-search-hit">` 高亮（标题 / 描述 / 标签 / 备注四字段，大小写不敏感、只包文本节点、跳过输入控件）。**4.0.0 起纯本地**：原生结果补充已删，结果集 = 全量缓存 ∩ lang ∩ 标签 ∩ 关键词。
 
-自建 Sort 菜单现有三项：Most stars / Recently active / **Recently starred**（3.1.0 落地，AGENTS D5c/D6）。Recently starred 按 `starredAt` 降序（`sortResults()`：未回填的仓库沉底且保持到达序 = 原生服务端序）——`starredAt` 由 P4 Sync 回填（`fullSync.ts` 交集分支），未跑过同步时整表沉底属预期。`inheritNativeFilters()` 遇原生 Recently starred → `'created'`。
-
-### 退出自定义模式
-
-标签与搜索都被清空时，`applyFilters()` 调 `exitCustomMode()`：重置 `filterState`（tags/search/modes 清零、page=1）并 `history.pushState('?tab=stars')` 本地渲染第 1 页——**整页导航已删**（4.0.0，原 `location.href` 整页回跳移除）；原生 Language/Sort 菜单恢复显示（`updateNativeFilters(false)`）。
+自建 Sort 菜单四项：Recently starred / Recently active / Most stars / **Most Forks**（4.1.0，末项为本地扩展、原生无）。排序规则（`sortResults()`）：4 键 × asc/desc（右侧方向 icon 点击切换，与 Sort by 合并为 split button），**缺失值恒沉底不随方向翻转**，平局按仓库名决胜（全确定性，修掉旧「到达序」注释与 `for..in` 整数键序不符的问题）。`created` 按 `starredAt`（P4 Sync 回填，未回填沉底）；默认 `sort='created'` + `direction='desc'` = 原生默认 Recently starred。语言/排序/方向初始值由 `initFiltersFromUrl()` 从 URL 参数对齐（R6：URL 只读不写，D3；`inheritNativeFilters()` 已删）。
+### 退出筛选（Clear filter 本地化）
+Clear filter（信息条与原生拦截两路，均走 `exitCustomMode()`）：清 tags/lang/search、**保留 sort/direction**（D4）→ 本地渲染第 1 页 + `history.pushState('?tab=stars')` 干净地址栏（**整页导航已删**，4.0.0）；pushState 后的 search 串登记为「已解析」，sort/direction 不会被 URL 初始化冲掉。原生 Language/Sort 常驻隐藏、本地控件常驻，不再随模式切换（`updateNativeFilters` 双态逻辑已删）。
 
 ## 7. 状态管理约定
 
@@ -277,12 +275,12 @@ unstar 时数据不会立即删除，而是移入 `stars_pending_delete` 并记�
 ```ts
 filterState.tags            // 已选标签（多选，需全部命中）
 filterState.lang            // 语言筛选，'' = 全部
-filterState.sort            // 'stars' | 'updated' | 'created'（created = Recently starred）
-filterState.tagMode         // 是否处于标签筛选模式
+filterState.sort            // 'created' | 'updated' | 'stars' | 'forks'（默认 'created' = Recently starred）
+filterState.direction       // 'desc' | 'asc'（默认 'desc'；缺失值恒沉底不随方向翻转）
 filterState.searchQuery     // 当前搜索词，'' = 无搜索
-filterState.searchMode      // 是否处于搜索模式
-filterState.nativeSearchResults  // 原生搜索返回的 repoId 列表
-filterState.nativeSearchFetching // 防重复 fetch
+filterState.page / totalPages  // 本地浏览页码 / 总页数（browse 态本地分页）
+// 4.1.0 起 tagMode/searchMode/nativeSearchResults/nativeSearchFetching 均已退场；
+// 是否处于筛选态用 state.ts 的 hasActiveFilter() 派生（tags/lang/search 任一激活 = 筛选态，平铺不分页）
 ```
 
 用对象而不是 `export let`，是因为 ESM 的导入绑定对导入方是只读的，无法跨模块重新赋值。
@@ -301,7 +299,7 @@ filterState.nativeSearchFetching // 防重复 fetch
 
 1. `state.ts`：加状态字段
 2. `ui/tagFilter.ts`：加筛选 UI（参考 Tags 按钮的 Popover + ActionList 结构）
-3. `filters.ts`：在 `getTagFilteredRepos()` / `searchCacheRepos()` / `applyFilters()` 里加筛选逻辑
+3. `filters.ts`：在 `queryRepos()` 统一管线里加筛选逻辑，facet 候选计算同处扩展（`computeTagCandidates` / `computeLanguageCandidates`）
 
 ### 添加新的存储键
 

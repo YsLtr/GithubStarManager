@@ -1,6 +1,12 @@
-import { NATIVE_PAGE_SIZE, TRIANGLE_DOWN_SVG } from './constants';
+import {
+  ARROW_DOWN_SVG,
+  ARROW_UP_SVG,
+  NATIVE_PAGE_SIZE,
+  SORT_OPTIONS,
+  TRIANGLE_DOWN_SVG,
+} from './constants';
 import { getNativeFilterBar, getNativeFilterRow, getStarsMainColumn } from './dom';
-import { filterState } from './state';
+import { filterState, hasActiveFilter } from './state';
 import { loadAllNotes } from './storage/notes';
 import { loadRepoCache } from './storage/repoCache';
 import { loadAllTags } from './storage/tags';
@@ -8,40 +14,144 @@ import { buildCardFromCache, createStarButtonForCached } from './ui/cards';
 import { renderNotes } from './ui/notes';
 import { refreshTagPillStates, renderTagFilterBar, renderTags } from './ui/tagFilter';
 import { escapeHtml } from './utils';
-import type { FilteredRepo, SortKey } from './types';
+import type { FilteredRepo } from './types';
 
-/** 按当前排序方式就地排序（created/star 时间、stars、updated；缺失值沉底，稳定排序保到达序） */
+/**
+ * 筛选/排序引擎（4.1.0 全本地化）：
+ * - `queryRepos()`：唯一查询管线（lang → tags AND → search → 排序），
+ *   browse 态、标签筛选、搜索、facet 候选计算全部走它（R2）；
+ * - `sortResults()`：4 排序键 × asc/desc + 缺失值恒沉底 + 名称决胜（R1/R4/R5）；
+ * - `initFiltersFromUrl()`：进页时从 URL 参数初始化（URL 只读不写，R6/D3）；
+ * - `updateLocalFilterControls()`：常驻本地 Language / Sort(+方向) 接管原生菜单。
+ */
+
+/** facet 候选计算时可跳过的约束维度（4.2.0 扩展 'type'） */
+export type QuerySkip = 'lang';
+
+/**
+ * 按 filterState.sort/direction 就地排序。
+ * 规则（§4.3）：缺失值恒沉底、不随方向翻转；平局按仓库名决胜；全确定性。
+ * `created` = starredAt（Recently starred）、`updated` = updatedAt（Recently active）、
+ * `stars`/`forks` = 计数值（Most stars / Most Forks，后者为本地扩展）。
+ */
 function sortResults(results: FilteredRepo[]): void {
-  if (filterState.sort === 'created') {
-    results.sort((a, b) => {
-      const av = a.data.starredAt || '';
-      const bv = b.data.starredAt || '';
-      if (!av && !bv) return 0;
-      if (!av) return 1;
-      if (!bv) return -1;
-      return bv.localeCompare(av);
-    });
-  } else if (filterState.sort === 'stars') {
-    results.sort((a, b) => (b.data.stars || 0) - (a.data.stars || 0));
-  } else {
-    results.sort((a, b) => (b.data.updatedAt || '').localeCompare(a.data.updatedAt || ''));
-  }
+  const dir = filterState.direction === 'asc' ? -1 : 1; // 比较器基准 = desc
+  const tie = (a: FilteredRepo, b: FilteredRepo): number =>
+    (a.data.name || '').localeCompare(b.data.name || '');
+
+  results.sort((a, b) => {
+    const key = filterState.sort;
+    if (key === 'stars' || key === 'forks') {
+      const av = key === 'stars' ? a.data.stars : a.data.forks;
+      const bv = key === 'stars' ? b.data.stars : b.data.forks;
+      if (av === undefined && bv === undefined) return tie(a, b);
+      if (av === undefined) return 1;
+      if (bv === undefined) return -1;
+      if (av !== bv) return (bv - av) * dir;
+      return tie(a, b);
+    }
+    const av = key === 'created' ? a.data.starredAt : a.data.updatedAt;
+    const bv = key === 'created' ? b.data.starredAt : b.data.updatedAt;
+    if (!av && !bv) return tie(a, b);
+    if (!av) return 1;
+    if (!bv) return -1;
+    if (av !== bv) return (av < bv ? 1 : -1) * dir;
+    return tie(a, b);
+  });
 }
 
-/** 4.0.0 纯本地浏览态：缓存 → lang 过滤 → 排序 → 切页渲染（原生 HTML 彻底退出渲染管线） */
+/** 唯一查询管线：lang 约束 → tags AND → search 全文 → 排序。skip = 算该 facet 候选时忽略自身约束（D1 替换语义）。 */
+export function queryRepos(skip?: QuerySkip): FilteredRepo[] {
+  const cache = loadRepoCache();
+  const allTags = loadAllTags();
+  const allNotes = loadAllNotes();
+  const terms = filterState.searchQuery.toLowerCase().split(/\s+/).filter((t) => t.length > 0);
+  const results: FilteredRepo[] = [];
+
+  for (const repoId in cache) {
+    const data = cache[repoId];
+    // 语言筛选（单选，替换语义）
+    if (
+      skip !== 'lang' &&
+      filterState.lang &&
+      (data.lang || '').toLowerCase() !== filterState.lang.toLowerCase()
+    ) {
+      continue;
+    }
+
+    // 标签筛选（多选 AND）
+    const repoTags = allTags[repoId] || [];
+    if (filterState.tags.length > 0 && !filterState.tags.every((ft) => repoTags.includes(ft))) {
+      continue;
+    }
+
+    // 搜索：每个词都必须至少命中一个字段（作者/仓库名/描述/标签/备注；
+    // 语言字段不参与全文匹配，D5：避免 ASC 命中 javascript 的噪音）
+    if (terms.length > 0) {
+      const name = (data.name || '').toLowerCase();
+      const [author, repo] = name.split('/');
+      const desc = (data.desc || '').toLowerCase();
+      const tagTexts = repoTags.map((t) => t.toLowerCase());
+      const note = (allNotes[repoId] || '').toLowerCase();
+      const hit = terms.every(
+        (term) =>
+          (author || '').includes(term) ||
+          (repo || '').includes(term) ||
+          desc.includes(term) ||
+          tagTexts.some((t) => t.includes(term)) ||
+          note.includes(term)
+      );
+      if (!hit) continue;
+    }
+
+    results.push({ repoId, data });
+  }
+
+  sortResults(results);
+  return results;
+}
+
+/**
+ * Tags 候选（R3 共现收窄，加选语义）：
+ * 结果集（含全部当前约束）内出现的标签 ∪ 已选标签（已选恒可见，可取消）。
+ * 可见性 ⇔ 加入该标签后仍有 ≥1 条结果 = 该标签在结果集内出现 ≥1 次。
+ * 按命中数降序、平局字母序（计数为 queryRepos 副产品，零额外成本）。
+ */
+export function computeTagCandidates(): string[] {
+  const allTags = loadAllTags();
+  const counts = new Map<string, number>();
+  for (const { repoId } of queryRepos()) {
+    for (const tag of allTags[repoId] || []) {
+      counts.set(tag, (counts.get(tag) || 0) + 1);
+    }
+  }
+  for (const tag of filterState.tags) {
+    if (!counts.has(tag)) counts.set(tag, 0); // 已选恒可见（结果为空也可取消）
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([tag]) => tag);
+}
+
+/**
+ * Language 候选（单选替换语义，D1：忽略自身当前值，否则选完就剩一项没法切）：
+ * `queryRepos('lang')` 里出现的语言 ∪ 当前 lang（已选恒可见）。
+ */
+export function computeLanguageCandidates(): string[] {
+  const langs = new Set<string>();
+  for (const { data } of queryRepos('lang')) {
+    if (data.lang) langs.add(data.lang);
+  }
+  if (filterState.lang) langs.add(filterState.lang);
+  return Array.from(langs).sort((a, b) => a.localeCompare(b));
+}
+
+/** 4.0.0 纯本地浏览态：缓存 → 查询管线 → 切页渲染（无筛选激活时分页浏览全部缓存） */
 export function renderBrowsePage(page: number): void {
   const gridContainer = document.querySelector('.stars-grid-container');
   if (!gridContainer) return;
 
-  const cache = loadRepoCache();
-  const results: FilteredRepo[] = [];
-  for (const repoId in cache) {
-    const data = cache[repoId];
-    if (filterState.lang && (data.lang || '').toLowerCase() !== filterState.lang.toLowerCase()) continue;
-    results.push({ repoId, data });
-  }
-  sortResults(results);
-
+  const results = queryRepos();
   const totalPages = Math.max(1, Math.ceil(results.length / NATIVE_PAGE_SIZE));
   filterState.page = Math.min(Math.max(1, page), totalPages);
   filterState.totalPages = totalPages;
@@ -74,69 +184,6 @@ function updateLocalPagers(): void {
       ?.classList.toggle('disabled', filterState.page >= filterState.totalPages);
   });
 }
-
-export function getTagFilteredRepos(ignoreLang: boolean): FilteredRepo[] {
-  const allTags = loadAllTags();
-  const cache = loadRepoCache();
-  const results: FilteredRepo[] = [];
-
-  for (const repoId in allTags) {
-    const tags = allTags[repoId];
-    if (!filterState.tags.every(ft => tags.includes(ft))) continue;
-    const data = cache[repoId];
-    if (!data) continue;
-    // 语言筛选（ignoreLang=true 时跳过，用于构建语言列表）
-    if (!ignoreLang && filterState.lang && (data.lang || '').toLowerCase() !== filterState.lang.toLowerCase()) continue;
-    results.push({ repoId, data });
-  }
-
-  sortResults(results);
-  return results;
-}
-
-/** 全缓存搜索：每个词都必须至少命中一个字段（作者/仓库名/描述/语言/标签/备注） */
-export function searchCacheRepos(query: string, ignoreLang: boolean): FilteredRepo[] {
-  const cache = loadRepoCache();
-  const allTags = loadAllTags();
-  const allNotes = loadAllNotes();
-  const terms = query.toLowerCase().split(/\s+/).filter(t => t.length > 0);
-  if (terms.length === 0) return [];
-
-  const results: FilteredRepo[] = [];
-  for (const repoId in cache) {
-    const data = cache[repoId];
-    const name = (data.name || '').toLowerCase();
-    const [author, repo] = name.split('/');
-    const desc = (data.desc || '').toLowerCase();
-    const tags = (allTags[repoId] || []).map(t => t.toLowerCase());
-    const note = (allNotes[repoId] || '').toLowerCase();
-
-    // 每个词都必须至少命中一个字段
-    const allMatch = terms.every(term =>
-      (author || '').includes(term) ||
-      (repo || '').includes(term) ||
-      desc.includes(term) ||
-      tags.some(t => t.includes(term)) ||
-      note.includes(term)
-    );
-    if (!allMatch) continue;
-
-    // Tags 联动：如有激活的 tag 筛选，须同时满足
-    if (filterState.tags.length > 0) {
-      const repoTags = allTags[repoId] || [];
-      if (!filterState.tags.every(ft => repoTags.includes(ft))) continue;
-    }
-    // Language 联动
-    if (!ignoreLang && filterState.lang &&
-        (data.lang || '').toLowerCase() !== filterState.lang.toLowerCase()) continue;
-
-    results.push({ repoId, data });
-  }
-
-  sortResults(results);
-  return results;
-}
-
 
 /** 转义正则元字符 */
 function escapeRegExp(s: string): string {
@@ -178,39 +225,12 @@ function highlightMatchesInCard(card: HTMLElement, terms: string[]): void {
   });
 }
 
-/** 从 GitHub 原生筛选按钮的文案里读出当前 Language / Sort */
-export function inheritNativeFilters(): void {
-  // 读取当前 Language
-  const langBtn = document.querySelector('#stars-language-filter-menu-button');
-  if (langBtn) {
-    const text = (langBtn.textContent || '').trim();
-    const match = text.match(/Language:\s*(.+)/);
-    if (match && match[1].trim().toLowerCase() !== 'all') {
-      filterState.lang = match[1].trim();
-    }
-  }
-  // 读取当前 Sort
-  const sortBtn = document.querySelector('#stars-sort-menu-button');
-  if (sortBtn) {
-    const text = (sortBtn.textContent || '').trim();
-    if (text.includes('Most stars')) {
-      filterState.sort = 'stars';
-    } else if (text.includes('Recently active')) {
-      filterState.sort = 'updated';
-    } else if (text.includes('Recently starred')) {
-      filterState.sort = 'created';
-    }
-    // 「Recently starred」→ 'created'：P4 回填 starredAt 后按 star 时间真排序；
-    // 未回填时 sortResults 把缺值沉底（到达序 = 原生服务端序）
-  }
-}
-
-/** 渲染结果计数信息条（含 Clear filter） */
+/** 渲染结果计数信息条（含 Clear filter）：tags/lang/search 任一激活即出现 */
 export function renderFilterInfoBar(count: number): void {
   // 移除旧信息条
-  document.querySelectorAll('.stars-tag-info-bar').forEach(el => el.remove());
+  document.querySelectorAll('.stars-tag-info-bar').forEach((el) => el.remove());
 
-  if (!filterState.searchQuery && filterState.tags.length === 0) return;
+  if (!hasActiveFilter()) return;
 
   const colLg9 = getStarsMainColumn();
   if (!colLg9) return;
@@ -229,13 +249,13 @@ export function renderFilterInfoBar(count: number): void {
   const infoSpan = document.createElement('span');
   infoSpan.setAttribute('role', 'status');
 
-  // 拼装筛选描述
+  // 拼装筛选描述（sort/direction 属浏览状态，不进信息条）
   let desc = '<strong>' + count + '</strong> repos';
   if (filterState.searchQuery) {
     desc += ' matching "<strong>' + escapeHtml(filterState.searchQuery) + '</strong>"';
   }
   if (filterState.tags.length > 0) {
-    desc += ' with tags: ' + filterState.tags.map(t => '<strong>' + escapeHtml(t) + '</strong>').join(', ');
+    desc += ' with tags: ' + filterState.tags.map((t) => '<strong>' + escapeHtml(t) + '</strong>').join(', ');
   }
   if (filterState.lang) {
     desc += ' · language: <strong>' + escapeHtml(filterState.lang) + '</strong>';
@@ -249,9 +269,8 @@ export function renderFilterInfoBar(count: number): void {
   clearLink.innerHTML = '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-x issues-reset-query-icon mt-1"><path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"></path></svg> Clear filter';
   clearLink.addEventListener('click', (e) => {
     e.preventDefault();
-    // 导航到干净的 stars 页面 — 一并清掉预先存在的原生筛选
-    const baseUrl = new URL(location.href);
-    location.href = baseUrl.pathname + '?tab=stars';
+    e.stopPropagation(); // 不冒泡到 index.ts 的原生 Clear filter 拦截器，避免 exitCustomMode 双跑
+    exitCustomMode();
   });
 
   bar.appendChild(infoDiv);
@@ -260,7 +279,7 @@ export function renderFilterInfoBar(count: number): void {
   colLg9.insertBefore(bar, gridContainer);
 }
 
-/** 应用当前筛选状态：渲染缓存卡片 / 退出自定义模式 / 联动原生筛选 */
+/** 应用当前筛选状态：browse 态分页渲染 / 筛选态平铺 + 信息条；常驻本地控件随状态重建 */
 export function applyFilters(): void {
   // 1. 移除旧的缓存卡片
   document.querySelectorAll('.stars-grid-card-cached').forEach((el) => el.remove());
@@ -269,19 +288,20 @@ export function applyFilters(): void {
   const gridContainer = document.querySelector('.stars-grid-container');
   const paginator = gridContainer ? gridContainer.querySelector<HTMLElement>('.paginate-container') : null;
 
-  const hasSearch = filterState.searchQuery.length > 0;
-  const hasTags = filterState.tags.length > 0;
+  // 常驻本地控件（Language / Sort+方向）：状态驱动重建，同时保证原生菜单持续隐藏
+  updateLocalFilterControls();
 
-  // 2. 无任何自定义筛选 → 纯本地浏览态（4.0.0：缓存切页，不再整页导航回服务端）
-  if (!hasTags && !hasSearch) {
+  // 2. 无任何筛选激活（sort/direction 属浏览状态）→ browse 态：本地分页
+  if (!hasActiveFilter()) {
     cards.forEach((card) => card.classList.remove('stars-tag-filtered'));
     if (paginator) paginator.style.display = '';
-    document.querySelectorAll<HTMLElement>('.gsm-top-pager').forEach(el => { el.style.display = ''; });
+    document.querySelectorAll<HTMLElement>('.gsm-top-pager').forEach((el) => {
+      el.style.display = '';
+    });
     renderBrowsePage(1);
-    updateNativeFilters(false);
 
     // 移除 info bar 并恢复原生 clear filter 条
-    document.querySelectorAll('.stars-tag-info-bar').forEach(el => el.remove());
+    document.querySelectorAll('.stars-tag-info-bar').forEach((el) => el.remove());
     const colLg9 = getStarsMainColumn();
     if (colLg9) {
       const nativeBar = getNativeFilterBar(colLg9);
@@ -290,30 +310,18 @@ export function applyFilters(): void {
     return;
   }
 
-  // 3. 首次进入自定义模式 → 继承原生筛选
-  if (!filterState.tagMode && !filterState.searchMode) {
-    inheritNativeFilters();
-  }
-  if (hasTags) filterState.tagMode = true;
-  if (hasSearch) filterState.searchMode = true;
-
-  // 4. 隐藏原始卡片和分页器
+  // 3. 筛选态（tags/lang/search 任一激活）：结果平铺不分页（D5）
   cards.forEach((card) => card.classList.add('stars-tag-filtered'));
   if (paginator) paginator.style.display = 'none';
-  // 顶部分页器同藏（筛选态平铺无分页；它在 headerRow 里，不在 gridContainer 内）
-  document.querySelectorAll<HTMLElement>('.gsm-top-pager').forEach(el => { el.style.display = 'none'; });
+  // 顶部分页器同藏（它在 headerRow 里，不在 gridContainer 内）
+  document.querySelectorAll<HTMLElement>('.gsm-top-pager').forEach((el) => {
+    el.style.display = 'none';
+  });
 
-  // 5. 获取结果
-  let results: FilteredRepo[];
-  if (hasSearch) {
-    results = searchCacheRepos(filterState.searchQuery, false);
-  } else {
-    results = getTagFilteredRepos(false);
-  }
-
+  const results = queryRepos();
   if (!gridContainer) return;
 
-  // 6. 为每个结果构建缓存卡片
+  // 4. 为每个结果构建缓存卡片
   results.forEach(({ repoId, data }) => {
     const cachedCard = buildCardFromCache(repoId, data);
     gridContainer.appendChild(cachedCard);
@@ -330,245 +338,294 @@ export function applyFilters(): void {
     if (notesContainer) renderNotes(notesContainer);
 
     // 搜索模式：高亮命中词（标题 / 描述 / 标签 / 备注）
-    if (hasSearch) {
+    if (filterState.searchQuery) {
       highlightMatchesInCard(
         cachedCard,
-        filterState.searchQuery.toLowerCase().split(/\s+/).filter(t => t.length > 0)
+        filterState.searchQuery.toLowerCase().split(/\s+/).filter((t) => t.length > 0)
       );
     }
   });
 
-  // 7. 展示计数信息条
+  // 5. 展示计数信息条
   renderFilterInfoBar(results.length);
-
-  // 8. 切换筛选栏为自定义 Language/Sort
-  updateNativeFilters(true);
 }
 
-/** 退出全部自定义筛选（原生 Clear filter 本地化）：清状态 → 本地浏览页 → 干净地址栏 */
+/** 退出全部筛选（Clear filter 本地化）：清 tags/lang/search，保留 sort/direction（D4）→ 干净地址栏 */
 export function exitCustomMode(): void {
   filterState.tags = [];
-  filterState.tagMode = false;
+  filterState.lang = '';
   filterState.searchQuery = '';
-  filterState.searchMode = false;
   filterState.page = 1;
+  const searchInput = document.querySelector<HTMLInputElement>(
+    'input[placeholder*="Search starred"]'
+  );
+  if (searchInput) searchInput.value = '';
   applyFilters();
   renderTagFilterBar();
   refreshTagPillStates();
   history.pushState({}, '', location.pathname + '?tab=stars');
+  // pushState 后的 search 串登记为「已解析」：sort/direction 是用户浏览状态，
+  // 不能被 initFiltersFromUrl 当作新入口冲回缺省（R6 防覆盖规则）
+  markUrlParsed();
+}
+
+/* ================================================================
+ * URL 入口匹配（R6）：URL 只读不写（D3）。
+ *
+ * 进页 / turbo 到达时解析 sort/direction/language 初始化 filterState；
+ * 防覆盖：只在「筛选相关参数」变化时才覆盖状态 —— frame 重渲染、
+ * exitCustomMode 的 pushState、原生菜单写入的无关参数（如 type）都不会
+ * 冲掉用户本地选择。q 沿用 search.ts 现有自动激活，不在此处理。
+ * ================================================================ */
+let lastParsedUrlSignature: string | null = null;
+
+function urlFilterSignature(): string {
+  const p = new URLSearchParams(location.search);
+  return `sort=${p.get('sort') ?? ''}|direction=${p.get('direction') ?? ''}|language=${p.get('language') ?? ''}`;
+}
+
+/** 把当前 URL 的筛选参数登记为「已解析」（下次不覆盖状态） */
+function markUrlParsed(): void {
+  lastParsedUrlSignature = urlFilterSignature();
+}
+
+/** 进页时 Sort/方向/语言 与 URL 参数匹配（仅 URL 筛选参数变化时覆盖本地状态） */
+export function initFiltersFromUrl(): void {
+  const sig = urlFilterSignature();
+  if (sig === lastParsedUrlSignature) return;
+  lastParsedUrlSignature = sig;
+
+  const p = new URLSearchParams(location.search);
+  // 'forks' 为本地扩展项：URL 永不写入（D3），出现时宽容识别（仅作进页解析兜底）
+  const sort = p.get('sort');
+  filterState.sort =
+    sort === 'created' || sort === 'updated' || sort === 'stars' || sort === 'forks'
+      ? sort
+      : 'created';
+  filterState.direction = p.get('direction') === 'asc' ? 'asc' : 'desc';
+  // URLSearchParams 已解码（`jupyter+notebook` → 空格、`c%23` → `c#`），匹配时大小写不敏感
+  filterState.lang = p.get('language') || '';
+  filterState.page = 1;
+}
+
+/* ================================================================
+ * 常驻本地筛选控件（R2 + R5）：一次性接管，不再随「自定义模式」切换
+ * ================================================================ */
+
+/** 常驻隐藏原生 Language/Sort action-menu（节点保留：getNativeFilterRow 依赖其锚点；Type 4.2.0 接管后一并隐藏） */
+function hideNativeFilterMenus(): void {
+  for (const id of ['stars-language-filter-menu-button', 'stars-sort-menu-button']) {
+    const btn = document.getElementById(id);
+    const menu = btn ? btn.closest('action-menu') : null;
+    if (menu instanceof HTMLElement) menu.style.display = 'none';
+  }
+}
+
+/** 重建常驻本地控件（Language 菜单 + Sort 合并组）；幂等，applyFilters 每次调用 */
+function updateLocalFilterControls(): void {
+  hideNativeFilterMenus();
+  document.querySelectorAll('.stars-custom-filter').forEach((el) => el.remove());
+
+  const filterRow = getNativeFilterRow();
+  if (!filterRow) return;
+
+  // 插入锚点：原生 Type 菜单之后（视觉位置 = Tags 之后第 2 位）；4.2.0 本地 Type 接管后自然落到 Tags 之后
+  const typeMenu = document.getElementById('stars-type-filter-menu-button')?.closest('action-menu');
+  const tagFilter = filterRow.querySelector('.stars-tag-filter');
+  const anchorNode: ChildNode | null =
+    (typeMenu instanceof HTMLElement ? typeMenu : null) || tagFilter || filterRow.firstChild;
+
+  const langContainer = buildLangMenu();
+  const sortContainer = buildSortGroup();
+  if (anchorNode && anchorNode.parentNode === filterRow) {
+    filterRow.insertBefore(langContainer, anchorNode.nextSibling);
+    filterRow.insertBefore(sortContainer, langContainer.nextSibling);
+  } else {
+    filterRow.appendChild(langContainer);
+    filterRow.appendChild(sortContainer);
+  }
+}
+
+/** 自定义 Language 按钮 + 菜单（候选 = computeLanguageCandidates 动态收窄，D1 替换语义） */
+function buildLangMenu(): HTMLElement {
+  const langContainer = document.createElement('div');
+  langContainer.className = 'stars-custom-filter mb-1 mb-lg-0';
+
+  const languages = computeLanguageCandidates();
+  const langBtnLabel = filterState.lang ? 'Language: ' + filterState.lang : 'Language';
+  const langBtnEl = document.createElement('button');
+  langBtnEl.type = 'button';
+  langBtnEl.id = 'stars-custom-lang-button';
+  langBtnEl.setAttribute('popovertarget', 'stars-custom-lang-overlay');
+  langBtnEl.setAttribute('aria-haspopup', 'true');
+  langBtnEl.className = 'Button--secondary Button--medium Button';
+  if (filterState.lang) langBtnEl.classList.add('has-active');
+  langBtnEl.innerHTML =
+    '<span class="Button-content"><span class="Button-label"></span></span>' +
+    '<span class="Button-visual Button-trailingAction">' +
+    TRIANGLE_DOWN_SVG +
+    '</span>';
+  const langLabelEl = langBtnEl.querySelector('.Button-label');
+  if (langLabelEl) langLabelEl.textContent = langBtnLabel;
+
+  const langOverlay = document.createElement('anchored-position');
+  langOverlay.id = 'stars-custom-lang-overlay';
+  langOverlay.setAttribute('anchor', 'stars-custom-lang-button');
+  langOverlay.setAttribute('align', 'start');
+  langOverlay.setAttribute('side', 'outside-bottom');
+  langOverlay.setAttribute('anchor-offset', 'normal');
+  langOverlay.setAttribute('popover', 'auto');
+
+  const langInner = document.createElement('div');
+  langInner.className = 'Overlay Overlay--size-auto';
+  const langBody = document.createElement('div');
+  langBody.className = 'Overlay-body Overlay-body--paddingNone';
+  const langList = document.createElement('ul');
+  langList.className = 'ActionListWrap--inset ActionListWrap';
+  langList.setAttribute('role', 'menu');
+
+  // "All languages" 选项
+  const allLi = document.createElement('li');
+  allLi.className = 'ActionListItem';
+  allLi.setAttribute('role', 'none');
+  const allContent = document.createElement('a');
+  allContent.className = 'ActionListContent';
+  allContent.setAttribute('role', 'menuitemradio');
+  allContent.setAttribute('aria-checked', String(!filterState.lang));
+  const allLabel = document.createElement('span');
+  allLabel.className = 'ActionListItem-label';
+  allLabel.textContent = 'All languages';
+  allContent.appendChild(allLabel);
+  allContent.addEventListener('click', (e) => {
+    e.preventDefault();
+    filterState.lang = '';
+    langOverlay.hidePopover();
+    applyFilters();
+  });
+  allLi.appendChild(allContent);
+  langList.appendChild(allLi);
+
+  languages.forEach((lang) => {
+    const li = document.createElement('li');
+    li.className = 'ActionListItem';
+    li.setAttribute('role', 'none');
+    const content = document.createElement('a');
+    content.className = 'ActionListContent';
+    content.setAttribute('role', 'menuitemradio');
+    content.setAttribute('aria-checked', String(filterState.lang.toLowerCase() === lang.toLowerCase()));
+    const label = document.createElement('span');
+    label.className = 'ActionListItem-label';
+    label.textContent = lang;
+    content.appendChild(label);
+    content.addEventListener('click', (e) => {
+      e.preventDefault();
+      filterState.lang = lang;
+      langOverlay.hidePopover();
+      applyFilters();
+    });
+    li.appendChild(content);
+    langList.appendChild(li);
+  });
+
+  langBody.appendChild(langList);
+  langInner.appendChild(langBody);
+  langOverlay.appendChild(langInner);
+  langContainer.appendChild(langBtnEl);
+  langContainer.appendChild(langOverlay);
+  return langContainer;
 }
 
 /**
- * 切换原生 / 自定义筛选按钮。
- * tagMode=true 时隐藏原生 Type/Language/Sort，插入自定义 Language/Sort 按钮。
+ * Sort 合并组（R5 split button）：左段 = Sort by 菜单，右段 = 纯方向 icon
+ * （无文字，点击切换 asc/desc），中间只有一条竖线分隔（CSS 边框重叠）。
+ * asc（非默认）时整组 has-active 高亮。
  */
-export function updateNativeFilters(tagMode: boolean): void {
-  const typeBtn = document.querySelector('#stars-type-filter-menu-button');
-  const langBtn = document.querySelector('#stars-language-filter-menu-button');
-  const sortBtn = document.querySelector('#stars-sort-menu-button');
+function buildSortGroup(): HTMLElement {
+  const sortContainer = document.createElement('div');
+  sortContainer.className = 'stars-custom-filter mb-1 mb-lg-0 ml-2';
 
-  const typeMenu = typeBtn ? typeBtn.closest('action-menu') : null;
-  const langMenu = langBtn ? langBtn.closest('action-menu') : null;
-  const sortMenu = sortBtn ? sortBtn.closest('action-menu') : null;
+  const group = document.createElement('div');
+  group.className = 'gsm-sort-group';
+  if (filterState.direction === 'asc') group.classList.add('has-active');
 
-  if (tagMode) {
-    // 隐藏原生 Type / Language / Sort action-menu
-    if (typeMenu) (typeMenu as HTMLElement).style.display = 'none';
-    if (langMenu) (langMenu as HTMLElement).style.display = 'none';
-    if (sortMenu) (sortMenu as HTMLElement).style.display = 'none';
-
-    // 移除旧的自定义按钮
-    document.querySelectorAll('.stars-custom-filter').forEach(el => el.remove());
-
-    // 插入点：Tags 筛选按钮之后
-    const filterRow = getNativeFilterRow();
-    if (!filterRow) return;
-
-    const tagFilter = filterRow.querySelector('.stars-tag-filter');
-    const insertAfter = tagFilter || filterRow.firstChild;
-
-    // --- 自定义 Language 按钮 ---
-    const langContainer = document.createElement('div');
-    langContainer.className = 'stars-custom-filter mb-1 mb-lg-0';
-
-    // 收集筛选结果里出现的语言（忽略语言筛选本身）
-    const allResults = filterState.searchQuery
-      ? searchCacheRepos(filterState.searchQuery, true)
-      : getTagFilteredRepos(true);
-    const langSet = new Set<string>();
-    allResults.forEach(({ data }) => { if (data.lang) langSet.add(data.lang); });
-    const languages = Array.from(langSet).sort((a, b) => a.localeCompare(b));
-
-    const langBtnLabel = filterState.lang ? 'Language: ' + filterState.lang : 'Language';
-    const langBtnEl = document.createElement('button');
-    langBtnEl.type = 'button';
-    langBtnEl.id = 'stars-custom-lang-button';
-    langBtnEl.setAttribute('popovertarget', 'stars-custom-lang-overlay');
-    langBtnEl.setAttribute('aria-haspopup', 'true');
-    langBtnEl.className = 'Button--secondary Button--medium Button';
-    if (filterState.lang) langBtnEl.classList.add('has-active');
-    langBtnEl.innerHTML =
-      '<span class="Button-content"><span class="Button-label"></span></span>' +
-      '<span class="Button-visual Button-trailingAction">' +
-        TRIANGLE_DOWN_SVG +
-      '</span>';
-    const langLabelEl = langBtnEl.querySelector('.Button-label');
-    if (langLabelEl) langLabelEl.textContent = langBtnLabel;
-
-    const langOverlay = document.createElement('anchored-position');
-    langOverlay.id = 'stars-custom-lang-overlay';
-    langOverlay.setAttribute('anchor', 'stars-custom-lang-button');
-    langOverlay.setAttribute('align', 'start');
-    langOverlay.setAttribute('side', 'outside-bottom');
-    langOverlay.setAttribute('anchor-offset', 'normal');
-    langOverlay.setAttribute('popover', 'auto');
-
-    const langInner = document.createElement('div');
-    langInner.className = 'Overlay Overlay--size-auto';
-    const langBody = document.createElement('div');
-    langBody.className = 'Overlay-body Overlay-body--paddingNone';
-    const langList = document.createElement('ul');
-    langList.className = 'ActionListWrap--inset ActionListWrap';
-    langList.setAttribute('role', 'menu');
-
-    // "All languages" 选项
-    const allLi = document.createElement('li');
-    allLi.className = 'ActionListItem';
-    allLi.setAttribute('role', 'none');
-    const allContent = document.createElement('a');
-    allContent.className = 'ActionListContent';
-    allContent.setAttribute('role', 'menuitemradio');
-    allContent.setAttribute('aria-checked', String(!filterState.lang));
-    const allLabel = document.createElement('span');
-    allLabel.className = 'ActionListItem-label';
-    allLabel.textContent = 'All languages';
-    allContent.appendChild(allLabel);
-    allContent.addEventListener('click', (e) => {
-      e.preventDefault();
-      filterState.lang = '';
-      langOverlay.hidePopover();
-      applyFilters();
-      renderTagFilterBar();
-      refreshTagPillStates();
-    });
-    allLi.appendChild(allContent);
-    langList.appendChild(allLi);
-
-    languages.forEach((lang) => {
-      const li = document.createElement('li');
-      li.className = 'ActionListItem';
-      li.setAttribute('role', 'none');
-      const content = document.createElement('a');
-      content.className = 'ActionListContent';
-      content.setAttribute('role', 'menuitemradio');
-      content.setAttribute('aria-checked', String(filterState.lang.toLowerCase() === lang.toLowerCase()));
-      const label = document.createElement('span');
-      label.className = 'ActionListItem-label';
-      label.textContent = lang;
-      content.appendChild(label);
-      content.addEventListener('click', (e) => {
-        e.preventDefault();
-        filterState.lang = lang;
-        langOverlay.hidePopover();
-        applyFilters();
-        renderTagFilterBar();
-        refreshTagPillStates();
-      });
-      li.appendChild(content);
-      langList.appendChild(li);
-    });
-
-    langBody.appendChild(langList);
-    langInner.appendChild(langBody);
-    langOverlay.appendChild(langInner);
-    langContainer.appendChild(langBtnEl);
-    langContainer.appendChild(langOverlay);
-
-    // --- 自定义 Sort 按钮 ---
-    const sortContainer = document.createElement('div');
-    sortContainer.className = 'stars-custom-filter mb-1 mb-lg-0 ml-2';
-
-    const sortOptions: Array<{ key: SortKey; label: string }> = [
-      { key: 'stars', label: 'Most stars' },
-      { key: 'updated', label: 'Recently active' },
-      { key: 'created', label: 'Recently starred' }
-    ];
-    const sortBtnLabel = 'Sort by: ' + (sortOptions.find(o => o.key === filterState.sort) || sortOptions[0]).label;
-    const sortBtnEl = document.createElement('button');
-    sortBtnEl.type = 'button';
-    sortBtnEl.id = 'stars-custom-sort-button';
-    sortBtnEl.setAttribute('popovertarget', 'stars-custom-sort-overlay');
-    sortBtnEl.setAttribute('aria-haspopup', 'true');
-    sortBtnEl.className = 'Button--secondary Button--medium Button';
-    sortBtnEl.innerHTML =
-      '<span class="Button-content"><span class="Button-label"></span></span>' +
-      '<span class="Button-visual Button-trailingAction">' +
-        TRIANGLE_DOWN_SVG +
-      '</span>';
-    const sortLabelEl = sortBtnEl.querySelector('.Button-label');
-    if (sortLabelEl) sortLabelEl.textContent = sortBtnLabel;
-
-    const sortOverlay = document.createElement('anchored-position');
-    sortOverlay.id = 'stars-custom-sort-overlay';
-    sortOverlay.setAttribute('anchor', 'stars-custom-sort-button');
-    sortOverlay.setAttribute('align', 'start');
-    sortOverlay.setAttribute('side', 'outside-bottom');
-    sortOverlay.setAttribute('anchor-offset', 'normal');
-    sortOverlay.setAttribute('popover', 'auto');
-
-    const sortInner = document.createElement('div');
-    sortInner.className = 'Overlay Overlay--size-auto';
-    const sortBody = document.createElement('div');
-    sortBody.className = 'Overlay-body Overlay-body--paddingNone';
-    const sortList = document.createElement('ul');
-    sortList.className = 'ActionListWrap--inset ActionListWrap';
-    sortList.setAttribute('role', 'menu');
-
-    sortOptions.forEach((opt) => {
-      const li = document.createElement('li');
-      li.className = 'ActionListItem';
-      li.setAttribute('role', 'none');
-      const content = document.createElement('a');
-      content.className = 'ActionListContent';
-      content.setAttribute('role', 'menuitemradio');
-      content.setAttribute('aria-checked', String(filterState.sort === opt.key));
-      const label = document.createElement('span');
-      label.className = 'ActionListItem-label';
-      label.textContent = opt.label;
-      content.appendChild(label);
-      content.addEventListener('click', (e) => {
-        e.preventDefault();
-        filterState.sort = opt.key;
-        sortOverlay.hidePopover();
-        applyFilters();
-        renderTagFilterBar();
-        refreshTagPillStates();
-      });
-      li.appendChild(content);
-      sortList.appendChild(li);
-    });
-
-    sortBody.appendChild(sortList);
-    sortInner.appendChild(sortBody);
-    sortOverlay.appendChild(sortInner);
-    sortContainer.appendChild(sortBtnEl);
-    sortContainer.appendChild(sortOverlay);
-
-    // 把自定义按钮插到 Tags 之后
-    if (insertAfter && insertAfter.nextSibling) {
-      filterRow.insertBefore(langContainer, insertAfter.nextSibling);
-      filterRow.insertBefore(sortContainer, langContainer.nextSibling);
-    } else {
-      filterRow.appendChild(langContainer);
-      filterRow.appendChild(sortContainer);
-    }
-  } else {
-    // 恢复原生 action-menu
-    if (typeMenu) (typeMenu as HTMLElement).style.display = '';
-    if (langMenu) (langMenu as HTMLElement).style.display = '';
-    if (sortMenu) (sortMenu as HTMLElement).style.display = '';
-
-    // 移除自定义筛选按钮
-    document.querySelectorAll('.stars-custom-filter').forEach(el => el.remove());
+  // --- 左段：Sort by 菜单 ---
+  const sortBtnEl = document.createElement('button');
+  sortBtnEl.type = 'button';
+  sortBtnEl.id = 'stars-custom-sort-button';
+  sortBtnEl.setAttribute('popovertarget', 'stars-custom-sort-overlay');
+  sortBtnEl.setAttribute('aria-haspopup', 'true');
+  sortBtnEl.className = 'Button--secondary Button--medium Button';
+  sortBtnEl.innerHTML =
+    '<span class="Button-content"><span class="Button-label"></span></span>' +
+    '<span class="Button-visual Button-trailingAction">' +
+    TRIANGLE_DOWN_SVG +
+    '</span>';
+  const sortLabelEl = sortBtnEl.querySelector('.Button-label');
+  if (sortLabelEl) {
+    const active = SORT_OPTIONS.find((o) => o.key === filterState.sort) || SORT_OPTIONS[0];
+    sortLabelEl.textContent = 'Sort by: ' + active.label;
   }
+
+  // --- 右段：方向切换（纯 icon） ---
+  const dirBtn = document.createElement('button');
+  dirBtn.type = 'button';
+  dirBtn.id = 'stars-custom-dir-button';
+  dirBtn.className = 'Button--secondary Button--medium Button gsm-dir-btn';
+  const isAsc = filterState.direction === 'asc';
+  dirBtn.title = isAsc ? '排序方向：升序（点击切为降序）' : '排序方向：降序（点击切为升序）';
+  dirBtn.setAttribute('aria-label', '切换排序方向');
+  dirBtn.innerHTML =
+    '<span class="Button-content">' + (isAsc ? ARROW_UP_SVG : ARROW_DOWN_SVG) + '</span>';
+  dirBtn.addEventListener('click', () => {
+    filterState.direction = filterState.direction === 'desc' ? 'asc' : 'desc';
+    applyFilters();
+  });
+
+  group.append(sortBtnEl, dirBtn);
+  sortContainer.appendChild(group);
+
+  // --- Sort 菜单 overlay ---
+  const sortOverlay = document.createElement('anchored-position');
+  sortOverlay.id = 'stars-custom-sort-overlay';
+  sortOverlay.setAttribute('anchor', 'stars-custom-sort-button');
+  sortOverlay.setAttribute('align', 'start');
+  sortOverlay.setAttribute('side', 'outside-bottom');
+  sortOverlay.setAttribute('anchor-offset', 'normal');
+  sortOverlay.setAttribute('popover', 'auto');
+
+  const sortInner = document.createElement('div');
+  sortInner.className = 'Overlay Overlay--size-auto';
+  const sortBody = document.createElement('div');
+  sortBody.className = 'Overlay-body Overlay-body--paddingNone';
+  const sortList = document.createElement('ul');
+  sortList.className = 'ActionListWrap--inset ActionListWrap';
+  sortList.setAttribute('role', 'menu');
+
+  SORT_OPTIONS.forEach((opt) => {
+    const li = document.createElement('li');
+    li.className = 'ActionListItem';
+    li.setAttribute('role', 'none');
+    const content = document.createElement('a');
+    content.className = 'ActionListContent';
+    content.setAttribute('role', 'menuitemradio');
+    content.setAttribute('aria-checked', String(filterState.sort === opt.key));
+    const label = document.createElement('span');
+    label.className = 'ActionListItem-label';
+    label.textContent = opt.label;
+    content.appendChild(label);
+    content.addEventListener('click', (e) => {
+      e.preventDefault();
+      filterState.sort = opt.key;
+      sortOverlay.hidePopover();
+      applyFilters();
+    });
+    li.appendChild(content);
+    sortList.appendChild(li);
+  });
+
+  sortBody.appendChild(sortList);
+  sortInner.appendChild(sortBody);
+  sortOverlay.appendChild(sortInner);
+  sortContainer.appendChild(sortOverlay);
+  return sortContainer;
 }

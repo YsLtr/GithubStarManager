@@ -133,9 +133,8 @@ function updateGridCard(repoId: string): void {
   const notesEl = card.querySelector<HTMLElement>('.stars-card-notes');
   if (notesEl) renderNotes(notesEl);
 
-  // 正在标签筛选/搜索视图里：仓库已从缓存移除，重算筛选结果（无筛选条件时不触发，
-  // 避免 applyFilters 的退出自定义模式分支引发整页导航）
-  if (filterState.tags.length > 0 || filterState.searchQuery) applyFilters();
+  // 有筛选激活（tags/lang/search 任一）时：仓库已从缓存移除，重算筛选结果；无筛选（browse 态）不动
+  if (filterState.tags.length > 0 || filterState.lang || filterState.searchQuery) applyFilters();
 }
 
 /* ---------------- P4 全量同步的复用入口 ---------------- */

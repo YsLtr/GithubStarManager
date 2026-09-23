@@ -1,4 +1,4 @@
-import { applyFilters, inheritNativeFilters } from './filters';
+import { applyFilters } from './filters';
 import { filterState } from './state';
 import { refreshTagPillStates, renderTagFilterBar } from './ui/tagFilter';
 
@@ -26,7 +26,7 @@ export function interceptSearchForm(): void {
     }
   });
 
-  // 页面带 ?q= 参数时自动激活搜索
+  // 页面带 ?q= 参数时自动激活搜索（R6：q 沿用现有自动激活，不经 initFiltersFromUrl）
   const existingQ = new URLSearchParams(location.search).get('q');
   if (existingQ) {
     searchInput.value = existingQ;
@@ -34,25 +34,17 @@ export function interceptSearchForm(): void {
   }
 }
 
-/** 进入搜索模式：全量缓存搜索（4.0.0 起不再补充原生 HTML 结果） */
+/** 进入搜索：全量缓存搜索（4.0.0 起纯本地；4.1.0 起无「模式」概念，状态即真相） */
 export function activateSearch(query: string): void {
   if (!query) { clearSearch(); return; }
 
   filterState.searchQuery = query;
-  filterState.searchMode = true;
-
-  // 首次进入自定义模式时继承原生筛选
-  if (!filterState.tagMode) {
-    inheritNativeFilters();
-  }
-
-  applyFilters();                        // 立即渲染缓存搜索结果
+  applyFilters();
 }
 
-/** 退出搜索模式（tags 仍激活则保持 tag 模式） */
+/** 退出搜索（tags 仍激活则保持筛选态） */
 export function clearSearch(): void {
   filterState.searchQuery = '';
-  filterState.searchMode = false;
 
   const searchInput = document.querySelector<HTMLInputElement>('input[placeholder*="Search starred"]');
   if (searchInput) searchInput.value = '';
@@ -61,4 +53,3 @@ export function clearSearch(): void {
   renderTagFilterBar();
   refreshTagPillStates();
 }
-

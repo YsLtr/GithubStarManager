@@ -6,7 +6,7 @@ import wideCss from './styles/wide.css?inline';
 import { installBootHide, isStarsPage, revealBootHide, revealTurboHide } from './boot';
 import { getRepoIdMeta, getStarButton, getStarsMainColumn, hideListsSection, isStarButtonActive } from './dom';
 import { extractAndCacheRepoFromDetailPage } from './extract';
-import { exitCustomMode } from './filters';
+import { exitCustomMode, initFiltersFromUrl } from './filters';
 import { hasApiData, registerSyncMenu, runFullSync, scheduleProbeSync } from './fullSync';
 import { interceptPagination } from './pagination';
 import { registerTokenMenu } from './starCheck';
@@ -196,6 +196,8 @@ function transformAndReveal(animate: boolean, retries = 12): void {
 
   let done = false;
   try {
+    // URL 入口匹配（R6）：渲染管线跑之前把 sort/direction/language 对齐 URL（仅 URL 筛选参数变化时覆盖本地状态）
+    initFiltersFromUrl();
     done = transformStarsList();
   } catch (err) {
     console.error('[github-stars-grid] transformStarsList 执行失败', err);
