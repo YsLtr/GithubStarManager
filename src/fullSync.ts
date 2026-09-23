@@ -55,7 +55,7 @@ export interface SyncSummary {
 
 const PAGE_SIZE = 100;
 const MAX_PAGES = 200;
-const WAVE_CONCURRENCY = 5; // 波内并发数（次级限流硬限 100 并发；官方容忍区间 4-6 取中）
+const WAVE_CONCURRENCY = 6; // 波内并发数（官方容忍区间 4-6 取上限：基线 N 页 + 尾页恰好 6 个一波到齐，quiet 扫描单 RTT）
 const WAVE_GAP_MS = 1000; // 相邻发波最小间隔（官方建议：并发请求之间至少留 1s）
 const RATE_FLOOR = 10;
 /** ETag 快筛冷却：进页/frame 重渲染风暴下最多 60s 探一次 */
@@ -211,6 +211,8 @@ async function runWaves(
 /** 单遍扫描结果（4.0.8）：unchanged=全 304 免额度早退；synced=条目已就绪（正文页权威 + 304 页本地切片） */
 interface ScanUnchanged {
   kind: 'unchanged';
+  /** 应持久化的尾页越界 ETag：有值=写入；缺省=沿用存储值（unchanged 场景尾页不会转正） */
+  nextTailEtag?: string;
 }
 interface ScanSynced {
   kind: 'synced';
@@ -224,6 +226,8 @@ interface ScanSynced {
   freshIds: Set<string>;
   bodyPages: number;
   slicePages: number;
+  /** 应持久化的尾页越界 ETag：有值=写入（304 沿用 / 200 空刷新）；缺省=清空（尾页转正或整表兜底） */
+  nextTailEtag?: string;
 }
 type ScanOutcome = ScanUnchanged | ScanSynced;
 
@@ -334,7 +338,7 @@ async function fullPullOutcome(tok: string): Promise<ScanOutcome> {
 
 /**
  * 单遍扫描（4.0.8，合并原 quickCheck + pullAllStarred，用户定「无须两个函数」）：
- * - 有基线（≤48h TTL、逐页 etags 完整）→ 波次条件扫 1..N+1 页（尾页无条件探增长）：
+ * - 有基线（≤48h TTL、逐页 etags 完整）→ 波次条件扫 1..N+1 页（尾页带 tailEtag 条件探增长，304=仍空免额度）：
  *   全 304 且尾页空 → unchanged 免额度早退；否则 200 页收正文、304 页用本地切片组装（不重拉）；
  * - 无基线 / 超 TTL / 切片阀门失守（缓存缺 starred_at、切片盖不住、正文与切片重叠 <50%、尾页满页疑增长超一页）
  *   → 回落无条件整表（Link 预知总页）；
@@ -353,22 +357,29 @@ async function scanStarred(tok: string, meta: FullSyncMeta): Promise<ScanOutcome
     return fullPullOutcome(tok);
   }
 
-  // ① 波次条件扫描（尾页 N+1 无条件探增长）
+  // ① 波次条件扫描（尾页 N+1 带 tailEtag 条件探增长：304=越界仍空，0 额度 0 body）
   const baselinePages = baseline.length;
   const ctrl = new AbortController();
   const bodyPagesMap = new Map<number, PageFetch>();
   const modPages: number[] = [];
   const scanRange: number[] = [];
-  for (let p = 1; p <= baselinePages + 1; p++) scanRange.push(p);
+  for (let p = 1; p <= baselinePages + (baselinePages < MAX_PAGES ? 1 : 0); p++) scanRange.push(p); // 页数达上限不探尾（增长越界本就超收限）
   await runWaves(scanRange, ctrl, async (page) => {
-    const r = await fetchStarredPage(tok, page, ctrl.signal, page <= baselinePages ? baseline[page - 1] : undefined);
-    if (r.notModified) modPages.push(page);
-    else bodyPagesMap.set(page, r);
+    const r = await fetchStarredPage(tok, page, ctrl.signal, page <= baselinePages ? baseline[page - 1] : meta.tailEtag); // 尾页带越界 etag 条件探
+    if (r.notModified) {
+      if (page <= baselinePages) modPages.push(page); // 尾页 304 = 越界仍空：不算内容、不算变化
+    } else bodyPagesMap.set(page, r);
   });
+
+  // 尾页越界 ETag 维护（4.0.9 条件探尾）：304 = 越界仍空 → 沿用旧值（绝不从 304 回读）；
+  // 200 空 = 刷新；200 有货 = 尾页转正为内容页 → 清空（新越界页下次首探无条件、随后入库）
+  let nextTailEtag: string | undefined = meta.tailEtag;
+  const tailResp = bodyPagesMap.get(baselinePages + 1);
+  if (tailResp) nextTailEtag = tailResp.body.length > 0 ? undefined : tailResp.etag || undefined;
 
   // ② 变化判定：基线内任一 200（含空页=收缩）或尾页有货 = 有变化
   const hasChange = [...bodyPagesMap.entries()].some(([p, bp]) => bp.body.length > 0 || p <= baselinePages);
-  if (!hasChange) return { kind: 'unchanged' };
+  if (!hasChange) return { kind: 'unchanged', nextTailEtag };
 
   // ③ 正文解析（红线：一条解析失败=整体放弃）；真内容页数 = 304 页与非空正文页的最大者
   const parsedBodies = new Map<number, RemoteStar[]>();
@@ -447,6 +458,7 @@ async function scanStarred(tok: string, meta: FullSyncMeta): Promise<ScanOutcome
     freshIds,
     bodyPages: contentPages - slicePages,
     slicePages,
+    nextTailEtag,
   };
 }
 
@@ -508,6 +520,7 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
       gmSet(STORAGE_KEYS.fullSyncMeta, {
         ...storedMeta,
         ...(healedEt ? { etags: healedEt } : {}),
+        ...(scan.nextTailEtag ? { tailEtag: scan.nextTailEtag } : {}),
         lastFullSyncAt: Date.now(),
       });
       return { pages: 0, total: storedMeta.count ?? 0, added: 0, restored: 0, unstarred: 0, backfilled: 0, shiftCleared: 0 };
@@ -602,6 +615,7 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
     document.querySelector('.gsm-setup-banner')?.remove(); // 同步成功即撤配置横幅（缓存已就绪）
     // 写元数据：逐页 ETag 基线（304 页沿用旧校验值、正文页用响应值，剥 W/ 规范形）+ 首页 etag（兼容旧字段）+ lastFullSyncAt + 总数
     const outMeta: FullSyncMeta = { etag: scan.etag, etags: scan.etags, lastFullSyncAt: Date.now(), count: scan.items.length };
+    if (scan.nextTailEtag) outMeta.tailEtag = scan.nextTailEtag; // 尾页越界 etag（缺省=清空：尾页转正或整表兜底后新越界页待首探）
     gmSet(STORAGE_KEYS.fullSyncMeta, outMeta);
     const noEtag = scan.etags.filter((e) => !e).length;
     console.log(`[github-stars-grid] ETag 基线：${scan.etags.length} 页已保存${noEtag ? `（${noEtag} 页响应缺 ETag 头，下次扫描直接整表）` : '（下次扫描逐页 304 免额度）'}`);

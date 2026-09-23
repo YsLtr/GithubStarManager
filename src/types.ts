@@ -71,6 +71,8 @@ export interface FullSyncMeta {
   etag?: string;
   /** 逐页 ETag 基线（4.0.4 快筛）：强校验规范形（4.0.5 剥 W/），全部 304 才算无变化；含空值则下次直接整表重建 */
   etags?: string[];
+  /** 尾页（内容页数 +1）的越界空页 ETag（4.0.9 条件探尾：304=仍空免额度；200 空=刷新；尾页转正/整表兜底后清空） */
+  tailEtag?: string;
   /** 上次成功整表的时间戳 */
   lastFullSyncAt?: number;
   /** 上次整表的 star 总数（本地分页总页数 = ceil(count/30)） */
