@@ -2,15 +2,17 @@
 //
 // 数据源：GET /user/starred?per_page=100&page=N，Accept: application/vnd.github.star+json
 // → [{ starred_at, repository }]（官方 Starring 文档：该 Accept 才带 starred_at；
-//   4.0.7 起波次并发拉取：5 并发/波、发波间隔 ≥1s，第 1 页 Link 头预知总页）。
+//   4.0.8 起单遍扫描 scanStarred：波次条件请求一把梭——200 页收正文、304 页用本地切片复用缓存
+//   （官方默认序 sort=created&direction=desc 已显式钉死；请求 URL 带参数会换 ETag 表示，升级后首扫全 200 重建基线属预期）。
 //
 // 权威边界（AGENTS「数据同步设计决策」）：
 // - 远端权威 = 星标成员关系、star 时间、仓库元数据（desc/lang/stars/forks/updatedAt）；
 // - 本地权威 = 标签与备注（本模块绝不触碰 tags/notes 的写接口）。
 //
 // 差异三向：
-// - 本地有、远端无 → 外部 unstar：整表拉取本身即权威确认（无需逐条双 404），走
-//   starCheck 的宽限区管线（缓存→pendingDelete + 标签/备注备份 + 快照清 + 卡片翻转）；
+// - 本地有、远端无 → 外部 unstar：全正文模式整表即权威（直接走 starCheck 宽限区管线：缓存→pendingDelete +
+//   标签/备注备份 + 快照清 + 卡片翻转）；切片混合模式 local-only 嫌疑先逐条 GET /user/starred/{o}/{r} 双态核对
+//   （204=仍 star=切片平局误报保留 / 404=真取关），防同秒 starred_at 跨页互换造成假取关；
 // - 远端有、本地无 → 新 star 建缓存条目；若在 24h 宽限区内则走 markRepoStarred 恢复
 //   （标签/备注连同恢复）再合并远端元数据；
 // - 交集 → 回填 starredAt（解锁 Sort「Recently starred」，AGENTS D5c）+ 元数据刷新。
@@ -19,7 +21,8 @@
 // 半张表绝不能当整表用，否则未拉到的页会被全部误判成外部 unstar。
 //
 // 触发：TM 菜单「🔄 立即全量同步」/ 配置横幅「立即同步」/ 标题行 Sync（手动，无 token 先弹配置）+ 进页自动（2s 后，60s 冷却，逐页 ETag 快筛）。
-// 「立即同步」各入口；runFullSync 先逐页 If-None-Match 条件快筛（304 不计主限流，全部 304 免额度退出），命中才整表。
+// 「立即同步」各入口；runFullSync 单遍扫描（4.0.8 合并原 quickCheck+pullAllStarred）：逐页 If-None-Match 一把梭，
+// 全 304 免额度早退；200 页收正文、304 页用本地切片（缓存 starred_at 降序复算）组装，无基线/超 TTL/阀门失守回落无条件整表。
 // 新增/恢复/确认各自走既有管线（写次数 = 差异数）。
 //
 // 已知局限：classic token 无 repo scope 时私有仓库的 star 不在列表里 → 会被误判
@@ -31,7 +34,8 @@ import { applyExternalUnstar, getGitHubPat, promptForToken, recordVerdict } from
 import { notifyTokenIssue } from './tokenConfig';
 import { loadPendingDelete, markRepoStarred } from './storage/pendingDelete';
 import { loadRepoCache, saveRepoCache, saveRepoData } from './storage/repoCache';
-import type { FullSyncMeta, RepoData, ShiftPendingMap } from './types';
+import type { FullSyncMeta, RepoCache, RepoData, ShiftPendingMap } from './types';
+
 interface RemoteStar {
   repoId: string;
   path: string;
@@ -104,37 +108,48 @@ interface PageFetch {
   etag: string;
   link: string | null;
   body: unknown[];
+  /** 304 条件命中：无 body；etag 字段无意义（绝不回读，4.0.4 交替坑），调用方沿用旧基线 */
+  notModified?: boolean;
 }
 
-/** 拉取单页（401/403/非 2xx/速率余量/非数组一律抛错——调用方保证不落地半张表） */
-async function fetchStarredPage(tok: string, page: number, signal: AbortSignal): Promise<PageFetch> {
+/** starred API 统一请求头（If-None-Match 可选：条件快筛用） */
+function apiHeaders(tok: string, ifNoneMatch?: string): Record<string, string> {
+  const h: Record<string, string> = {
+    Authorization: `Bearer ${tok}`,
+    Accept: 'application/vnd.github.star+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+  if (ifNoneMatch) h['If-None-Match'] = ifNoneMatch;
+  return h;
+}
+
+/** 401/403 → 人话（限速类附退避提示）；上报统一走 reportAuthIssue（文案单一来源） */
+function authIssueMessage(resp: Response): string {
+  const retryAfter = resp.headers.get('retry-after');
+  const exhausted = resp.headers.get('x-ratelimit-remaining') === '0';
+  if (resp.status === 401) return 'token 无效（401），已上报到初始化面板';
+  if (resp.status === 403) {
+    if (retryAfter) return `触发次级速率限制（retry-after ${retryAfter}s），稍后再试`;
+    if (exhausted) return '主速率限制已用尽，稍后再试';
+    return '403 权限不足（fine-grained 需 Starring → Write）';
+  }
+  return `HTTP ${resp.status}`;
+}
+
+/** 拉取单页（条件可选：命中 304 → notModified；401/403/非 2xx/速率余量/非数组一律抛错——调用方保证不落地半张表） */
+async function fetchStarredPage(tok: string, page: number, signal: AbortSignal, ifNoneMatch?: string): Promise<PageFetch> {
   const resp = await fetch(pageUrl(page), {
     cache: 'no-store', // 不读不写浏览器缓存：否则 60s 内的缓存命中/304 合并会让 JS 看到假 200
     signal,
-    headers: {
-      Authorization: `Bearer ${tok}`,
-      Accept: 'application/vnd.github.star+json',
-      'X-GitHub-Api-Version': '2022-11-28',
-    },
+    headers: apiHeaders(tok, ifNoneMatch),
   });
-  if (resp.status === 401) {
-    notifyTokenIssue('401 Bad credentials：Token 已失效或被撤销');
-    throw new Error('token 无效（401），已上报到初始化面板');
+  if (resp.status === 304) {
+    // 条件命中：无 body；etag 绝不从 304 响应回读（4.0.4 交替坑），调用方沿用旧基线
+    return { page, etag: '', link: null, body: [], notModified: true };
   }
-  if (resp.status === 403) {
-    const retryAfter = resp.headers.get('retry-after');
-    const exhausted = resp.headers.get('x-ratelimit-remaining') === '0';
-    if (!retryAfter && !exhausted) {
-      // 排除限速后的 403 才是权限问题：上报初始化面板（官方 troubleshooting 判定）
-      notifyTokenIssue('403 权限不足：fine-grained 需 Account permissions → Starring → Write + All repositories');
-    }
-    throw new Error(
-      retryAfter
-        ? `触发次级速率限制（retry-after ${retryAfter}s），稍后再试`
-        : exhausted
-          ? '主速率限制已用尽，稍后再试'
-          : '403 权限不足（fine-grained 需 Starring → Write）'
-    );
+  if (resp.status === 401 || resp.status === 403) {
+    reportAuthIssue(resp);
+    throw new Error(authIssueMessage(resp));
   }
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
@@ -193,20 +208,85 @@ async function runWaves(
   if (firstErr !== null) throw firstErr;
 }
 
+/** 单遍扫描结果（4.0.8）：unchanged=全 304 免额度早退；synced=条目已就绪（正文页权威 + 304 页本地切片） */
+interface ScanUnchanged {
+  kind: 'unchanged';
+}
+interface ScanSynced {
+  kind: 'synced';
+  items: RemoteStar[];
+  pages: number;
+  etag: string | undefined;
+  etags: string[];
+  /** true=304 页用了本地切片（local-only 嫌疑须逐条 API 核对后才判外部 unstar）；false=全正文权威 */
+  hybrid: boolean;
+  /** 来自正文响应的条目 id（交集元数据刷新只对这些做；切片条目缓存即现值） */
+  freshIds: Set<string>;
+  bodyPages: number;
+  slicePages: number;
+}
+type ScanOutcome = ScanUnchanged | ScanSynced;
+
 /**
- * 分页拉全量（无条件整表；4.0.7 改波次并发）；任何不完整信号都抛错
- * （调用方保证不落地半张表——半张表绝不能当整表用）。
- * 第 1 页先行拿 Link 头预知总页 → 页 2..N 分波并发 → 结果按页序组装；
- * 逐页 ETag 基线下标即页码（快筛依赖该对应关系，绝不能乱序）。
+ * 本地切片：缓存全集按 starred_at 降序（与 API 显式排序 sort=created&direction=desc 同序）每 PAGE_SIZE 切一页。
+ * 304 页的内容=上次同步=缓存切片，无须重拉；缓存任一条目缺 star 时间 → 切片不可信，返回 null 走整表兜底。
+ * 同秒 starred_at 平局的跨页互换不追求逐条对位，由 runFullSync 的逐条核对兜底。
  */
-async function pullAllStarred(tok: string): Promise<{ items: RemoteStar[]; pages: number; etag: string | undefined; etags: string[] }> {
+function buildLocalSlices(cache: RepoCache): RemoteStar[][] | null {
+  const entries = Object.entries(cache);
+  if (entries.length === 0) return null;
+  for (const [, e] of entries) {
+    if (!e.starredAt) return null; // 阀门 A：缺 star 时间 → 排序模型失效
+  }
+  const sorted = entries
+    .map(([repoId, e]) => ({ repoId, e }))
+    .sort((a, b) => (a.e.starredAt! < b.e.starredAt! ? 1 : -1)); // ISO 串直接比较，降序
+  const slices: RemoteStar[][] = [];
+  for (let i = 0; i < sorted.length; i += PAGE_SIZE) {
+    slices.push(
+      sorted.slice(i, i + PAGE_SIZE).map(({ repoId, e }) => ({
+        repoId,
+        path: e.name || '',
+        starredAt: e.starredAt,
+        meta: { name: e.name, desc: e.desc, lang: e.lang, stars: e.stars, forks: e.forks, updatedAt: e.updatedAt },
+      })),
+    );
+  }
+  return slices;
+}
+
+/**
+ * 单条核对：GET /user/starred/{owner}/{repo} → false=仍 star（204，切片误报）/ true=已取关（404）/ null=不可判定。
+ * 仅切片混合模式的 local-only 嫌疑用（每条 1 点额度）；全正文模式整表即权威，不走这里。
+ */
+async function checkStarredGone(tok: string, path: string): Promise<boolean | null> {
+  if (!path || !path.includes('/')) return null;
+  try {
+    const resp = await fetch(`https://api.github.com/user/starred/${path}`, {
+      cache: 'no-store',
+      headers: apiHeaders(tok),
+    });
+    if (resp.status === 204) return false;
+    if (resp.status === 404) return true;
+    if (resp.status === 401 || resp.status === 403) reportAuthIssue(resp);
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 无条件整表兜底（无基线 / 超 48h TTL / 切片阀门失守共用）：第 1 页先行拿 Link 头预知总页 →
+ * 页 2..N 波次并发 → 按页序组装校验；任何不完整信号都抛错（红线：不落地半张表）。
+ */
+async function pullAllUnconditional(tok: string): Promise<{ items: RemoteStar[]; pages: number; etag: string | undefined; etags: string[] }> {
   const ctrl = new AbortController();
   const first = await fetchStarredPage(tok, 1, ctrl.signal);
+  if (first.notModified) throw new Error('无条件拉取收到 304（不应发生）');
   const totalPages = parseTotalPages(first.link) ?? 1;
   if (totalPages > MAX_PAGES) {
     throw new Error(`超过 ${MAX_PAGES} 页上限（Link 预知 ${totalPages} 页），结果不完整，整体放弃`);
   }
-
   const results = new Array<PageFetch | undefined>(totalPages + 1);
   results[1] = first;
   if (totalPages > 1) {
@@ -216,30 +296,158 @@ async function pullAllStarred(tok: string): Promise<{ items: RemoteStar[]; pages
       results[page] = await fetchStarredPage(tok, page, ctrl.signal);
     });
   }
-
-  // 按页序组装 + 完整性校验：缺页 / 解析失败 / 拉到解不出 → 抛错，一行数据都不落地
   const items: RemoteStar[] = [];
   const etags: string[] = [];
   let rawSeen = 0;
-  let parseMisses = 0;
   for (let p = 1; p <= totalPages; p++) {
     const r = results[p];
-    if (!r) throw new Error(`第 ${p} 页未取回（并发中断），整体放弃`);
+    if (!r || r.notModified) throw new Error(`第 ${p} 页未取回（并发中断），整体放弃`);
     etags.push(r.etag);
     rawSeen += r.body.length;
     for (const raw of r.body) {
-      const parsed = parseItem(raw);
-      if (parsed) items.push(parsed);
-      else parseMisses += 1;
+      const it = parseItem(raw);
+      if (!it) throw new Error(`第 ${p} 页有解析失败条目（响应形态不符），整体放弃`);
+      items.push(it);
     }
-  }
-  if (parseMisses > 0) {
-    throw new Error(`${parseMisses}/${rawSeen} 条解析失败（响应形态不符），整体放弃`);
   }
   if (rawSeen > 0 && items.length === 0) {
     throw new Error(`拉到 ${rawSeen} 条但解析为 0（响应形态不符），整体放弃`);
   }
   return { items, pages: totalPages, etag: etags[0] || undefined, etags };
+}
+
+/** 无条件兜底结果打包（hybrid=false：全正文权威，local-only 不需核对） */
+async function fullPullOutcome(tok: string): Promise<ScanOutcome> {
+  const full = await pullAllUnconditional(tok);
+  return {
+    kind: 'synced',
+    items: full.items,
+    pages: full.pages,
+    etag: full.etag,
+    etags: full.etags,
+    hybrid: false,
+    freshIds: new Set(full.items.map((it) => it.repoId)),
+    bodyPages: full.pages,
+    slicePages: 0,
+  };
+}
+
+/**
+ * 单遍扫描（4.0.8，合并原 quickCheck + pullAllStarred，用户定「无须两个函数」）：
+ * - 有基线（≤48h TTL、逐页 etags 完整）→ 波次条件扫 1..N+1 页（尾页无条件探增长）：
+ *   全 304 且尾页空 → unchanged 免额度早退；否则 200 页收正文、304 页用本地切片组装（不重拉）；
+ * - 无基线 / 超 TTL / 切片阀门失守（缓存缺 starred_at、切片盖不住、正文与切片重叠 <50%、尾页满页疑增长超一页）
+ *   → 回落无条件整表（Link 预知总页）；
+ * - 红线不变：缺页 / 解析失败 / 超页上限 → 抛错，一个字节不落地。
+ * 切片合法性：官方序按 starred_at 降序且请求显式钉死；任何成员变化必然使受影响页 ETag
+ * 翻转变 200 → 304 页内容=上次同步=本地缓存切片，无「集合变了页还 304」的盲区。
+ */
+async function scanStarred(tok: string, meta: FullSyncMeta): Promise<ScanOutcome> {
+  const baseline = meta.etags?.map(normEtag);
+  const baselineOk =
+    !!meta.lastFullSyncAt &&
+    Date.now() - meta.lastFullSyncAt <= FULL_SYNC_TTL_MS &&
+    !!baseline && baseline.length > 0 && baseline.every((e) => !!e);
+  if (!baselineOk) {
+    console.log('[github-stars-grid] 无逐页基线/超 48h TTL → 无条件整表拉取（重建基线）');
+    return fullPullOutcome(tok);
+  }
+
+  // ① 波次条件扫描（尾页 N+1 无条件探增长）
+  const baselinePages = baseline.length;
+  const ctrl = new AbortController();
+  const bodyPagesMap = new Map<number, PageFetch>();
+  const modPages: number[] = [];
+  const scanRange: number[] = [];
+  for (let p = 1; p <= baselinePages + 1; p++) scanRange.push(p);
+  await runWaves(scanRange, ctrl, async (page) => {
+    const r = await fetchStarredPage(tok, page, ctrl.signal, page <= baselinePages ? baseline[page - 1] : undefined);
+    if (r.notModified) modPages.push(page);
+    else bodyPagesMap.set(page, r);
+  });
+
+  // ② 变化判定：基线内任一 200（含空页=收缩）或尾页有货 = 有变化
+  const hasChange = [...bodyPagesMap.entries()].some(([p, bp]) => bp.body.length > 0 || p <= baselinePages);
+  if (!hasChange) return { kind: 'unchanged' };
+
+  // ③ 正文解析（红线：一条解析失败=整体放弃）；真内容页数 = 304 页与非空正文页的最大者
+  const parsedBodies = new Map<number, RemoteStar[]>();
+  let rawSeen = 0;
+  for (const [p, bp] of bodyPagesMap) {
+    const arr: RemoteStar[] = [];
+    rawSeen += bp.body.length;
+    for (const raw of bp.body) {
+      const it = parseItem(raw);
+      if (!it) throw new Error(`第 ${p} 页有解析失败条目（响应形态不符），整体放弃`);
+      arr.push(it);
+    }
+    parsedBodies.set(p, arr);
+  }
+  let contentPages = 0;
+  for (const p of modPages) contentPages = Math.max(contentPages, p);
+  for (const [p, arr] of parsedBodies) if (arr.length > 0) contentPages = Math.max(contentPages, p);
+
+  // ④ 切片阀门：需要切片但缓存不可切 → 无条件整表兜底
+  const needSlicePages = modPages.filter((p) => p <= contentPages);
+  let slices: RemoteStar[][] | null = null;
+  if (needSlicePages.length > 0) {
+    const built = buildLocalSlices(loadRepoCache());
+    let usable = built !== null && needSlicePages.every((p) => p <= built.length);
+    if (usable && built) {
+      for (const [p, arr] of parsedBodies) {
+        if (p > contentPages || arr.length === 0) continue; // 空正文页=合法收缩，不比对
+        const expectedIds = new Set(built[p - 1].map((it) => it.repoId));
+        if (expectedIds.size === 0) continue;
+        let overlap = 0;
+        for (const it of arr) if (expectedIds.has(it.repoId)) overlap += 1;
+        if (overlap / Math.max(expectedIds.size, arr.length) < 0.5) {
+          console.log(`[github-stars-grid] 切片阀门：第 ${p} 页正文与本地切片重叠过低（${overlap}/${Math.max(expectedIds.size, arr.length)}）→ 排序模型失真`);
+          usable = false;
+          break;
+        }
+      }
+    }
+    if (!usable) {
+      console.log('[github-stars-grid] 本地切片不可用（缓存缺 star 时间/覆盖不足/模型失真）→ 回落无条件整表');
+      return fullPullOutcome(tok);
+    }
+    slices = built;
+  }
+  if ((parsedBodies.get(baselinePages + 1)?.length ?? 0) >= PAGE_SIZE) {
+    console.log('[github-stars-grid] 尾页满页（增长可能超一页）→ 回落无条件整表');
+    return fullPullOutcome(tok);
+  }
+
+  // ⑤ 按页序组装：正文页用响应、304 页用本地切片；切片平局互换造成的重复只计一次
+  const items: RemoteStar[] = [];
+  const freshIds = new Set<string>();
+  const seen = new Set<string>();
+  const etags: string[] = [];
+  let slicePages = 0;
+  for (let p = 1; p <= contentPages; p++) {
+    const body = parsedBodies.get(p);
+    if (!body && !slices) throw new Error(`第 ${p} 页需切片但切片不可用（内部状态异常），整体放弃`);
+    etags.push(body ? bodyPagesMap.get(p)!.etag : baseline[p - 1] ?? '');
+    const source: RemoteStar[] = body ?? slices![p - 1] ?? [];
+    if (!body) slicePages += 1;
+    for (const it of source) {
+      if (seen.has(it.repoId)) continue;
+      seen.add(it.repoId);
+      items.push(it);
+      if (body) freshIds.add(it.repoId);
+    }
+  }
+  return {
+    kind: 'synced',
+    items,
+    pages: contentPages,
+    etag: etags[0] || undefined,
+    etags,
+    hybrid: slicePages > 0,
+    freshIds,
+    bodyPages: contentPages - slicePages,
+    slicePages,
+  };
 }
 
 /** 仍 star 的位移挂起直接结案（成员关系已被整表证实；unstar 的由宽限管线清） */
@@ -256,120 +464,9 @@ function clearShiftPendingForStarred(starredIds: Set<string>): number {
   return n;
 }
 
-/** starred 列表第 page 页 URL */
+/** starred 列表第 page 页 URL（显式钉死排序：sort=created=按 star 时间、direction=desc——本地切片复算依赖此序，绝不改） */
 function pageUrl(page: number): string {
-  return `https://api.github.com/user/starred?per_page=${PAGE_SIZE}&page=${page}`;
-}
-
-
-/** 快筛判定：unchanged=逐页全 304（无变化免额度）；changed-byte=任一页 200 字节已变（可能仅元数据抖动）→ 整表比对确认；
- *  changed=结构性变化（尾页变长/基线缺失/超 48h TTL）；error=网络/鉴权问题本次跳过 */
-type QuickVerdict = 'unchanged' | 'changed' | 'changed-byte' | 'error';
-
-/**
- * 逐页 ETag 条件快筛（4.0.4 修「首页 304 就跳过、中部变化漏检」；4.0.7 改波次并发）：
- * - 每页各带自己的 If-None-Match（官方每页独立 ETag；304 不计主限流）；全部 304 才算无变化；
- * - 波次并发扫描（5 并发/波、发波间隔 ≥1s），任一页 200 = 字节已变即定论——停发后续波
- *   并中止在途请求（位移会让后续页全部失效，不浪费请求）→ 调用方整表；
- * - 基线之外再无条件探一页：有条目 = 总数变长（新增落点不可预设）仍判有变化；
- * - 基线缺失/含空值、超 48h TTL → 直接 changed（整表重建基线）；
- * - 401 / 403（非限速）→ notifyTokenIssue 上报初始化面板（常驻填 token 框），返回 error。
- */
-async function quickCheck(tok: string, meta: FullSyncMeta): Promise<QuickVerdict> {
-  if (!meta.lastFullSyncAt || Date.now() - meta.lastFullSyncAt > FULL_SYNC_TTL_MS) {
-    console.log(`[github-stars-grid] ETag 快筛跳过（${meta.lastFullSyncAt ? '超 48h TTL' : '无基线'}）→ 整表同步`);
-    return 'changed';
-  }
-  const etags = meta.etags?.map(normEtag); // 存量 W/ 前缀读取时统一剥掉（弱比较等价，实测 304）
-  if (!etags || etags.length === 0 || etags.some((e) => !e)) {
-    console.log('[github-stars-grid] ETag 快筛：无逐页基线（旧版单 etag 或缺数据）→ 整表重建基线');
-    return 'changed';
-  }
-
-  const ctrl = new AbortController();
-  let verdict: QuickVerdict | null = null; // 定论后 runWaves 见信号即停发后续波
-  let changedPage = 0;
-  const decide = (v: QuickVerdict, page = 0): void => {
-    // changed-byte（真变化信号）优先于 error：同波另有请求失败时整表也只会因
-    // 同样的失败走红线安全退出（数据不受影响），而 error 会把这次真变化信号丢掉。
-    if (v === 'changed-byte' && verdict !== 'changed-byte') {
-      verdict = v;
-      changedPage = page;
-    } else if (verdict === null) {
-      verdict = v;
-    } else {
-      return; // 已有定论，不覆盖
-    }
-    ctrl.abort(); // 中止在途请求（省带宽/额度）
-  };
-
-  const checks: number[] = [];
-  for (let i = 0; i < etags.length; i++) checks.push(i + 1);
-  await runWaves(checks, ctrl, async (page) => {
-    if (verdict !== null) return; // 定论后同波尚未发车的任务直接让路
-    let resp: Response;
-    try {
-      resp = await fetch(pageUrl(page), {
-        cache: 'no-store',
-        signal: ctrl.signal,
-        headers: {
-          Authorization: `Bearer ${tok}`,
-          Accept: 'application/vnd.github.star+json',
-          'X-GitHub-Api-Version': '2022-11-28',
-          'If-None-Match': etags[page - 1],
-        },
-      });
-    } catch (err) {
-      if (verdict === null) { // 主动中止不算失败
-        console.log('[github-stars-grid] ETag 快筛网络失败，本次跳过:', err instanceof Error ? err.message : err);
-        decide('error');
-      }
-      return;
-    }
-    if (verdict !== null) return; // 定论后的迟到响应直接丢弃
-    if (resp.status === 200) {
-      decide('changed-byte', page);
-      return;
-    }
-    if (resp.status !== 304) {
-      reportAuthIssue(resp);
-      console.log(`[github-stars-grid] ETag 快筛 HTTP ${resp.status}，本次跳过`);
-      decide('error');
-    }
-  });
-
-  if (verdict === 'changed-byte') {
-    console.log(`[github-stars-grid] ETag 快筛：第 ${changedPage} 页 200 → 字节已变（可能只是仓库元数据抖动，非收藏变动）→ 整表比对确认`);
-    return 'changed-byte';
-  }
-  if (verdict === 'error') return 'error';
-
-  // 尾页之外再探一页（无条件）：有条目 = 总数变长，仍判有变化
-  try {
-    const extra = await fetch(pageUrl(etags.length + 1), {
-      cache: 'no-store',
-      signal: ctrl.signal,
-      headers: {
-        Authorization: `Bearer ${tok}`,
-        Accept: 'application/vnd.github.star+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
-    });
-    if (extra.status !== 200) {
-      reportAuthIssue(extra);
-      console.log(`[github-stars-grid] ETag 快筛尾页 HTTP ${extra.status}，本次跳过`);
-      return 'error';
-    }
-    const tail: unknown = await extra.json();
-    if (Array.isArray(tail) && tail.length > 0) {
-      console.log(`[github-stars-grid] ETag 快筛：尾页之外还有 ${tail.length} 条 → 列表变长，整表同步`);
-      return 'changed';
-    }
-  } catch (err) {
-    console.log('[github-stars-grid] ETag 快筛尾页探测失败，本次跳过:', err instanceof Error ? err.message : err);
-    return 'error';
-  }
-  return 'unchanged';
+  return `https://api.github.com/user/starred?per_page=${PAGE_SIZE}&page=${page}&sort=created&direction=desc`;
 }
 
 /** 鉴权失败统一上报：401 与非限速 403 → 初始化面板（常驻填 token 框）；限速类只由上层日志 */
@@ -400,11 +497,11 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
 
   syncing = true;
   try {
-    // 条件快筛（4.0.4）：逐页 If-None-Match（每页独立 ETag），全部 304 才算无变化；
-    // 任一页 200 / 基线缺失或不完整 / 超 48h TTL → 整表。快筛中的 401/403（非限速）上报初始化面板。
+    // 单遍扫描（4.0.8）：逐页 If-None-Match 一把梭——全 304 免额度早退；200 页收正文、
+    // 304 页用本地切片复用缓存（starred_at 降序复算，不重拉）；无基线/超 TTL/阀门失守 → 无条件整表。
     const storedMeta = gmGet<FullSyncMeta>(STORAGE_KEYS.fullSyncMeta, {});
-    const verdict = await quickCheck(tok, storedMeta);
-    if (verdict === 'unchanged') {
+    const scan = await scanStarred(tok, storedMeta);
+    if (scan.kind === 'unchanged') {
       console.log(`[github-stars-grid] ETag 304：${(storedMeta.etags ?? []).length} 页全部无变化（免额度），跳过整表比对`);
       // 修 304/200 交替：校验值发出去的就是服务端验证过的值，绝不从 304 响应头回读覆盖；
       const healedEt = storedMeta.etags?.map(normEtag);
@@ -415,23 +512,36 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
       });
       return { pages: 0, total: storedMeta.count ?? 0, added: 0, restored: 0, unstarred: 0, backfilled: 0, shiftCleared: 0 };
     }
-    if (verdict === 'error') return null;
-    console.log('[github-stars-grid] ★ P4 全量拉取开始（GET /user/starred，每页 100）…');
-    const { items, pages, etag, etags } = await pullAllStarred(tok);
-    const remoteMap = new Map(items.map((it) => [it.repoId, it]));
+    console.log(
+      `[github-stars-grid] ★ P4 扫描：${scan.pages} 页（正文 ${scan.bodyPages} + 本地切片 ${scan.slicePages}，` +
+        `${scan.hybrid ? '切片混合模式：local-only 嫌疑逐条核对' : '全正文权威模式'}）→ 三向比对…`
+    );
+    const remoteMap = new Map(scan.items.map((it) => [it.repoId, it]));
 
-    // A. 外部 unstar：本地缓存有、远端无 → 整表即权威确认，走既有宽限管线
+    // A. 外部 unstar：本地缓存有、远端无 → 走既有宽限管线。
+    // 全正文模式：整表即权威确认；切片混合模式：嫌疑先逐条 GET 核对（204=切片平局误报保留 / 404=真取关）。
     const cacheBefore = loadRepoCache();
     let unstarred = 0;
     for (const repoId of Object.keys(cacheBefore)) {
       if (remoteMap.has(repoId)) continue;
+      if (scan.hybrid) {
+        const gone = await checkStarredGone(tok, cacheBefore[repoId].name || '');
+        if (gone === false) {
+          console.log(`[github-stars-grid] 嫌疑核对：${cacheBefore[repoId].name || repoId} 仍 star（切片平局误报），保留`);
+          continue;
+        }
+        if (gone === null) {
+          console.log(`[github-stars-grid] 嫌疑核对不可判定（网络/异常状态），本轮不动：${cacheBefore[repoId].name || repoId}`);
+          continue;
+        }
+      }
       if (applyExternalUnstar(repoId, cacheBefore[repoId].name || '')) {
         recordVerdict(repoId, 'unstarred');
         unstarred += 1;
       }
     }
 
-    // B. 远端有、本地无：宽限区内 = re-star 恢复；否则 = 新 star 建条目
+    // B. 远端有、本地无：宽限区内 = re-star 恢复；否则 = 新 star 建条目（切片条目必在缓存，天然不进这里）
     const pending = loadPendingDelete();
     let restored = 0;
     let added = 0;
@@ -449,7 +559,7 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
       }
     }
 
-    // C. 交集：回填 star 时间 + 元数据刷新（一次写盘）
+    // C. 交集：回填 star 时间 + 元数据刷新（一次写盘）；切片条目缓存即现值（304 证明未变），跳过刷新不计数
     const cache = loadRepoCache();
     let backfilled = 0;
     let refreshed = 0;
@@ -460,6 +570,7 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
         entry.starredAt = it.starredAt;
         backfilled += 1;
       }
+      if (!scan.freshIds.has(it.repoId)) continue; // 切片条目：304 证明未变，不写不数
       const m = it.meta;
       let metaChanged = false;
       if (m.desc !== undefined && entry.desc !== m.desc) { entry.desc = m.desc; metaChanged = true; }
@@ -475,8 +586,8 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
     const shiftCleared = clearShiftPendingForStarred(new Set(remoteMap.keys()));
 
     const summary: SyncSummary = {
-      pages,
-      total: items.length,
+      pages: scan.pages,
+      total: scan.items.length,
       added,
       restored,
       unstarred,
@@ -484,16 +595,16 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
       shiftCleared,
     };
     console.log(
-      `[github-stars-grid] ★ P4 全量同步完成：${summary.total} 个 star / ${pages} 页 — 新增 ${added}、` +
-        `恢复 ${restored}、外部 unstar ${unstarred}、回填 star 时间 ${backfilled}、` +
-        `元数据刷新 ${refreshed}、位移挂起结算 ${shiftCleared}`
+      `[github-stars-grid] ★ P4 全量同步完成：${summary.total} 个 star / ${scan.pages} 页` +
+        `（正文 ${scan.bodyPages} + 切片 ${scan.slicePages}）— 新增 ${added}、恢复 ${restored}、外部 unstar ${unstarred}、` +
+        `回填 star 时间 ${backfilled}、元数据刷新 ${refreshed}、位移挂起结算 ${shiftCleared}`
     );
     document.querySelector('.gsm-setup-banner')?.remove(); // 同步成功即撤配置横幅（缓存已就绪）
-    // 写元数据（4.0.5）：逐页 ETag 基线（剥 W/ 规范形）+ 首页 etag（兼容旧字段）+ lastFullSyncAt（TTL/isApiData）+ 总数；
-    const outMeta: FullSyncMeta = { etag, etags, lastFullSyncAt: Date.now(), count: items.length };
+    // 写元数据：逐页 ETag 基线（304 页沿用旧校验值、正文页用响应值，剥 W/ 规范形）+ 首页 etag（兼容旧字段）+ lastFullSyncAt + 总数
+    const outMeta: FullSyncMeta = { etag: scan.etag, etags: scan.etags, lastFullSyncAt: Date.now(), count: scan.items.length };
     gmSet(STORAGE_KEYS.fullSyncMeta, outMeta);
-    const noEtag = etags.filter((e) => !e).length;
-    console.log(`[github-stars-grid] ETag 基线：${etags.length} 页已保存${noEtag ? `（${noEtag} 页响应缺 ETag 头，下次快筛直接整表）` : '（下次快筛逐页 304 免额度）'}`);
+    const noEtag = scan.etags.filter((e) => !e).length;
+    console.log(`[github-stars-grid] ETag 基线：${scan.etags.length} 页已保存${noEtag ? `（${noEtag} 页响应缺 ETag 头，下次扫描直接整表）` : '（下次扫描逐页 304 免额度）'}`);
     return summary;
   } catch (err) {
     console.error(
