@@ -31,7 +31,7 @@ export const TOKEN_TEMPLATE_URL =
   'https://github.com/settings/personal-access-tokens/new' +
   '?name=GithubStarsGrid' +
   '&description=Stars%20Grid%20userscript%20-%20only%20Account%20permission%3A%20Starring%20write' +
-  '&expires_in=none' +
+  '&expires_in=90' +
   '&starring=write';
 
 /** 打开预填好的创建页：走 gmOpenInTab（TM 菜单回调无用户激活，裸 window.open 会被弹窗拦截静默吞掉） */

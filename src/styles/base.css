@@ -391,14 +391,10 @@
     min-width: 0;
   }
 
-  .gsm-top-pager,
-  .gsm-sync-btn {
+  .gsm-top-pager {
     flex: none;
   }
 
-  .gsm-sync-btn .octicon {
-    margin-right: 4px;
-  }
   /* 翻页进行中：按钮内转圈（文字透明但占位保留 → 宽度不变无跳动；spinner 自带颜色） */
   .gsm-pager-loading {
     position: relative;
@@ -547,7 +543,7 @@ html.gsm-turbo-entry .stars-grid-container {
   animation: gsm-grid-in 0.3s ease both;
 }
 
-/* 4.0.0 配置横幅（无全量缓存时挂在列表上方：引导配置 token / 立即同步） */
+/* 4.0.0 配置横幅（无全量缓存时挂在列表上方：引导配置 token / 粘贴保存；手动同步只在 TM 菜单） */
 .gsm-setup-banner {
   display: flex;
   align-items: center;

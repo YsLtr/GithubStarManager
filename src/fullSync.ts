@@ -18,15 +18,15 @@
 // 完整性红线：分页中断 / 解析失败 / 超页数上限一律整体放弃（catch 里不改任何数据）——
 // 半张表绝不能当整表用，否则未拉到的页会被全部误判成外部 unstar。
 //
-// 触发：标题行「Sync」按钮（手动，无 token 先弹配置）+ 快照消失 > 12 自动
-// （snapshot.handleMissing，60s 冷却）。写放大控制：交集回填 load/save 各一次整表，
+// 触发：TM 菜单「🔄 立即全量同步」（手动，无 token 先弹配置）+ 进页 ETag 探测到变化时自动；
+// （runFullSync 首页同样带 If-None-Match：304 免额度直接跳过整表）。写放大控制：交集回填 load/save 各一次整表，
 // 新增/恢复/确认各自走既有管线（写次数 = 差异数）。
 //
 // 已知局限：classic token 无 repo scope 时私有仓库的 star 不在列表里 → 会被误判
 // unstar（与 P2.5 核对的 404 歧义同源）；fine-grained 选 All repositories 无此问题。
 
-import { STORAGE_KEYS, SYNC_SVG } from './constants';
-import { gmGet, gmSet } from './gm';
+import { STORAGE_KEYS } from './constants';
+import { gmGet, gmRegisterMenuCommand, gmSet } from './gm';
 import { applyExternalUnstar, getGitHubPat, promptForToken, recordVerdict } from './starCheck';
 import { notifyTokenIssue } from './tokenConfig';
 import { loadPendingDelete, markRepoStarred } from './storage/pendingDelete';
@@ -88,7 +88,7 @@ function parseItem(raw: unknown): RemoteStar | null {
 }
 
 /** 分页拉全量；任何不完整信号都抛错（调用方保证不落地半张表） */
-async function pullAllStarred(tok: string): Promise<{ items: RemoteStar[]; pages: number; etag: string | undefined }> {
+async function pullAllStarred(tok: string, ifNoneMatch?: string): Promise<{ items: RemoteStar[]; pages: number; etag: string | undefined; notModified?: boolean }> {
   const items: RemoteStar[] = [];
   let pages = 0;
   let rawSeen = 0;
@@ -98,6 +98,7 @@ async function pullAllStarred(tok: string): Promise<{ items: RemoteStar[]; pages
     const resp = await fetch(`https://api.github.com/user/starred?per_page=${PAGE_SIZE}&page=${page}`, {
       cache: 'no-store', // 不读不写浏览器缓存：否则 60s 内的缓存命中/304 合并会让 JS 看到假 200
       headers: {
+        ...(ifNoneMatch ? { 'If-None-Match': ifNoneMatch } : {}),
         Authorization: `Bearer ${tok}`,
         Accept: 'application/vnd.github.star+json',
         'X-GitHub-Api-Version': '2022-11-28',
@@ -105,6 +106,7 @@ async function pullAllStarred(tok: string): Promise<{ items: RemoteStar[]; pages
     });
     // 首页 ETag 抓一次（后续 probeAndSync 的 If-None-Match 基线）
     if (page === 1) etag = resp.headers.get('etag') ?? undefined;
+    if (page === 1 && resp.status === 304) return { items: [], pages: 0, etag, notModified: true };
     if (resp.status === 401) {
       notifyTokenIssue('401 Bad credentials：Token 已失效或被撤销');
       throw new Error('token 无效（401），已上报到初始化面板');
@@ -187,7 +189,17 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
   syncing = true;
   console.log('[github-stars-grid] ★ P4 全量拉取开始（GET /user/starred，每页 100）…');
   try {
-    const { items, pages, etag } = await pullAllStarred(tok);
+    // ETag 查重（4.0.3）：任何入口（菜单/保存后/进页探测落空）的整表都先带 If-None-Match，
+    // 304 = 无变化免额度跳过；超 TTL 不带条件（强制全量刷新元数据）
+    const storedMeta = gmGet<FullSyncMeta>(STORAGE_KEYS.fullSyncMeta, {});
+    const metaFresh = !!storedMeta.lastFullSyncAt && Date.now() - storedMeta.lastFullSyncAt <= FULL_SYNC_TTL_MS;
+    const ifNoneMatch = storedMeta.etag && metaFresh ? storedMeta.etag : undefined;
+    const { items, pages, etag, notModified } = await pullAllStarred(tok, ifNoneMatch);
+    if (notModified) {
+      console.log('[github-stars-grid] ETag 304：star 列表无变化（免额度），跳过整表比对');
+      gmSet(STORAGE_KEYS.fullSyncMeta, { etag: etag ?? ifNoneMatch, lastFullSyncAt: Date.now(), count: storedMeta.count ?? 0 });
+      return { pages: 0, total: storedMeta.count ?? 0, added: 0, restored: 0, unstarred: 0, backfilled: 0, shiftCleared: 0 };
+    }
     const remoteMap = new Map(items.map((it) => [it.repoId, it]));
 
     // A. 外部 unstar：本地缓存有、远端无 → 整表即权威确认，走既有宽限管线
@@ -273,6 +285,13 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
   }
 }
 
+/** TM 菜单：立即全量同步（唯一手动同步入口；横幅与标题行按钮已 4.0.3 移除，手动同步只留菜单） */
+export function registerSyncMenu(): void {
+  gmRegisterMenuCommand('🔄 立即全量同步（GitHub API）', () => {
+    void runFullSync('button');
+  });
+}
+
 /** API 数据就绪 = 至少完整整表过一次（全量缓存可渲染 = API 主模式前提） */
 export function hasApiData(): boolean {
   const meta = gmGet<FullSyncMeta>(STORAGE_KEYS.fullSyncMeta, {});
@@ -334,41 +353,3 @@ async function probeAndSync(): Promise<void> {
 }
 
 
-/**
- * 标题行同步按钮：插在顶部翻页器左侧（父容器 .gsm-header-row，h2 flex:1
- * 撑开剩余宽度 → 按钮与翻页器一起贴右）。随 transform 完整重建同步。
- * loading 复用 gsm-pager-loading（文字透明占位 + ::before 转圈）。
- */
-export function mountSyncButton(row: HTMLElement): void {
-  row.querySelector('.gsm-sync-btn')?.remove();
-  const pager = row.querySelector('.gsm-top-pager');
-
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'Button Button--secondary Button--medium gsm-sync-btn';
-  btn.title = '同步 GitHub 全量 star 列表（P4 整表比对 + 回填 star 时间）';
-  btn.innerHTML = SYNC_SVG + ' Sync';
-  btn.addEventListener('click', () => {
-    void syncFromButton(btn);
-  });
-
-  if (pager) row.insertBefore(btn, pager);
-  else row.appendChild(btn);
-}
-
-async function syncFromButton(btn: HTMLButtonElement): Promise<void> {
-  if (syncing || btn.classList.contains('gsm-pager-loading')) return;
-  btn.classList.add('gsm-pager-loading');
-  btn.setAttribute('aria-busy', 'true');
-  try {
-    const sum = await runFullSync('button');
-    if (sum) {
-      btn.title =
-        `上次同步：${sum.total} 个 star / ${sum.pages} 页 — 新增 ${sum.added}、恢复 ${sum.restored}、` +
-        `外部 unstar ${sum.unstarred}、回填 star 时间 ${sum.backfilled}`;
-    }
-  } finally {
-    btn.classList.remove('gsm-pager-loading');
-    btn.removeAttribute('aria-busy');
-  }
-}

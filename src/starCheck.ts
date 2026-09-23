@@ -25,7 +25,7 @@ import { renderNotes } from './ui/notes';
 import { renderTags } from './ui/tagFilter';
 import type { PendingDeleteMap, RepoCache, VerdictMap } from './types';
 
-import { detectTokenKind, notifyTokenSaved, openTokenCreator } from './tokenConfig';
+import { detectTokenKind, notifyTokenIssue, notifyTokenSaved, openTokenCreator } from './tokenConfig';
 /* ---------------- token ---------------- */
 
 export function getGitHubPat(): string {
@@ -34,16 +34,16 @@ export function getGitHubPat(): string {
 
 
 /** TM 菜单入口：输入/清除 PAT。任意 github.com 页面可设（init 无条件注册）。 */
-/** 输入/清除 PAT（TM 菜单与 P4 同步按钮无 token 时共用） */
+/** 输入/清除 PAT（TM 菜单入口；留空 = 删除 token 并重新打开初始化面板） */
 export function promptForToken(notify = true): void {
   const cur = getGitHubPat();
   const masked = cur ? `${cur.slice(0, 12)}…${cur.slice(-4)}` : '未设置';
   const input = window.prompt(
-    'GitHub PAT，用于外部 unstar 核对（P2.5）与 P4 全量同步（Sync 按钮）。\n' +
+    'GitHub PAT，用于全量同步 star 列表与外部 star 变化核对。\n' +
       '· classic：ghp_ 前缀；核对/同步私有仓库需勾选 repo scope（仅公开仓库可不勾）\n' +
       '· fine-grained：github_pat_ 前缀；账号权限 Account permissions → Starring → Write（读列表 Read 也行，但本脚本加星/去星按钮要 Write），\n' +
       '  仓库范围选 All repositories\n' +
-      '（留空 = 删除当前 token；保存后立即生效）\n\n' +
+      '（留空 = 删除当前 token 并重新打开配置面板；保存后立即生效）\n\n' +
       `当前：${masked}`,
     ''
   );
@@ -52,6 +52,7 @@ export function promptForToken(notify = true): void {
   if (!tok) {
     gmSet(STORAGE_KEYS.githubPat, '');
     console.log('[github-stars-grid] token 已清除，外部 unstar 核对与 P4 同步暂停');
+    notifyTokenIssue('Token 已清除'); // 重开初始化面板（4.0.3：留空清除后不再静默消失）
     return;
   }
   const kind = detectTokenKind(tok);
@@ -66,7 +67,7 @@ export function promptForToken(notify = true): void {
 
 /** TM 菜单入口：任意 github.com 页面可设（init 无条件注册） */
 export function registerTokenMenu(): void {
-  gmRegisterMenuCommand('⭐ 设置 GitHub Token（核对 + P4 全量同步）', () => {
+  gmRegisterMenuCommand('⭐ 设置 GitHub Token', () => {
     promptForToken();
   });
   gmRegisterMenuCommand('🔑 快捷创建 GitHub Token（预填最小权限）', () => {

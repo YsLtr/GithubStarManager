@@ -70,9 +70,9 @@ src/
   boot.ts            document-start 防闪烁隐藏生命周期（FOUC）
   pagination.ts      本地分页拦截（4.0.0：只拦 data-gsm-page 零网络；原 fetch 换入路径已删）
   starCheck.ts       PAT 菜单、裁决缓存、外部 unstar 宽限管线（4.0.0：双 404 核对队列已删，P4 整表即权威确认）
-  tokenConfig.ts       快捷 Token 配置（Template URL 预填 starring=write、剪贴板粘贴、保存回调）与 401/403(非限速) 失效上报（4.0.2：面板化 setTokenIssueHandler 替代居中弹窗，经 gm.gmOpenInTab 开页；独立成模块防 starCheck→filters→cards 循环导入）
+  tokenConfig.ts       快捷 Token 配置（Template URL 预填 starring=write + expires_in=90、剪贴板粘贴、保存回调）与 401/403(非限速) 失效上报（4.0.2：面板化 setTokenIssueHandler 替代居中弹窗，经 gm.gmOpenInTab 开页；独立成模块防 starCheck→filters→cards 循环导入）
   snapshot.ts        确认 unstar 后清历史快照（4.0.0：recordArrival/位移挂起链已删，仅留 purge 回调）
-  fullSync.ts        P4 全量同步：Sync 按钮、整表 diff、star 时间回填（REST star+json）
+  fullSync.ts        P4 全量同步：整表 diff、star 时间回填（REST star+json）；4.0.3 手动入口 = TM 菜单 registerSyncMenu，runFullSync 首页带 If-None-Match（TTL 内 304 免额度早退）
   storage/
     repoCache.ts      仓库缓存 CRUD
     tags.ts           标签存储 + 备注键规则 + 迁移
@@ -126,7 +126,7 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
     ├─ probeAndSync() 进页 idle 自动探（ETag 304/未变免拉、超 TTL 强制整表）
     │        │                                      ├─ 详情页 ─► extractAndCacheRepoFromDetailPage()
     │        └─ pullAllStarred() 整表 diff          └─ 无缓存首访 ─► 原生页 + .gsm-setup-banner
-    │             │                                   （「设置 token / 立即同步」→ runFullSync → transformAndReveal）
+    │             │                                   （配置入口 = TM 菜单/横幅；保存成功 savedHandler 自动 runFullSync → transformAndReveal；手动同步只在 TM 菜单）
     │             ├─ 新增/恢复 ─► saveRepoData / markRepoStarred
     │             ├─ 远端无本地有 ─► applyExternalUnstar（宽限管线）+ recordVerdict
     │             └─ 交集 ─► 回填 starredAt + 刷新元数据
@@ -242,12 +242,13 @@ unstar 时数据不会立即删除，而是移入 `stars_pending_delete` 并记�
 
 用户访问仓库详情页时，脚本提取元数据写入缓存，使从未在 Stars 页浏览过的仓库也能在跨页筛选时显示完整卡片。
 
-### P4 全量同步与进页自动探测（Sync 按钮 3.1.0；4.0.0 升 API 主模式）
+### P4 全量同步与进页自动探测（3.1.0；4.0.0 升 API 主模式；4.0.3 手动入口收敛 TM 菜单 + 一律 ETag 条件化）
 
 `fullSync.ts`：`GET /user/starred?per_page=100&page=N` + `Accept: application/vnd.github.star+json`（带 `starred_at`；页间 100ms、速率余量 <10 放弃、超 200 页放弃、任一条解析失败整体放弃）。整表 diff 三向——本地有远端无 → `applyExternalUnstar()` 走待删除区宽限管线（**整表拉取即权威确认**，跳过逐条双 404，写 7d 裁决）；远端有本地无 → `saveRepoData()` 建条目 / 宽限区内 `markRepoStarred()` 恢复；交集 → 回填 `starredAt` + 刷新 desc/lang/stars/forks/updatedAt（`updated` 展示文本保留旧值）。**完整性红线**：任何不完整信号都抛错、catch 不改任何数据。
-**4.0.0 增强**：`pullAllStarred` 带 `If-None-Match` 条件请求（304 免额度免拉），元数据写 `stars_full_sync_meta`（`etag`/`lastFullSyncAt`/`count`）；transform 成功后 `probeAndSync()` 进页 idle 自动探（无变化免拉、超 TTL 强制整表）；`hasApiData()` = 有 PAT + `meta.count>0` 决定渲染模式；触发 = 标题行 **Sync** 手动（无 token 先弹 `promptForToken`）+ 进页自动 probe（原「快照消失 >12 → scheduleFullSync」入口已删）。
+**4.0.0 增强**：`pullAllStarred` 带 `If-None-Match` 条件请求（304 免额度免拉），元数据写 `stars_full_sync_meta`（`etag`/`lastFullSyncAt`/`count`）；transform 成功后 `probeAndSync()` 进页 idle 自动探（无变化免拉、超 TTL 强制整表）；`hasApiData()` = 有 PAT + `meta.count>0` 决定渲染模式；触发（4.0.3 起）= TM 菜单「🔄 立即全量同步」手动（无 token 先弹 `promptForToken`；标题行 Sync 按钮 4.0.3 已删）+ 进页自动 probe（原「快照消失 >12 → scheduleFullSync」入口 4.0.0 已删）。
 **4.0.1 增强**：①配置面板顶窗落位——`showSetupBanner` 替换 Lists 槽位的空态 `div.blankslate`（0 list）或 `#profile-lists-container`（有 list，本就隐藏），都不在则退回 prepend；网格态由 `hideListsSection`（blankslate 判定）+ base.css 静态 `> div.blankslate{display:none!important}` 静默隐藏（「有 list 也整体隐藏」不变）；②PAT 三入口统一走 `tokenConfig.ts`：横幅内联粘贴行 / 快速获取官方 Template URL（`starring=write` 一跳预填最小权限）/ TM 菜单，保存回调 `notifyTokenSaved` → savedHandler 撤横幅 + 自动 `runFullSync('button')`；③`notifyTokenIssue` 在 401 与「排除限速的 403」（无 retry-after 且 x-ratelimit-remaining≠0）弹一键更新窗，依据官方 troubleshooting 判定。
 **4.0.2 修正**：①`probeAndSync` 与 `pullAllStarred` 的 fetch 加 `cache:'no-store'`——GitHub API 回 `Cache-Control: public, max-age=60`，浏览器缓存会直接回 200（不发请求）或把本地 304 合并成 200 返回 JS，导致每次进页误判「有变化」而整表；配合三条诊断日志（ETag 基线保存 / 探测 200 / 快筛跳过原因）。官方规则（best-practices「Use conditional requests」）：正确带 Authorization 的 304 不计主限流；②开新页统一走 `gm.gmOpenInTab`（TM 菜单回调无用户激活，裸 window.open 被弹窗拦截静默吞掉），`@grant` 增 GM_openInTab；③失效上报 `setTokenIssueHandler` → `showSetupBanner(detail)` 面板文案刷新，modal 及其 CSS 已删。
+**4.0.3 增强**：①**任何整表入口都条件化**——原 菜单/保存后 手动调 `runFullSync` → `pullAllStarred` 不带 If-None-Match 永远 200 整表；现 runFullSync 读 meta，TTL(48h) 内首页带条件，304 → `notModified` 早退（只刷 `lastFullSyncAt` 保基线），超 TTL 不带条件强制全量；probe 判定不变。②**手动同步收敛 TM 菜单**——新增 `registerSyncMenu()`（init 注册，无 token 自动弹配置）；横幅「立即同步」按钮与 `mountSyncButton/syncFromButton` 删除（`SYNC_SVG`、`.gsm-sync-btn` CSS、transform 调用同清），保存成功自动同步（savedHandler）不变。③Template URL `expires_in=none` → `90`（官方参数表：1–366 整数或 `none`，默认 30 天）。④`promptForToken` 留空：原本只清存储静默 return，现补 `notifyTokenIssue('Token 已清除')` → 初始化面板重现。⑤界面/菜单去 P2.5/P4 等开发表述（仅控制台与注释保留）。
 
 ### 星星按钮（4.0.0：纯 API）
 

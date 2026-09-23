@@ -6,7 +6,7 @@ import { installBootHide, isStarsPage, revealBootHide, revealTurboHide } from '.
 import { getRepoIdMeta, getStarButton, getStarsMainColumn, hideListsSection, isStarButtonActive } from './dom';
 import { extractAndCacheRepoFromDetailPage } from './extract';
 import { exitCustomMode } from './filters';
-import { hasApiData, runFullSync, scheduleProbeSync } from './fullSync';
+import { hasApiData, registerSyncMenu, runFullSync, scheduleProbeSync } from './fullSync';
 import { interceptPagination } from './pagination';
 import { promptForToken, registerTokenMenu } from './starCheck';
 import {
@@ -225,7 +225,7 @@ function transformAndReveal(animate: boolean, retries = 12): void {
 
 /**
  * 4.0.0 配置横幅：无全量缓存（首次升级 / 未配 token）时显示在列表上方。
- * 「设置 token」打开 TM 菜单同款输入框；「立即同步」跑 P4 全量拉取，
+ * 「设置 token」打开 TM 菜单同款输入框；保存成功自动全量同步，手动同步入口只在 TM 菜单，
  * 成功后 hasApiData 变 true → 重新 transformAndReveal 出网格。
  */
 function showSetupBanner(issueDetail?: string): void {
@@ -293,31 +293,8 @@ function showSetupBanner(issueDetail?: string): void {
   setup.textContent = '手动设置';
   setup.addEventListener('click', () => promptForToken());
 
-  const sync = document.createElement('button');
-  sync.className = 'btn';
-  sync.type = 'button';
-  sync.textContent = '立即同步';
-  sync.addEventListener('click', () => {
-    if (sync.disabled) return;
-    sync.disabled = true;
-    sync.classList.add('gsm-pager-loading');
-    sync.setAttribute('aria-busy', 'true');
-    void (async () => {
-      try {
-        const summary = await runFullSync('button');
-        if (summary) {
-          bar.remove();
-          transformAndReveal(false);
-        }
-      } finally {
-        sync.disabled = false;
-        sync.classList.remove('gsm-pager-loading');
-        sync.removeAttribute('aria-busy');
-      }
-    })();
-  });
 
-  bar.append(quick, setup, sync, tokRow);
+  bar.append(quick, setup, tokRow);
   // 顶窗落位：替换 Lists 槽位里的空态（0 个 list）或已建 list 容器（有 list 时该容器
   // 本就被 hideListsSection/CSS 隐藏）；都不在则退回旧行为挂列首
   const slot = document.querySelector('#user-profile-frame > div');
@@ -330,7 +307,7 @@ function showSetupBanner(issueDetail?: string): void {
 /** 面板主文案：默认 = 首次配置引导；issueDetail = Token 失效/权限不足等具体问题（4.0.2 面板化） */
 function bannerMessage(issueDetail?: string): string {
   if (issueDetail) return `🔑 ${issueDetail} —— 请用下方按钮重新配置 Token，保存后会自动全量同步恢复。`;
-  return '⭐ Stars Grid 4.0 需要一次性全量同步（GitHub API）：可一键预填权限创建 Token，或手动填写，再立即同步。';
+  return '⭐ Stars Grid 4.0 需要一次性全量同步（GitHub API）：可一键预填权限创建 Token，或手动填写；保存后会自动开始全量同步。';
 }
 
 function registerNavListeners(): void {
@@ -447,6 +424,8 @@ function init(): void {
   registerNavListeners();
   // TM 菜单：任意匹配页都可设置/清除核对用 PAT
   registerTokenMenu();
+  // 手动同步唯一入口（4.0.3：横幅与标题行的手动同步按钮均已移除）
+  registerSyncMenu();
 
   // Token 保存成功（横幅内联 / 失效弹窗 / TM 菜单 prompt 任一入口）→ 撤配置横幅 + 自动全量同步
   setTokenSavedHandler(() => {
