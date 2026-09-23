@@ -30,11 +30,11 @@
 
 import { STORAGE_KEYS, SYNC_SVG } from './constants';
 import { gmGet, gmRegisterMenuCommand, gmSet } from './gm';
-import { applyExternalUnstar, getGitHubPat, promptForToken, recordVerdict } from './starCheck';
+import { applyExternalUnstar, getGitHubPat, promptForToken } from './starCheck';
 import { notifyTokenIssue } from './tokenConfig';
 import { loadPendingDelete, markRepoStarred } from './storage/pendingDelete';
 import { loadRepoCache, saveRepoCache, saveRepoData } from './storage/repoCache';
-import type { FullSyncMeta, RepoCache, RepoData, ShiftPendingMap } from './types';
+import type { FullSyncMeta, RepoCache, RepoData } from './types';
 
 interface RemoteStar {
   repoId: string;
@@ -50,7 +50,6 @@ export interface SyncSummary {
   restored: number;
   unstarred: number;
   backfilled: number;
-  shiftCleared: number;
 }
 
 const PAGE_SIZE = 100;
@@ -97,10 +96,21 @@ function parseItem(raw: unknown): RemoteStar | null {
   };
 }
 
-/** starred 列表 Link 头 → 总页数（CORS 暴露 Link；无 Link = 单页列表） */
+/**
+ * starred 列表 Link 头 → 总页数。
+ * - 无 Link 头 = 单页列表 → 1；
+ * - 有 Link 头却解析不到 rel="last" → null（调用方必须当错误抛掉，绝不猜页数）。
+ * 4.0.10 审查修复（🔴）：GitHub 按请求参数顺序回显 Link（URL 尾是 &sort=…&direction=desc>），
+ * 旧正则 /page=(\d+)>;\s*rel="last"/ 恒失配 → 调用方 ?? 1 把整表当 1 页 → 未拉到的页
+ * 全被误判成外部 unstar → 标签/备注 24h 宽限后永久删除。现改为定位 rel="last" 的整段
+ * 再抽 page 参数（[?&] 前缀防 per_page 误匹配），参数顺序无关。
+ */
 function parseTotalPages(link: string | null): number | null {
-  const m = link?.match(/page=(\d+)>;\s*rel="last"/);
-  return m ? Number(m[1]) : null;
+  if (!link) return 1;
+  const m = link.match(/<[^>]*[?&]page=(\d+)[^>]*>;\s*rel="last"/);
+  if (m) return Number(m[1]);
+  // Link 有 next 却无 last = 头部形态异常：页数不可知，交给红线抛错；无 next 的零散头视为单页
+  return link.includes('rel="next"') ? null : 1;
 }
 
 interface PageFetch {
@@ -287,7 +297,11 @@ async function pullAllUnconditional(tok: string): Promise<{ items: RemoteStar[];
   const ctrl = new AbortController();
   const first = await fetchStarredPage(tok, 1, ctrl.signal);
   if (first.notModified) throw new Error('无条件拉取收到 304（不应发生）');
-  const totalPages = parseTotalPages(first.link) ?? 1;
+  const totalPages = parseTotalPages(first.link);
+  if (totalPages === null) {
+    // 红线：页数不可知绝不能猜（4.0.10 修 ?? 1 → 1 页误判 → 假外部取关批量删数据的定时雷）
+    throw new Error('Link 头含 rel="next" 却解析不到 rel="last"（总页数不可知），整体放弃');
+  }
   if (totalPages > MAX_PAGES) {
     throw new Error(`超过 ${MAX_PAGES} 页上限（Link 预知 ${totalPages} 页），结果不完整，整体放弃`);
   }
@@ -462,19 +476,6 @@ async function scanStarred(tok: string, meta: FullSyncMeta): Promise<ScanOutcome
   };
 }
 
-/** 仍 star 的位移挂起直接结案（成员关系已被整表证实；unstar 的由宽限管线清） */
-function clearShiftPendingForStarred(starredIds: Set<string>): number {
-  const pending = gmGet<ShiftPendingMap>(STORAGE_KEYS.shiftPending, {});
-  let n = 0;
-  for (const id of Object.keys(pending)) {
-    if (starredIds.has(id)) {
-      delete pending[id];
-      n += 1;
-    }
-  }
-  if (n > 0) gmSet(STORAGE_KEYS.shiftPending, pending);
-  return n;
-}
 
 /** starred 列表第 page 页 URL（显式钉死排序：sort=created=按 star 时间、direction=desc——本地切片复算依赖此序，绝不改） */
 function pageUrl(page: number): string {
@@ -523,7 +524,7 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
         ...(scan.nextTailEtag ? { tailEtag: scan.nextTailEtag } : {}),
         lastFullSyncAt: Date.now(),
       });
-      return { pages: 0, total: storedMeta.count ?? 0, added: 0, restored: 0, unstarred: 0, backfilled: 0, shiftCleared: 0 };
+      return { pages: 0, total: storedMeta.count ?? 0, added: 0, restored: 0, unstarred: 0, backfilled: 0 };
     }
     console.log(
       `[github-stars-grid] ★ P4 扫描：${scan.pages} 页（正文 ${scan.bodyPages} + 本地切片 ${scan.slicePages}，` +
@@ -549,7 +550,6 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
         }
       }
       if (applyExternalUnstar(repoId, cacheBefore[repoId].name || '')) {
-        recordVerdict(repoId, 'unstarred');
         unstarred += 1;
       }
     }
@@ -595,9 +595,6 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
     }
     saveRepoCache(cache);
 
-    // D. 位移挂起结算（远端仍 star 的直接清）
-    const shiftCleared = clearShiftPendingForStarred(new Set(remoteMap.keys()));
-
     const summary: SyncSummary = {
       pages: scan.pages,
       total: scan.items.length,
@@ -605,12 +602,11 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
       restored,
       unstarred,
       backfilled,
-      shiftCleared,
     };
     console.log(
       `[github-stars-grid] ★ P4 全量同步完成：${summary.total} 个 star / ${scan.pages} 页` +
         `（正文 ${scan.bodyPages} + 切片 ${scan.slicePages}）— 新增 ${added}、恢复 ${restored}、外部 unstar ${unstarred}、` +
-        `回填 star 时间 ${backfilled}、元数据刷新 ${refreshed}、位移挂起结算 ${shiftCleared}`
+        `回填 star 时间 ${backfilled}、元数据刷新 ${refreshed}`
     );
     document.querySelector('.gsm-setup-banner')?.remove(); // 同步成功即撤配置横幅（缓存已就绪）
     // 写元数据：逐页 ETag 基线（304 页沿用旧校验值、正文页用响应值，剥 W/ 规范形）+ 首页 etag（兼容旧字段）+ lastFullSyncAt + 总数

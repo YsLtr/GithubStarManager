@@ -1,6 +1,7 @@
 import { getRepoIdMeta, getSidebarAbout, getToggler, isStarredInToggler } from './dom';
 import { saveRepoData } from './storage/repoCache';
 import { formatRelative } from './utils';
+import type { RepoData } from './types';
 
 /** 从 "1,234" / "1.2k" 这类文案里解析出数字 */
 function parseCount(text: string): number {
@@ -54,12 +55,13 @@ export function extractAndCacheRepoFromDetailPage(): void {
 
   const about = getSidebarAbout();
 
-  // 只缓存当前用户已 star 的仓库
-  if (about && about.star) {
-    if (about.star.viewerHasStarred === false) return;
-  } else {
+  // 只缓存当前用户「确证已 star」的仓库（4.0.10 审查修复：星态未知一律不写，fail-closed。
+  // 旧逻辑 about.star 缺失 / toggler 找不到时照写缓存——已取关仓库因此复活成脏态（ZCode 案例源头））
+  const viewerHasStarred = about?.star?.viewerHasStarred;
+  if (viewerHasStarred === false) return;
+  if (viewerHasStarred !== true) {
     const toggler = getToggler(document);
-    if (toggler && !isStarredInToggler(toggler)) return;
+    if (!toggler || !isStarredInToggler(toggler)) return;
   }
 
   // 名称
@@ -108,10 +110,13 @@ export function extractAndCacheRepoFromDetailPage(): void {
     }
   }
 
-  // Star / Fork 数（新版 JSON 里是精确值；旧版从计数器属性里取）
-  let stars = about && typeof about.stargazerCount === 'number' ? about.stargazerCount : 0;
-  let forks = about && typeof about.forksCount === 'number' ? about.forksCount : 0;
-  if (!stars) {
+  // Star / Fork 数（新版 JSON 里是精确值，含真 0；DOM 兜底解析出的 0 视为「未解析」——
+  // 不写盘、不覆盖同步写入的好数据，4.0.10 审查修复）
+  const jsonStars = about && typeof about.stargazerCount === 'number' ? about.stargazerCount : null;
+  const jsonForks = about && typeof about.forksCount === 'number' ? about.forksCount : null;
+  let stars = jsonStars ?? 0;
+  let forks = jsonForks ?? 0;
+  if (jsonStars === null) {
     const starCounter = document.querySelector('#repo-stars-counter-star, #repo-stars-counter-unstar');
     if (starCounter) {
       const ariaLabel = starCounter.getAttribute('aria-label') || '';
@@ -120,13 +125,13 @@ export function extractAndCacheRepoFromDetailPage(): void {
         ? parseInt(ariaMatch[1].replace(/,/g, ''), 10) || 0
         : parseCount(starCounter.getAttribute('title') || '');
     }
+    if (!stars) stars = parseSocialStat('star');
   }
-  if (!stars) stars = parseSocialStat('star');
-  if (!forks) {
+  if (jsonForks === null) {
     const forkCounter = document.querySelector('#repo-network-counter');
     if (forkCounter) forks = parseCount(forkCounter.getAttribute('title') || '');
+    if (!forks) forks = parseSocialStat('fork');
   }
-  if (!forks) forks = parseSocialStat('fork');
 
   // 更新时间：新版页面上第一个 relative-time 就是默认分支的最新提交
   let updated = '';
@@ -145,6 +150,15 @@ export function extractAndCacheRepoFromDetailPage(): void {
     if (rel) updated = 'Updated ' + rel;
   }
 
-  saveRepoData(repoId, { name, desc, lang, langColor, stars, forks, updated, updatedAt });
+  // 只写正向解析到的字段（4.0.10：解析失败的 0/空不落盘，防止把同步写入的好数据覆盖成 0/空）
+  const patch: Partial<RepoData> = { name };
+  if (desc) patch.desc = desc;
+  if (lang) patch.lang = lang;
+  if (langColor) patch.langColor = langColor;
+  if (jsonStars !== null || stars > 0) patch.stars = stars;
+  if (jsonForks !== null || forks > 0) patch.forks = forks;
+  if (updated) patch.updated = updated;
+  if (updatedAt) patch.updatedAt = updatedAt;
+  saveRepoData(repoId, patch);
 }
 

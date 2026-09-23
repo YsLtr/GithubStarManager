@@ -35,28 +35,6 @@ export type TagMap = Record<string, string[]>;
 /** repoId → 备注文本 */
 export type NoteMap = Record<string, string>;
 
-/** star 核对裁决（API 确认结果；starred 24h / unstarred 7d 内免重复核对） */
-export interface StarVerdict {
-  s: 'starred' | 'unstarred';
-  /** 裁决时间戳 */
-  ts: number;
-}
-/** repoId → 裁决 */
-export type VerdictMap = Record<string, StarVerdict>;
-/** 到货页快照：规范化页 URL → {repoId: 'owner/repo'} */
-export type PageSnapshots = Record<string, Record<string, string>>;
-
-/** 位移挂起条目：上一页被挤出的仓库 → 预期出现的页（出现即清、缺失才核对） */
-export interface ShiftPendingEntry {
-  o: string;
-  n: string;
-  /** 预期出现的页键（规范化 URL） */
-  expectKey: string;
-  /** 被挤出的来源页键 */
-  srcKey: string;
-  ts: number;
-}
-export type ShiftPendingMap = Record<string, ShiftPendingEntry>;
 /** 筛选结果项 */
 export interface FilteredRepo {
   repoId: string;

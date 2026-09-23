@@ -1,4 +1,5 @@
-import { gmAddStyle } from './gm';
+import { gmAddStyle, gmRemove } from './gm';
+import { LEGACY_STORAGE_KEYS } from './constants';
 import baseCss from './styles/base.css?inline';
 import persistentCss from './styles/persistent.css?inline';
 import wideCss from './styles/wide.css?inline';
@@ -424,6 +425,9 @@ function registerNavListeners(): void {
 function init(): void {
   // 导航监听必须最先挂：纯 profile 页（非 stars、非仓库详情）也要能响应
   // "点 Stars 标签"，否则从 profile 进 Stars 时没有任何转换逻辑在跑。
+  // 4.0.10：一次性清理历史死键（快照/裁决/位移管线已删；GM + localStorage 镜像同删，幂等）
+  for (const k of LEGACY_STORAGE_KEYS) gmRemove(k);
+
   registerNavListeners();
   // TM 菜单：任意匹配页都可设置/清除核对用 PAT
   registerTokenMenu();

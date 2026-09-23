@@ -16,6 +16,8 @@ declare const GM_setValue: ((key: string, value: unknown) => void) | undefined;
 declare const GM_registerMenuCommand: ((name: string, fn: () => void) => unknown) | undefined;
 declare const GM_openInTab: ((url: string, options?: { active?: boolean }) => unknown) | undefined;
 
+declare const GM_deleteValue: ((key: string) => void) | undefined;
+
 const LS_PREFIX = 'github-stars-grid::';
 /** 敏感键：只存 GM、绝不进 localStorage 镜像（PAT 已是强制 API 的硬门槛，泄露面必须收紧） */
 const SENSITIVE_KEYS = new Set<string>(['github_pat']);
@@ -85,6 +87,24 @@ export function gmSet(key: string, value: unknown): void {
   // 始终镜像到 localStorage:GM 缺席的会话也能读到最新数据
   lsWrite(key, value);
 }
+
+/** 删除键（调用时判定；GM 与 localStorage 镜像一起清）——4.0.10 历史死键一次性清理用 */
+export function gmRemove(key: string): void {
+  if (typeof GM_deleteValue === 'function') {
+    try {
+      GM_deleteValue(key);
+    } catch (e) {
+      console.error('[github-stars-grid] GM_deleteValue 失败', e);
+    }
+  }
+  try {
+    localStorage.removeItem(LS_PREFIX + key);
+  } catch {
+    /* 忽略 */
+  }
+}
+
+
 
 /** 原生 DOM 插入样式(不依赖 GM_addStyle;document.head 未就绪时挂到 html 上) */
 /** 原生 DOM 插入样式(不依赖 GM_addStyle;document.head 未就绪时挂到 html 上)。返回节点供调用方持有句柄。 */

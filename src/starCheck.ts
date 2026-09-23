@@ -2,8 +2,9 @@
 //
 // 4.0.0：原「页快照候选 → enqueueVerify 队列 → 双 404 逐条核对」链路随 API 主模式
 // 移除（recordArrival 已无调用者）；星状态判定统一由 P4 全量拉取（fullSync.ts）
-// 三方 diff 承担。本文件保留：token 双格式读写/校验、裁决缓存写入（recordVerdict）、
-// 确认外部 unstar 的宽限区管线（applyExternalUnstar → confirmExternalUnstar）。
+// 三方 diff 承担。本文件保留：token 双格式读写/校验、确认外部 unstar 的宽限区管线
+// （applyExternalUnstar → confirmExternalUnstar）。4.0.10 审查清理：裁决缓存（recordVerdict，
+// 只写不读无界增长）与 snapshot 注册钩子（onExternalUnstarConfirmed，注册者是死代码）随死码簇移除。
 // Token 双格式（2026-09-22 调研结论，来源链接记录在 AGENTS.md 决策记录）：
 // - classic `ghp_`：有效 token 即可读 /user/starred*；仅涉及公开仓库时可不勾
 //   scope，涉及私有仓库请勾 `repo`——API 无法区分「无权限读取的私有仓库」与
@@ -23,7 +24,7 @@ import { loadRepoCache, saveRepoCache } from './storage/repoCache';
 import { getTags, saveTags } from './storage/tags';
 import { renderNotes } from './ui/notes';
 import { renderTags } from './ui/tagFilter';
-import type { PendingDeleteMap, RepoCache, VerdictMap } from './types';
+import type { PendingDeleteMap, RepoCache } from './types';
 
 import { detectTokenKind, notifyTokenIssue, notifyTokenSaved, openTokenCreator } from './tokenConfig';
 /* ---------------- token ---------------- */
@@ -75,29 +76,8 @@ export function registerTokenMenu(): void {
   });
 }
 
-/* ---------------- 裁决缓存 ---------------- */
-
-
-function loadVerdicts(): VerdictMap {
-  return gmGet<VerdictMap>(STORAGE_KEYS.starVerdicts, {});
-}
-
-
-function setVerdict(repoId: string, s: 'starred' | 'unstarred'): void {
-  const all = loadVerdicts();
-  all[repoId] = { s, ts: Date.now() };
-  gmSet(STORAGE_KEYS.starVerdicts, all);
-}
-
 /* ---------------- 确认外部 unstar 后的数据与 DOM 动作 ---------------- */
 
-type ConfirmedHandler = (repoId: string) => void;
-let onConfirmed: ConfirmedHandler | null = null;
-
-/** snapshot.ts 注册：确认后从所有到货页快照中清除该 repoId */
-export function onExternalUnstarConfirmed(fn: ConfirmedHandler): void {
-  onConfirmed = fn;
-}
 
 /**
  * 确认外部 unstar：走与脚本内 unstar 相同的宽限区管线
@@ -130,7 +110,6 @@ function confirmExternalUnstar(repoId: string, path: string): boolean {
       `[github-stars-grid] ★ 核对确认外部 unstar: ${path}（标签/备注已备份入 24h 宽限期区，` +
         '期间在详情页重新 star 可恢复）'
     );
-    onConfirmed?.(repoId);
   }
   updateGridCard(repoId);
   return !existed;
@@ -169,7 +148,3 @@ export function applyExternalUnstar(repoId: string, path: string): boolean {
   return confirmExternalUnstar(repoId, path);
 }
 
-/** P4 写裁决（unstarred 7d / starred 24h 内免重复核对） */
-export function recordVerdict(repoId: string, s: 'starred' | 'unstarred'): void {
-  setVerdict(repoId, s);
-}
