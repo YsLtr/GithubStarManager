@@ -3,8 +3,25 @@ import { STORAGE_KEYS } from '../constants';
 import type { RepoCache, RepoData } from '../types';
 
 /** 读取全部仓库缓存（所有用户共享） */
+/** linguist 语言名的字符域：字母/数字/空格/#/+'-.（C++、F#、Ren'Py、1C Enterprise、G-code 皆合法）。
+ * 4.3.1 前的 DOM 提取曾把 2026 版详情页 Watch/Fork 计数条（"Watch1 (1)"）当语言写进缓存，此门挡住该类脏值。 */
+function isPlausibleLangName(lang: string): boolean {
+  return /^[A-Za-z0-9+#'.\-_ ]{1,40}$/.test(lang);
+}
+
+/** 读取全部仓库缓存（所有用户共享）。读取即清洗：lang 不合 linguist 命名字符域的历史脏值一次性剔除并写回 */
 export function loadRepoCache(): RepoCache {
-  return gmGet<RepoCache>(STORAGE_KEYS.repoCache, {});
+  const all = gmGet<RepoCache>(STORAGE_KEYS.repoCache, {});
+  let dirty = false;
+  for (const id in all) {
+    const lang = all[id].lang;
+    if (lang !== undefined && !isPlausibleLangName(lang)) {
+      delete all[id].lang;
+      dirty = true;
+    }
+  }
+  if (dirty) saveRepoCache(all);
+  return all;
 }
 
 export function saveRepoCache(all: RepoCache): void {

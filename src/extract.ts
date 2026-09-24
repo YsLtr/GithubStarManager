@@ -78,25 +78,9 @@ export function extractAndCacheRepoFromDetailPage(): void {
     desc = descEl ? (descEl.textContent || '').trim() : '';
   }
 
-  // 主语言（4.3.0 起不再按仓库存语言色——颜色只由语言名决定，渲染走 langColors 全局映射）。
-  // 新版：语言链接指向 /owner/repo/search?l=javascript，列表第一个即主语言；
-  // 旧版：`.list-style-none li` 第一个 span。
-  let lang = '';
-  const langScope = document.querySelector('[class*="SidebarLanguages"]') || document;
-  const langLink = langScope.querySelector<HTMLAnchorElement>('a[href*="search?l="]') ||
-    document.querySelector<HTMLAnchorElement>('a[href*="search?l="]');
-  if (langLink) {
-    const nameEl = langLink.querySelector('[class*="languageName"]');
-    lang = ((nameEl ? nameEl.textContent : langLink.textContent) || '').replace(/[\d.]+%/g, '').trim();
-    if (!lang) {
-      const m = (langLink.getAttribute('href') || '').match(/[?&]l=([^&]+)/);
-      if (m) lang = decodeURIComponent(m[1]);
-    }
-  }
-  if (!lang) {
-    const firstLangSpan = document.querySelector('.list-style-none li span');
-    if (firstLangSpan) lang = (firstLangSpan.textContent || '').trim();
-  }
+  // 主语言不在此提取（4.3.1）：2026 版详情页没有 SidebarLanguages 模块、也没有 search?l= 链接（有语言的仓库同样没有），
+  // 老版兜底 `.list-style-none li span` 在 2026 页面抓到的是 Watch/Fork 计数条（"Watch1 (1)"），曾覆盖 API 的好数据。
+  // lang 所有权全归 API parseItem——与 4.3.0 拆 langColor 同一哲学：DOM 提取已死，宁缺勿错。
 
   // Star / Fork 数（新版 JSON 里是精确值，含真 0；DOM 兜底解析出的 0 视为「未解析」——
   // 不写盘、不覆盖同步写入的好数据，4.0.10 审查修复）
@@ -141,7 +125,6 @@ export function extractAndCacheRepoFromDetailPage(): void {
   // 只写正向解析到的字段（4.0.10：解析失败的 0/空不落盘，防止把同步写入的好数据覆盖成 0/空）
   const patch: Partial<RepoData> = { name };
   if (desc) patch.desc = desc;
-  if (lang) patch.lang = lang;
   if (jsonStars !== null || stars > 0) patch.stars = stars;
   if (jsonForks !== null || forks > 0) patch.forks = forks;
   if (updated) patch.updated = updated;
