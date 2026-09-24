@@ -117,18 +117,19 @@
     padding-left: 0 !important;
     padding-right: 0 !important;
   }
-  /* ===== 4. 隐藏 Lists 区域 ===== */
-  /* 主路径：JS 打标记类（transform.ts 的 hideListsSection）。
+  /* ===== 4. 隐藏 Lists 区域（4.5.0 起受 html.gsm-hide-lists 门控类控制：TM 菜单「隐藏 Lists 区块」
+     关闭时规则整体失效，Lists 原生内容正常显示；document-start 按开关决定类是否挂上，无闪隐窗口）
+     主路径：JS 打标记类（dom.ts 的 hideListsSection）。
      标题行带 `d-flex`，GitHub 的 `.d-flex{display:flex!important}` 会压过内联
      display:none，所以 JS 那边用 setProperty(..., 'important')，这里也用 !important。 */
-  .stars-lists-hidden,
-  turbo-frame#user-profile-frame > div > #profile-lists-container,
-  turbo-frame#user-profile-frame > div > div.blankslate {
+  html.gsm-hide-lists .stars-lists-hidden,
+  html.gsm-hide-lists turbo-frame#user-profile-frame > div > #profile-lists-container,
+  html.gsm-hide-lists turbo-frame#user-profile-frame > div > div.blankslate {
     display: none !important;
   }
   /* CSS-only 兜底：脚本执行前的一瞬，容忍 my-3 / tmp-my-3 两代类名 */
-  turbo-frame#user-profile-frame > div > .my-3.d-flex.flex-justify-between.flex-items-center:has(h2.f3-light),
-  turbo-frame#user-profile-frame > div > .tmp-my-3.d-flex.flex-justify-between.flex-items-center:has(h2.f3-light) {
+  html.gsm-hide-lists turbo-frame#user-profile-frame > div > .my-3.d-flex.flex-justify-between.flex-items-center:has(h2.f3-light),
+  html.gsm-hide-lists turbo-frame#user-profile-frame > div > .tmp-my-3.d-flex.flex-justify-between.flex-items-center:has(h2.f3-light) {
     display: none !important;
   }
 

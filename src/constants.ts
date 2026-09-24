@@ -43,6 +43,8 @@ export const STORAGE_KEYS = {
   fullSyncMeta: 'stars_full_sync_meta',
   /** 语言色全局映射缓存（4.3.0：运行时从 linguist languages.yml 获取并缓存，不按仓库存色、不硬编码） */
   langColors: 'stars_lang_colors',
+  /** Hide Lists 开关（4.5.0：TM 菜单「隐藏 Lists 区块」，默认 true = 隐藏；false = Lists 原生内容正常显示） */
+  hideLists: 'stars_hide_lists',
 } as const;
 
 /** 4.0.10 起只清不写的历史键（3.0.9–4.0.9 的到货快照/裁决/位移管线已删）：init 一次性删除 GM + localStorage 镜像 */

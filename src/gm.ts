@@ -14,6 +14,8 @@
 declare const GM_getValue: (<T>(key: string, defaultValue: T) => T) | undefined;
 declare const GM_setValue: ((key: string, value: unknown) => void) | undefined;
 declare const GM_registerMenuCommand: ((name: string, fn: () => void) => unknown) | undefined;
+/** TM 5.x 返回菜单命令 id（number|string），传入可移除后重注册以刷新菜单标签（4.5.0 Hide Lists 开关用） */
+declare const GM_unregisterMenuCommand: ((id: unknown) => void) | undefined;
 declare const GM_openInTab: ((url: string, options?: { active?: boolean }) => unknown) | undefined;
 
 declare const GM_deleteValue: ((key: string) => void) | undefined;
@@ -124,15 +126,26 @@ export function gmAddStyle(css: string): HTMLStyleElement {
 }
 
 /** 注册 Tampermonkey 菜单命令（同样调用时判定；dev/非 TM 环境静默降级为日志） */
-export function gmRegisterMenuCommand(name: string, fn: () => void): void {
+export function gmRegisterMenuCommand(name: string, fn: () => void): unknown {
   if (typeof GM_registerMenuCommand === 'function') {
     try {
-      GM_registerMenuCommand(name, fn);
+      return GM_registerMenuCommand(name, fn);
     } catch (e) {
       console.error('[github-stars-grid] GM_registerMenuCommand 失败', e);
     }
   } else {
     console.info('[github-stars-grid] GM_registerMenuCommand 不可用（非 TM 环境），无法打开 token 设置菜单');
+  }
+  return undefined;
+}
+
+/** 移除菜单命令（4.5.0：与 gmRegisterMenuCommand 返回的 id 配对，供开关类菜单项重注册刷新标签） */
+export function gmUnregisterMenuCommand(id: unknown): void {
+  if (typeof GM_unregisterMenuCommand !== 'function') return;
+  try {
+    GM_unregisterMenuCommand(id);
+  } catch (e) {
+    console.error('[github-stars-grid] GM_unregisterMenuCommand 失败', e);
   }
 }
 

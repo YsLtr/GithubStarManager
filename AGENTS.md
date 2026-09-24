@@ -5,26 +5,38 @@
 
 ---
 
-## 当前交接（2026-09-24 17:5x +0800；焦点 = 4.4.0 Type/Language 多选 + 筛选结果分页（已实现，**未提交**，待用户真机验证））
+## 当前交接（2026-09-24 2x:xx +0800；焦点 = 4.5.0 Hide Lists 开关（已实现，**未提交**，待用户真机验证））
 
 ### 目标
-GitHub 2026 改版适配至 **4.4.0**（…4.3.5 Tags 审查修复 → **4.4.0 用户需求：① Type/Language 多选筛选（OR 逻辑，Tags 维持 AND 不变）；② 筛选按钮点击不收起、选中项后置 ✓、按钮显示单项名/多选数、All 清空本维度；③ 筛选结果分页化（修 Type Public/Sources 大集合平铺 464 卡的渲染卡顿）**），版本沿革见下方各段。**本会话焦点：4.4.0 已实现（`pnpm check` 过 27 modules / 114.25 kB），code-reviewer 审查 0 🔴 / 3 🟡 全部已修；待用户重装 dist 真机验证**。
+用户需求：TM 菜单加「🙈 隐藏 Lists 区块（开/关）」——默认开 = 一贯行为（Stars 页隐藏 Lists 原生区块）；关闭后 Lists 原生内容正常显示，初始化 / Token 失效的配置面板仍出现但**改挂网格列顶**（不占用 Lists 位置，方案 A「插入并存」用户定案）。机制与切换 invariant 见 DEVELOPER.md §6「Hide Lists 开关」。
 
-### 本轮改了什么（4.3.5 → 4.4.0，未提交）
+### 本轮改了什么（4.4.0 → 4.5.0，未提交）
 
 | 文件 | 改动 |
 |---|---|
-| `src/state.ts` | `filterState.lang: string` → **`langs: string[]`**、`type: TypeFilter` → **`types: TypeFilter[]`**（多选 OR；`[]` = 全部）；`hasActiveFilter()` 改 tags/langs/types/search 四维派生 |
-| `src/filters.ts` | **核心**：① `queryRepos()` type/lang 改 `.some()` OR 匹配（语言大小写不敏感、`LANG_NONE` 哨兵 = `!data.lang`）；② 候选计算（type/lang/None）= 结果集候选 ∪ **已选恒可见**；③ **控件区重构——容器只建一次 + 原位刷新**（`updateLocalFilterControls` 缺失才建；新增 `refreshTypeMenu`/`refreshLangMenu`/`refreshSortGroup` 原位重绘按钮文案/勾选态/候选列表；`buildMultiSelectItem` = menuitemcheckbox + **label 后置 ✓** + 未选 `visibility:hidden` 占位；Type/Language 点击不再 `hidePopover()`，All/All languages 清空本维度；按钮文案 0=`Type`、1=`Type: X`、N=`Type: N selected`；**Sort 保持单选、选择后收起、行为不变**）；④ `applyFilters(opts)` 统一漏斗——browse/筛选态都走 `renderBrowsePage(1)`，新增 `{ keepPage: true }`（unstar 翻卡用，不拉回第 1 页）；⑤ 信息条多值逗号显示 + 计数 = 查询全集；⑥ `initFiltersFromUrl` 多值解析（逗号分隔、`forks` 宽容、非法丢弃、**大小写归一**：`canonicalLangName()` 映射缓存规范 casing、哨兵合并先于 Set 去重——修 `?language=none,None` 要点三次/`JavaScript,javascript` 双变体/菜单重影） |
-| `src/pagination.ts` | 删 `hasActiveFilter()` 拦截门：筛选态翻页放行（保持筛选只换页）；直调 `renderBrowsePage` 不经 applyFilters、页码不回卷 |
-| `src/starCheck.ts` | unstar 翻卡重筛条件改四维判定；调用改 `applyFilters({ keepPage: true })`（结果集变、条件没变，不拉回第 1 页 = 审查 🟡-3） |
-| `src/transform.ts` | 无逻辑改动（buildLocalPager 注释与事实对齐） |
-| `src/filters.ts` renderBrowsePage | **底部本地分页器摘下插回**（审查 🟡-1：4.0.0 起 `innerHTML=''` 把它删掉、底部 pager 从未真正存在；顶部克隆在标题行幸存）——先 `remove()` 渲染完 `appendChild` 回去；返回查询总数；搜索高亮移入渲染循环（翻页新卡也带高亮） |
-| `src/constants.ts` | +`CHECK_SVG`（octicon check-16，菜单勾选） |
-| `src/styles/base.css` | 删 `.stars-tag-filtered` 死规则（缓存渲染下无引用）；+`.gsm-check-visual`（对齐 + `margin-left: var(--control-medium-gap)`） |
-| `package.json` / `DEVELOPER.md` | 4.3.5 → **4.4.0**；模块职责/状态约定/筛选联动/URL 解析/invariant（新增第 5 条：控件容器只建一次原位刷新）同步 |
+| `src/constants.ts` | +`STORAGE_KEYS.hideLists = 'stars_hide_lists'`（布尔，默认 true；GM + localStorage 镜像双写，document-start 兜底读镜像） |
+| `src/gm.ts` | +`GM_unregisterMenuCommand` ambient 声明与 `gmUnregisterMenuCommand()` 包装；`gmRegisterMenuCommand` 改**返回菜单命令 id**（供重注册刷标签） |
+| `vite.config.ts` | grant +`GM_unregisterMenuCommand` |
+| `src/dom.ts` | +`isHideListsEnabled()` / `applyHideListsGate()`（`html.gsm-hide-lists` 门控类挂摘）/ `clearListsHiddenMarks()`；`hideListsSection()` 首行读开关——关闭时不打标记并清残留，transform 与 frame-render 两个既有调用点零改动 |
+| `src/styles/base.css` | 第 4 节全部 Lists 隐藏规则（3 条无条件 + CSS-only `:has()` 兜底）加 `html.gsm-hide-lists` 门控前缀——开关关闭时规则整体失效 |
+| `src/ui/hideListsMenu.ts` | **新增**：菜单项「🙈 隐藏 Lists 区块（开/关）」，回调 = 翻转存盘 → 门控类与 JS 标记即时生效 → unregister/re-register 刷标签（Turbo SPA 内菜单不自动刷新，TM 5.x id 机制） |
+| `src/index.ts` | document-start `applyHideListsGate()`（installBootHide 旁，关闭时无闪隐窗口）；`showSetupBanner` 落位按开关分流（开 = 原位替换 blankslate/容器，关 = `host.prepend` 挂网格列顶）；init 注册 `registerHideListsMenu()` |
+| `package.json` / `DEVELOPER.md` | 4.4.0 → **4.5.0**；DEVELOPER.md 新增 §6「Hide Lists 开关」小节（含切换 invariant）/目录结构/存储键总述/grant 列表同步 |
 
-**4.4.0 审查结论**（code-reviewer 子代理，报告 `.diag/review-4.4.0.md`）：0 🔴 / 3 🟡（**全部已修**：🟡-1 底部 pager 摘下插回、🟡-2 URL 大小写归一+哨兵合并先于去重、🟡-3 keepPage）/ 8 🟢（popover 保持打开机制成立、Tags invariant 未破、多选边界自洽、分页漏斗一致、性能与 4.3.5 同量级、监听器卫生、URL 签名、XSS 面全过）。
+调研结论（Verdict: Build）：TM 官方确认 `GM_registerMenuCommand` 返回菜单 id、`GM_unregisterMenuCommand` 移除后重注册可刷新标签（https://www.tampermonkey.net/documentation.php#GM_registerMenuCommand）；Lists 隐藏原链路（CSS 无条件规则 / JS hideListsSection / banner replaceWith）全为项目自研，无现成库可采。**banner 落位用户定案 = 方案 A 插入并存**（替换+还原方案 B 否决）。
+
+### 4.5.0 真机验证清单（重装 dist）
+① 默认（未动菜单）：行为与 4.4.0 完全一致——Lists 隐藏、banner 原位替换、网格正常；
+② TM 菜单出现「🙈 隐藏 Lists 区块（开）」，点击后立即：Lists 原生内容显示（标题行 + 空态「Create your first list」或 list 内容）、菜单标签变「（关）」、控制台一行 Hide Lists 切换日志；
+③ 关闭状态下 F5 / `?tab=stars` 直载 / Turbo 进页：Lists 保持显示、**无闪隐**（若先显示再隐藏一瞬 = 门控前缀漏改，回报）；
+④ 关闭状态触发初始化面板（TM 菜单清 token 或无缓存进页）：banner 挂在**网格列顶**、Lists 内容原地保留；保存并同步成功后 banner 消失、Lists 仍在原位；
+⑤ 关闭状态触发 Token 失效面板（401/403）：同 ④；
+⑥ 再点菜单切回「开」：Lists 立即重新隐藏、标签变「（开）」，刷新后仍隐藏；
+⑦ 4.4.0 全部行为不回归（多选筛选/分页/同步/搜索高亮）。
+
+### 上一轮（4.4.0，已提交）
+Type/Language 多选筛选（OR）+ 筛选结果分页化；code-reviewer 审查 0🔴 / 3🟡 全部已修（底部 pager 摘下插回、URL 大小写归一+哨兵合并先于去重、keepPage），报告 `.diag/review-4.4.0.md`，详细改动表见 git 历史。
+
 
 ### 上一轮（4.3.5，已提交）
 Tags 审查修复四件：空态 li 补 role=none、删 6 处 renderTagFilterBar 直调并私有化、原位分支补 hasAnyTags 撤条门、注释诚实化。真机已验证。工装坑（防重蹈）：清数据必须 GM_setValue 与 localStorage 镜像**双清**（gmGet 迁移路径会自愈单边清理）。
@@ -124,6 +136,7 @@ Tags 审查修复四件：空态 li 补 role=none、删 6 处 renderTagFilterBar
 - 迁移仅当 GM 为默认值时触发：GM 已有旧数据时，dev 写进 localStorage 的新数据**不会合并**。
 - 核对/同步相关：`github_pat`（PAT，**4.0.0 起不写 localStorage 镜像**）、`stars_page_snapshots`（到货页快照，4.0.0 起只清不写）、`stars_star_verdicts`（裁决缓存）、`stars_shift_pending`（位移挂起，历史数据）、`stars_full_sync_meta`（ETag/etags/**tailEtag**/lastFullSyncAt/count，4.0.0 新增、4.0.4 逐页 etags、4.0.5 normEtag 规范形、4.0.6 移除 byteViableMs 字段、**4.0.9 增 tailEtag 尾页越界空页条件探尾**）——机制见 DEVELOPER.md §5/§6，决策见下方「数据同步设计决策」D1–D8。
 - 语言色（4.3.0）：`stars_lang_colors` 全局语言→色映射缓存（运行时从 linguist languages.yml 获取；不按仓库存色——`RepoData.langColor` 字段已删，存量残键无害）。
+- Hide Lists 开关（4.5.0）：`stars_hide_lists` 布尔（默认 true = 隐藏 Lists 区块；TM 菜单「🙈 隐藏 Lists 区块」切换，机制见 DEVELOPER.md §6）。
 
 ### 数据同步设计决策（2026-09-22 定稿，用户逐条确认）
 
@@ -206,7 +219,7 @@ dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用�
 
 ### 下一步
 
-1. **4.4.0 真机验证（清单见「当前交接」末尾；重装 `dist/github-stars-grid.user.js`）**：多选 OR / 面板不收起 / 按钮与信息条文案 / 筛选态分页 / URL 多值 / Sort+Tags 回归。4.4.0 代码已随本 handoff 提交；真机发现问题 → 另开修复提交并更新验证清单。审查报告余项（`.diag/review-4.0.9.md`：冗余/结构/性能/安全 🟡🟢）与 4.3.5 架构建议（A 单遍 facet / B 响应式漏斗）仍待用户定夺；**`todo` 按第 5 条保持不入库**。后续阶段（P3 剩余、GraphQL 分页调研、周期自动同步、D7c 非个人页 `GET /users/{u}/starred`）见「未实现」。
+1. **4.5.0 真机验证（清单见「当前交接」；重装 `dist/github-stars-grid.user.js`）**：Hide Lists 开关七项清单 + **4.4.0 回归**（多选 OR / 面板不收起 / 按钮与信息条文案 / 筛选态分页 / URL 多值 / Sort+Tags）。4.4.0 已提交；4.5.0 改动未提交，真机验证通过后再提交。真机发现问题 → 另开修复提交并更新验证清单。审查报告余项（`.diag/review-4.0.9.md`：冗余/结构/性能/安全 🟡🟢）与 4.3.5 架构建议（A 单遍 facet / B 响应式漏斗）仍待用户定夺；**`todo` 按第 5 条保持不入库**。后续阶段（P3 剩余、GraphQL 分页调研、周期自动同步、D7c 非个人页 `GET /users/{u}/starred`）见「未实现」。
 2. **快速构建阶段（2026-09-22 起，用户已定）**：不跑 `tests/smoke/`，不写测试 fixture/断言；改完只 `pnpm check`，由用户在真实页面判断是否成功。
 3. 若 GitHub 再改版：先跑 `tests/diag/selectors.js` 定位失配点，再改 `src/dom.ts` 的 helper（**只改 helper，不要在业务模块里写选择器**）。
 4. 数据同步后续阶段（**P4 主体已在 3.1.0 落地**，见 D6）：**P3** local-first 首屏（缓存快照先显 + 到货校正 + DOM 增量 patch）；P4 余项——ETag/GraphQL 分页调研、**周期自动同步**（当前 Sync 手动 + 消失 >12 自动，可加定时 idle 同步）。见「数据同步设计决策」。

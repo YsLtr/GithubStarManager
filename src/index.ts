@@ -4,7 +4,7 @@ import baseCss from './styles/base.css?inline';
 import persistentCss from './styles/persistent.css?inline';
 import wideCss from './styles/wide.css?inline';
 import { installBootHide, isStarsPage, revealBootHide, revealTurboHide } from './boot';
-import { getRepoIdMeta, getStarButton, getStarsMainColumn, hideListsSection, isStarButtonActive } from './dom';
+import { applyHideListsGate, getRepoIdMeta, getStarButton, getStarsMainColumn, hideListsSection, isHideListsEnabled, isStarButtonActive } from './dom';
 import { extractAndCacheRepoFromDetailPage } from './extract';
 import { exitCustomMode, initFiltersFromUrl } from './filters';
 import { hasApiData, registerSyncMenu, runFullSync, scheduleProbeSync } from './fullSync';
@@ -19,6 +19,7 @@ import {
   setTokenSavedHandler,
 } from './tokenConfig';
 import { cleanupExpiredUnstarred, markRepoStarred, markRepoUnstarred } from './storage/pendingDelete';
+import { registerHideListsMenu } from './ui/hideListsMenu';
 import { migrateTagsIfNeeded } from './storage/tags';
 import { transformStarsList } from './transform';
 import { isDesktop } from './utils';
@@ -301,13 +302,18 @@ function showSetupBanner(issueDetail?: string): void {
 
 
   bar.append(quick, sync, tokRow);
-  // 顶窗落位：替换 Lists 槽位里的空态（0 个 list）或已建 list 容器（有 list 时该容器
-  // 本就被 hideListsSection/CSS 隐藏）；都不在则退回旧行为挂列首
-  const slot = document.querySelector('#user-profile-frame > div');
-  const slotTarget =
-    (slot && slot.querySelector(':scope > div.blankslate')) || (slot && slot.querySelector(':scope > #profile-lists-container'));
-  if (slotTarget) slotTarget.replaceWith(bar);
-  else host.prepend(bar);
+  // 顶窗落位（4.5.0 受 Hide Lists 开关分流）：开关开启（默认）时 Lists 本就被隐藏，沿用原位
+  // 替换（空态 blankslate 或已建 list 容器，都不在则退回列首）；开关关闭时 Lists 原生内容
+  // 可见，改为 prepend 挂网格列顶——不占用 Lists 位置，面板撤除后原生内容原地不动
+  if (isHideListsEnabled()) {
+    const slot = document.querySelector('#user-profile-frame > div');
+    const slotTarget =
+      (slot && slot.querySelector(':scope > div.blankslate')) || (slot && slot.querySelector(':scope > #profile-lists-container'));
+    if (slotTarget) slotTarget.replaceWith(bar);
+    else host.prepend(bar);
+  } else {
+    host.prepend(bar);
+  }
 }
 
 /** 面板主文案：默认 = 首次配置引导；issueDetail = Token 失效/权限不足等具体问题（4.0.2 面板化） */
@@ -435,6 +441,8 @@ function init(): void {
   registerTokenMenu();
   // 手动同步唯一入口（4.0.3：横幅与标题行的手动同步按钮均已移除）
   registerSyncMenu();
+  // Hide Lists 开关（4.5.0）：任意匹配页可切换，默认开 = 隐藏 Lists 区块
+  registerHideListsMenu();
 
   // Token 保存成功（横幅内联 / 失效弹窗 / TM 菜单 prompt 任一入口）→ 撤配置横幅 + 自动全量同步
   setTokenSavedHandler(() => {
@@ -476,6 +484,8 @@ function whenReady(fn: () => void): void {
 // document-start 启动顺序：先同步藏页面（防闪烁），DOM 就绪后再跑主逻辑
 // 加载标记：F12 控制台能看到这行 = 脚本已执行；看不到 = TM 没注入（启用状态/@match/未安装）
 console.log('[github-stars-grid] script loaded (document-start)');
+// Lists 隐藏门控（4.5.0）：document-start 即按开关决定 CSS 规则是否生效，关闭时不留闪隐窗口
+applyHideListsGate();
 installBootHide();
 // 原地翻页拦截：document-start 同步挂载，先于 Turbo 的 click 监听拿到事件
 interceptPagination();

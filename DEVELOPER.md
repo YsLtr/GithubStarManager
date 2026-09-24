@@ -62,7 +62,7 @@ src/
   types.ts            存储模型类型（RepoData / PendingDeleteEntry / TagMap / NoteMap ...）
   state.ts            筛选状态对象 filterState + hasActiveFilter() 派生判断（唯一可变全局状态）
   utils.ts            escapeHtml / isDesktop
-  dom.ts              getRepoIdMeta / getToggler / isStarredInToggler（DOM 查询小工具）
+  dom.ts              DOM 查询小工具（getRepoIdMeta / getToggler / isStarredInToggler）+ Hide Lists 开关引擎（4.5.0：isHideListsEnabled / applyHideListsGate 门控类 / hideListsSection 按开关打标或清标）
   extract.ts          详情页数据提取 → 写缓存（4.0.0：列表卡提取已删，API 为权威源）
   transform.ts        列表 → 卡片网格转换
   filters.ts          筛选引擎（4.1.0 全本地化，4.2.0 Type 接管，4.4.0 多选化）：queryRepos 统一查询管线（type/lang 多选 OR、tags AND、search）、4 排序键×双向+名称决胜、facet 候选收窄（候选 ∪ 已选恒可见）、URL 入口匹配 initFiltersFromUrl（多值逗号分隔+大小写归一）、常驻本地筛选栏（**容器只建一次 + 原位刷新**：Type/Language 多选 checkbox 勾选不收起 popover、后置 ✓、按钮文案 0/1/N 规则；Language 含 None=无语言仓库，4.3.2；Sort 单选照旧收起）
@@ -82,6 +82,7 @@ src/
   ui/
     cards.ts          卡片构建 + API 星星按钮（4.0.0：PUT/DELETE Bearer PAT，CSRF 双模式已删）
     tagFilter.ts      标签 pill、筛选栏（R3：原位重绘 = 共现收窄，勾选不关 popover）、pill 选中态同步；refreshTagFilterBar = 候选随约束收窄/回填/撤条的唯一入口（applyFilters 每次调用；renderTagFilterBar 已私有化，创建/撤条只经它，4.3.5）
+    hideListsMenu.ts  TM 菜单「隐藏 Lists 区块」开关（4.5.0）：切换 stars_hide_lists 持久键 + unregister/re-register 刷新「开/关」标签 + 门控类与标记即时生效
     notes.ts          备注渲染与编辑
   styles/
     base.css          >= 768px 布局与组件样式
@@ -151,7 +152,7 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
 
 ## 5. 存储模型
 
-脚本使用 `GM_setValue` / `GM_getValue` 持久化数据，键名集中在 `src/constants.ts` 的 `STORAGE_KEYS`（仓库缓存 / 待删除区 / 标签 / 备注 / PAT / 到货页快照 / star 裁决缓存 / 位移挂起）。
+脚本使用 `GM_setValue` / `GM_getValue` 持久化数据，键名集中在 `src/constants.ts` 的 `STORAGE_KEYS`（仓库缓存 / 待删除区 / 标签 / 备注 / PAT / 全量同步元数据 / 语言色 / Hide Lists 开关）。
 
 ### `stars_repo_cache`
 
@@ -269,6 +270,17 @@ unstar 时数据不会立即删除，而是移入 `stars_pending_delete` 并记�
 ### 退出筛选（Clear filter 本地化）
 Clear filter（信息条与原生拦截两路，均走 `exitCustomMode()`）：清 tags/langs/types/search、**保留 sort/direction**（D4）→ 本地渲染第 1 页 + `history.pushState('?tab=stars')` 干净地址栏（**整页导航已删**，4.0.0）；pushState 后的 search 串登记为「已解析」，sort/direction 不会被 URL 初始化冲掉。原生 Language/Sort 常驻隐藏、本地控件常驻，不再随模式切换（`updateNativeFilters` 双态逻辑已删）。
 
+### Hide Lists 开关（4.5.0）
+
+TM 菜单「🙈 隐藏 Lists 区块（开/关）」控制 Stars 页 Lists 原生区块的可见性，持久键 `stars_hide_lists`（默认 `true` = 隐藏，与历史行为一致）。关闭后 Lists 原生内容正常显示，初始化 / Token 失效时的配置面板改挂网格列顶（`showSetupBanner` 按 `isHideListsEnabled()` 分流：开 = 原位替换 blankslate/容器，关 = `host.prepend`，面板撤除后原生内容原地不动）。
+
+可见性由两条腿共同控制，切换时两条都要动（`ui/hideListsMenu.ts` 的 onToggle）：
+
+1. **CSS 门控类**：base.css 第 4 节全部 Lists 隐藏规则（含 CSS-only `:has()` 兜底）都带 `html.gsm-hide-lists` 前缀；`document-start` 同步 `applyHideListsGate()`（GM 缺席时走 localStorage 镜像兜底），开关关闭时连「JS 首跑前一瞬」都不会闪隐；
+2. **JS 标记**：`hideListsSection()` 内部首行读开关——关闭时不打标记并清残留（`clearListsHiddenMarks()`），turbo 重渲染的既有调用点零改动。
+
+**开关切换 invariant**：Lists 可见性只能经 `applyHideListsGate()`（CSS 腿）+ `hideListsSection()`（JS 腿）改变，不得直改 `html` 类或打标记类；TM 菜单在 Turbo SPA 内不会自动刷新，切换后必须 `GM_unregisterMenuCommand(id)` + 重注册（`gmRegisterMenuCommand` 返回 id）。
+
 ## 7. 状态管理约定
 
 所有跨模块可变状态集中在 `src/state.ts` 的 `filterState` 对象里：
@@ -322,7 +334,7 @@ filterState.page / totalPages  // 本地浏览页码 / 总页数（4.4.0 起 bro
 - 断点常量（`MOBILE_BREAKPOINT = 768`、`WIDE_BREAKPOINT = 1200`）在 `constants.ts` 里，**CSS 中的 `@media` 数字是手写同步的**，改断点要同时改两处。
 - 样式必须只在 Stars 页注入：这些规则会改写 GitHub 的 `.Layout` 结构（例如把侧边栏压到 180px），在仓库详情页注入会误伤页面布局。
 - `vite.config.ts` 里显式设置了 `build.cssTarget`。esbuild 默认会按现代 baseline 把 `@media (min-width: 768px)` 压成区间语法 `(width>=768px)`（Safari 16.4+ 才支持），降低 css target 可以保留 `min-width`。
-- **隐藏 GitHub 原生区块的两个坑**（2026 改版踩过）：① GitHub 工具类带 `!important`（如 `.d-flex { display: flex !important }`），JS 里 `el.style.display = 'none'` 会被压过，必须 `el.style.setProperty('display', 'none', 'important')`；② 间距工具类加了 `tmp-` 前缀（`my-3` → `tmp-my-3`），纯类名选择器会静默失配。现成做法见 `dom.ts` 的 `hideListsSection()`：用语义特征（`h2.f3-light` + 文案）定位，打 `.stars-lists-hidden` 标记类，隐藏规则写在 `base.css` 第 4 节。
+- **隐藏 GitHub 原生区块的两个坑**（2026 改版踩过）：① GitHub 工具类带 `!important`（如 `.d-flex { display: flex !important }`），JS 里 `el.style.display = 'none'` 会被压过，必须 `el.style.setProperty('display', 'none', 'important')`；② 间距工具类加了 `tmp-` 前缀（`my-3` → `tmp-my-3`），纯类名选择器会静默失配。现成做法见 `dom.ts` 的 `hideListsSection()`：用语义特征（`h2.f3-light` + 文案）定位，打 `.stars-lists-hidden` 标记类，隐藏规则写在 `base.css` 第 4 节（4.5.0 起该节规则全部带 `html.gsm-hide-lists` 门控前缀，受 Hide Lists 开关控制）。
 
 ## 10. 约束
 
@@ -330,7 +342,7 @@ filterState.page / totalPages  // 本地浏览页码 / 总页数（4.4.0 起 bro
 - **无运行时依赖**：只用浏览器原生 API + GM API。`package.json` 里的依赖全部是 devDependencies。
 - **仅桌面端**：`transformStarsList()` 首先检查 `isDesktop()`；所有 CSS 包在 `@media (min-width: 768px)` 内。
 - **三栏响应式布局**：768–1199px 隐藏左右侧边栏只留主内容区；>= 1200px 为左侧资料栏 (180px) + 中间卡片网格 + 右侧 Starred Topics (220px)。
-- **GM API 用法**：一律走 `src/gm.ts` 的 `gmGet/gmSet/gmAddStyle/gmRegisterMenuCommand`（**调用时**判定可用性，document-start 时晚到/缺席都安全，附 localStorage 兜底与迁移）；**禁止** `import { GM_* } from '$'`（bundle 顶部一次性捕获会在 document-start 固化成 undefined → `GM_addStyle is not a function` 事故）。`@grant` 在 `vite.config.ts` **显式声明**（当前：`GM_getValue` / `GM_setValue` / `GM_registerMenuCommand`），不要依赖插件自动推断。
+- **GM API 用法**：一律走 `src/gm.ts` 的 `gmGet/gmSet/gmAddStyle/gmRegisterMenuCommand/gmUnregisterMenuCommand`（**调用时**判定可用性，document-start 时晚到/缺席都安全，附 localStorage 兜底与迁移）；**禁止** `import { GM_* } from '$'`（bundle 顶部一次性捕获会在 document-start 固化成 undefined → `GM_addStyle is not a function` 事故）。`@grant` 在 `vite.config.ts` **显式声明**（当前：`GM_getValue` / `GM_setValue` / `GM_registerMenuCommand` / `GM_unregisterMenuCommand` / `GM_openInTab` / `GM_deleteValue` / `GM_xmlHttpRequest`），不要依赖插件自动推断。
 - **循环依赖**：`filters.ts` 与 `ui/tagFilter.ts` 互相引用（筛选逻辑 ↔ 筛选 UI）。所有导出都是函数声明，运行时靠提升解析，不会在模块初始化阶段取值，因此是安全的；新增模块时不要把这类互相引用的值用在模块顶层。
 
 ## 11. 测试

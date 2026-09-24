@@ -1,3 +1,6 @@
+import { STORAGE_KEYS } from './constants';
+import { gmGet } from './gm';
+
 /** 当前页面仓库数字 ID 的 meta 标签（仅仓库详情页存在） */
 export function getRepoIdMeta(): HTMLMetaElement | null {
   return document.querySelector('meta[name="octolytics-dimension-repository_id"]');
@@ -108,7 +111,35 @@ export const LISTS_HIDDEN_CLASS = 'stars-lists-hidden';
  *
  * 幂等，可重复调用（turbo-frame 重渲染后需要再调一次）。
  */
+/**
+ * Hide Lists 开关读取（4.5.0）：TM 菜单「隐藏 Lists 区块」的持久偏好。
+ * 默认 true = 隐藏（4.4.0 及之前的一贯行为）；false = Lists 原生内容正常显示。
+ * document-start 也会读（gm 不可用时走 localStorage 镜像兜底，gmSet 双写保证镜像最新）。
+ */
+export function isHideListsEnabled(): boolean {
+  return gmGet(STORAGE_KEYS.hideLists, true);
+}
+
+/** 把 Lists 隐藏 CSS 规则的门控类挂/摘到 <html> 上（document-start 与菜单切换共用） */
+export function applyHideListsGate(): void {
+  document.documentElement.classList.toggle('gsm-hide-lists', isHideListsEnabled());
+}
+
+/** 清除此前 hideListsSection 打的隐藏标记（4.5.0 运行中从开切到关时让 Lists 立即显形） */
+export function clearListsHiddenMarks(): void {
+  document.querySelectorAll<HTMLElement>('.stars-lists-hidden').forEach((el) => {
+    el.classList.remove(LISTS_HIDDEN_CLASS);
+    // 内联 display 只可能由 hideListsSection 设置（带标记的节点才走到这），一并摘除
+    el.style.removeProperty('display');
+  });
+}
+
 export function hideListsSection(): void {
+  if (!isHideListsEnabled()) {
+    // 4.5.0 开关关闭：不打隐藏标记，并清掉此前残留的标记（运行中切换 / turbo 重渲染均幂等）
+    clearListsHiddenMarks();
+    return;
+  }
   const frame = document.getElementById('user-profile-frame');
   const wrapper = frame ? frame.firstElementChild : null;
   if (!wrapper) return;
