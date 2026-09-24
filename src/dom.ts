@@ -101,17 +101,6 @@ export function getNativeFilterBar(container: ParentNode): HTMLElement | null {
 export const LISTS_HIDDEN_CLASS = 'stars-lists-hidden';
 
 /**
- * 隐藏 Stars 页的 Lists 区块（标题行 + 内容区 + 空态 blankslate）。
- *
- * 两个坑：
- * 1. 标题行容器类名已从 `my-3` 变成 `tmp-my-3`（2026 改版给间距工具类加了 `tmp-` 前缀），
- *    所以定位用「h2.f3-light + 文案含 Lists」这个语义特征，不依赖工具类名；
- * 2. 标题行带 `d-flex`，GitHub 的 `.d-flex { display: flex !important }` 会压过内联
- *    `display:none` —— 内联样式必须带 important，否则设了等于没设（真机验证过）。
- *
- * 幂等，可重复调用（turbo-frame 重渲染后需要再调一次）。
- */
-/**
  * Hide Lists 开关读取（4.5.0）：TM 菜单「隐藏 Lists 区块」的持久偏好。
  * 默认 true = 隐藏（4.4.0 及之前的一贯行为）；false = Lists 原生内容正常显示。
  * document-start 也会读（gm 不可用时走 localStorage 镜像兜底，gmSet 双写保证镜像最新）。
@@ -134,6 +123,18 @@ export function clearListsHiddenMarks(): void {
   });
 }
 
+/**
+ * 隐藏 Stars 页的 Lists 区块（标题行 + 内容区 + 空态 blankslate）。
+ *
+ * 两个坑：
+ * 1. 标题行容器类名已从 `my-3` 变成 `tmp-my-3`（2026 改版给间距工具类加了 `tmp-` 前缀），
+ *    所以定位用「h2.f3-light + 文案含 Lists」这个语义特征，不依赖工具类名；
+ * 2. 标题行带 `d-flex`，GitHub 的 `.d-flex { display: flex !important }` 会压过内联
+ *    `display:none` —— 内联样式必须带 important，否则设了等于没设（真机验证过）。
+ *
+ * 幂等，可重复调用（turbo-frame 重渲染后需要再调一次）。4.5.0 起受 Hide Lists 开关控制：
+ * 关闭时改由 clearListsHiddenMarks() 清理残留标记（两个既有调用点无需感知开关）。
+ */
 export function hideListsSection(): void {
   if (!isHideListsEnabled()) {
     // 4.5.0 开关关闭：不打隐藏标记，并清掉此前残留的标记（运行中切换 / turbo 重渲染均幂等）

@@ -19,7 +19,7 @@ import {
   setTokenSavedHandler,
 } from './tokenConfig';
 import { cleanupExpiredUnstarred, markRepoStarred, markRepoUnstarred } from './storage/pendingDelete';
-import { registerHideListsMenu } from './ui/hideListsMenu';
+import { registerHideListsMenu, setHideListsRepositionHandler } from './ui/hideListsMenu';
 import { migrateTagsIfNeeded } from './storage/tags';
 import { transformStarsList } from './transform';
 import { isDesktop } from './utils';
@@ -302,18 +302,32 @@ function showSetupBanner(issueDetail?: string): void {
 
 
   bar.append(quick, sync, tokRow);
-  // 顶窗落位（4.5.0 受 Hide Lists 开关分流）：开关开启（默认）时 Lists 本就被隐藏，沿用原位
-  // 替换（空态 blankslate 或已建 list 容器，都不在则退回列首）；开关关闭时 Lists 原生内容
-  // 可见，改为 prepend 挂网格列顶——不占用 Lists 位置，面板撤除后原生内容原地不动
+  placeSetupBanner(bar, host);
+}
+
+/** 配置面板落位（4.5.0 分流）：开关开启（默认）时 Lists 本就被隐藏，占用其槽位（空态 blankslate /
+ *  已建 list 容器，都不在则退回列首）；开关关闭时 Lists 原生内容可见，改挂网格列顶（prepend，
+ *  不占用 Lists 位置，面板撤除后原生内容原地不动）。切换开关时由 repositionSetupBanner 重挂。 */
+function placeSetupBanner(bar: HTMLElement, host: HTMLElement): void {
   if (isHideListsEnabled()) {
     const slot = document.querySelector('#user-profile-frame > div');
     const slotTarget =
       (slot && slot.querySelector(':scope > div.blankslate')) || (slot && slot.querySelector(':scope > #profile-lists-container'));
-    if (slotTarget) slotTarget.replaceWith(bar);
+    if (slotTarget && slotTarget !== bar) slotTarget.replaceWith(bar);
     else host.prepend(bar);
   } else {
     host.prepend(bar);
   }
+}
+
+/** Hide Lists 开关切换后的面板重挂：开关值变了但面板已存在（showSetupBanner 的 exist 分支只刷文案），
+ *  需按新落位移一次（🟡-1：否则关态下横幅仍留在 Lists 槽位，与落位设计不符）。 */
+function repositionSetupBanner(): void {
+  const bar = document.querySelector<HTMLElement>('.gsm-setup-banner');
+  if (!bar) return;
+  const host = getStarsMainColumn() || document.getElementById('user-starred-repos');
+  if (!host) return;
+  placeSetupBanner(bar, host);
 }
 
 /** 面板主文案：默认 = 首次配置引导；issueDetail = Token 失效/权限不足等具体问题（4.0.2 面板化） */
@@ -443,6 +457,8 @@ function init(): void {
   registerSyncMenu();
   // Hide Lists 开关（4.5.0）：任意匹配页可切换，默认开 = 隐藏 Lists 区块
   registerHideListsMenu();
+  // 开关切换后重挂已存在的配置面板（🟡-1：关态下面板须挂网格列顶，不占 Lists 槽位）
+  setHideListsRepositionHandler(() => repositionSetupBanner());
 
   // Token 保存成功（横幅内联 / 失效弹窗 / TM 菜单 prompt 任一入口）→ 撤配置横幅 + 自动全量同步
   setTokenSavedHandler(() => {

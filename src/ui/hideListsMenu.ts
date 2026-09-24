@@ -15,13 +15,32 @@ import { applyHideListsGate, hideListsSection, isHideListsEnabled } from '../dom
 import { gmRegisterMenuCommand, gmSet, gmUnregisterMenuCommand } from '../gm';
 import { STORAGE_KEYS } from '../constants';
 
+type RepositionHandler = () => void;
+let repositionHandler: RepositionHandler | null = null;
+
+/** index.ts 注册（handler 模式，同 tokenConfig 的 setTokenSavedHandler，避免菜单↔banner 循环导入）：
+ *  开关切换后按新落位重挂已存在的配置面板（关态下横幅不能留在 Lists 槽位）。 */
+export function setHideListsRepositionHandler(fn: RepositionHandler | null): void {
+  repositionHandler = fn;
+}
+
 function menuLabel(): string {
   return `🙈 隐藏 Lists 区块（${isHideListsEnabled() ? '开' : '关'}）`;
 }
 
 export function registerHideListsMenu(): void {
   let menuId: unknown;
-  const register = (): void => {
+  // 刷新标签优先用 TM 4.20+ 的 options.id 原地更新（unregister+register 是 TM 历史缺陷面，
+  // #1607 曾致菜单项全消失、标签刷新到 5.4.6224 才修）；id 拿不到时回退 unregister+register。
+  const refresh = (): void => {
+    if (menuId !== undefined) {
+      const updated = gmRegisterMenuCommand(menuLabel(), onToggle, { id: menuId });
+      if (updated !== undefined) {
+        menuId = updated;
+        return;
+      }
+      gmUnregisterMenuCommand(menuId);
+    }
     menuId = gmRegisterMenuCommand(menuLabel(), onToggle);
   };
   const onToggle = (): void => {
@@ -29,8 +48,8 @@ export function registerHideListsMenu(): void {
     applyHideListsGate();
     hideListsSection();
     console.log(`[github-stars-grid] Hide Lists 切换为 ${isHideListsEnabled() ? '开（隐藏）' : '关（显示）'}`);
-    if (menuId !== undefined) gmUnregisterMenuCommand(menuId);
-    register();
+    repositionHandler?.(); // 已存在的配置面板按新落位重挂（🟡-1）
+    refresh();
   };
-  register();
+  menuId = gmRegisterMenuCommand(menuLabel(), onToggle);
 }

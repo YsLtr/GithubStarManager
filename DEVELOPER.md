@@ -38,7 +38,7 @@ http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js
 Tampermonkey 里会多出名为 `server:GitHub Stars Grid View` 的脚本（与正式版并列，靠前缀区分）。
 它只是个 loader，实际代码通过 ESM 从 dev server 拉取，因此改代码即时生效。
 
-> 注意：dev 模式为了兼容各种运行时会把 `@grant` 放宽成 `GM.*` 全家桶，这是插件行为；正式 `build` 产物里 `@grant` 是按代码实际用到的 API 精确生成的（当前为 `GM_addStyle` / `GM_getValue` / `GM_setValue`）。
+> 注意：dev 模式为了兼容各种运行时会把 `@grant` 放宽成 `GM.*` 全家桶，这是插件行为；正式 `build` 产物的 `@grant` = `vite.config.ts` 显式声明列表 **∪** 插件 autoGrant 对源码 GM_* 标识符的 AST 推断结果（跨源并集；显式列表见 `vite.config.ts` 的 `grant`，当前含 `GM_getValue` / `GM_setValue` / `GM_registerMenuCommand` / `GM_unregisterMenuCommand` / `GM_openInTab` / `GM_deleteValue` / `GM_xmlHttpRequest`），不要依赖推断。
 
 
 ### dev 模式在 github.com 上的两个前置条件

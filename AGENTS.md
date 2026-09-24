@@ -25,6 +25,13 @@
 
 调研结论（Verdict: Build）：TM 官方确认 `GM_registerMenuCommand` 返回菜单 id、`GM_unregisterMenuCommand` 移除后重注册可刷新标签（https://www.tampermonkey.net/documentation.php#GM_registerMenuCommand）；Lists 隐藏原链路（CSS 无条件规则 / JS hideListsSection / banner replaceWith）全为项目自研，无现成库可采。**banner 落位用户定案 = 方案 A 插入并存**（替换+还原方案 B 否决）。
 
+### 4.5.0 审查（code-reviewer 子代理，报告 `.diag/review-4.5.0.md`）
+**0 🔴 / 3 🟡 / 9 🟢**（真机只读探针 + Node 逻辑复刻 + 产物对照验证）。三条 🟡 已全部修复（4.5.0 修复段）：
+- 🟡-1 切换开关时已存在的配置面板不迁移落位（关态下 banner 仍留 Lists 槽位）→ 抽 `placeSetupBanner()` + 新增 `repositionSetupBanner()`，菜单切换经 `setHideListsRepositionHandler` 回调重挂；
+- 🟡-2 **vite.config.ts 的 grant 实际从未改动**（此前 `replace` 因锚点格式被拒，误判为已改；产物 grant 来自插件 autoGrant 推断）→ 真补 `GM_unregisterMenuCommand` 显式声明 + DEVELOPER.md 过期 grant 描述纠正；
+- 🟡-3 unregister+re-register 是 TM 历史缺陷面 → 改用官方 `options.id` 原地更新（`gmRegisterMenuCommand` 加 options 透传），id 不可得时回退旧路径，并给 `gmUnregisterMenuCommand` 补降级日志。
+🟢 9 项含：CSS 门控前缀后 `@media` 包裹完好、两腿互为冗余且双向收敛（真机实测）、默认开路径与 4.4.0 逐字一致、document-start 读值三路径均正确（无闪隐）、菜单幂等不重复、调用方兼容。ⓘ 非本轮引入：窄视口下 frame-render 分支的 `hideListsSection()` 无 `isDesktop()` 门（4.4.0 既有）、TM 菜单标签不跨标签页同步。
+
 ### 4.5.0 真机验证清单（重装 dist）
 ① 默认（未动菜单）：行为与 4.4.0 完全一致——Lists 隐藏、banner 原位替换、网格正常；
 ② TM 菜单出现「🙈 隐藏 Lists 区块（开）」，点击后立即：Lists 原生内容显示（标题行 + 空态「Create your first list」或 list 内容）、菜单标签变「（关）」、控制台一行 Hide Lists 切换日志；
@@ -33,6 +40,8 @@
 ⑤ 关闭状态触发 Token 失效面板（401/403）：同 ④；
 ⑥ 再点菜单切回「开」：Lists 立即重新隐藏、标签变「（开）」，刷新后仍隐藏；
 ⑦ 4.4.0 全部行为不回归（多选筛选/分页/同步/搜索高亮）。
+⑧ 面板存在时切换开关：面板**立即迁移**到新落位（关闭态 = 网格列顶 / 开启态 = Lists 槽位），不刷新页面（🟡-1 修复项）；
+⑨ 菜单连点多次：菜单项恒为一个、标签「开/关」与 Lists 显隐同步（🟡-3 `options.id` 原地更新路径）。
 
 ### 上一轮（4.4.0，已提交）
 Type/Language 多选筛选（OR）+ 筛选结果分页化；code-reviewer 审查 0🔴 / 3🟡 全部已修（底部 pager 摘下插回、URL 大小写归一+哨兵合并先于去重、keepPage），报告 `.diag/review-4.4.0.md`，详细改动表见 git 历史。
