@@ -1,189 +1,88 @@
 # GithubStarManager — Agent Handoff
 
-> 项目架构/模块/数据流/存储模型/约束以 **`DEVELOPER.md`** 为准（权威文档，勿在别处重复）。
-> 本文件只记录「当前在做什么、做到哪了、下一步」。
+> 架构 / 模块职责 / 数据流 / 存储模型 / 约束以 **`DEVELOPER.md`** 为准（权威文档，勿在此重复）。
+> 本文件只记录：**当前状态、待验证清单、仍生效的设计决策、调试要点**。
+> 历史过程一律查 `git log`（提交信息本身写得很详细），本文件不写「上一轮改了什么」。
 
 ---
 
-## 当前交接（2026-09-24 2x:xx +0800；焦点 = 4.5.0 Hide Lists 开关（已实现，**未提交**，待用户真机验证））
+## 当前状态
 
-### 目标
-用户需求：TM 菜单加「🙈 隐藏 Lists 区块（开/关）」——默认开 = 一贯行为（Stars 页隐藏 Lists 原生区块）；关闭后 Lists 原生内容正常显示，初始化 / Token 失效的配置面板仍出现但**改挂网格列顶**（不占用 Lists 位置，方案 A「插入并存」用户定案）。机制与切换 invariant 见 DEVELOPER.md §6「Hide Lists 开关」。
+版本 **4.5.0**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
+4.5.0「Hide Lists 开关」代码已提交（`c9e2fa7` + 审查修复 `d6ea772` + 落位改插入并存 `55c81f7` + 文档统一 `9d3e6c9`），**尚未在真机重装验证**。
 
-### 本轮改了什么（4.4.0 → 4.5.0，未提交）
+### 4.5.0 待真机验证清单（重装 `dist/github-stars-grid.user.js` 后逐条走）
 
-| 文件 | 改动 |
-|---|---|
-| `src/constants.ts` | +`STORAGE_KEYS.hideLists = 'stars_hide_lists'`（布尔，默认 true；GM + localStorage 镜像双写，document-start 兜底读镜像） |
-| `src/gm.ts` | +`GM_unregisterMenuCommand` ambient 声明与 `gmUnregisterMenuCommand()` 包装；`gmRegisterMenuCommand` 改**返回菜单命令 id**（供重注册刷标签） |
-| `vite.config.ts` | grant +`GM_unregisterMenuCommand` |
-| `src/dom.ts` | +`isHideListsEnabled()` / `applyHideListsGate()`（`html.gsm-hide-lists` 门控类挂摘）/ `clearListsHiddenMarks()`；`hideListsSection()` 首行读开关——关闭时不打标记并清残留，transform 与 frame-render 两个既有调用点零改动 |
-| `src/styles/base.css` | 第 4 节全部 Lists 隐藏规则（3 条无条件 + CSS-only `:has()` 兜底）加 `html.gsm-hide-lists` 门控前缀——开关关闭时规则整体失效 |
-| `src/ui/hideListsMenu.ts` | **新增**：菜单项「🙈 隐藏 Lists 区块（开/关）」，回调 = 翻转存盘 → 门控类与 JS 标记即时生效 → unregister/re-register 刷标签（Turbo SPA 内菜单不自动刷新，TM 5.x id 机制） |
-| `src/index.ts` | document-start `applyHideListsGate()`（installBootHide 旁，关闭时无闪隐窗口）；`showSetupBanner` 落位按开关分流（开 = **插到槽位节点之前** `slotTarget.before(bar)`，插入并存、原生节点保留不销毁；关 = `host.prepend` 挂网格列顶；切换开关经 `setHideListsRepositionHandler` 重挂）；init 注册 `registerHideListsMenu()` |
-| `package.json` / `DEVELOPER.md` | 4.4.0 → **4.5.0**；DEVELOPER.md 新增 §6「Hide Lists 开关」小节（含切换 invariant）/目录结构/存储键总述/grant 列表同步 |
+1. 默认（未动菜单）：行为与 4.4.0 完全一致 —— Lists 隐藏、banner 插在 Lists 槽位（**原生节点不销毁**）、网格正常。
+2. TM 菜单出现「🙈 隐藏 Lists 区块（开）」；点击后立即：Lists 原生内容显示（标题行 + 空态「Create your first list」或 list 内容）、菜单标签变「（关）」、控制台一行 Hide Lists 切换日志。
+3. 关闭状态下 F5 / `?tab=stars` 直载 / Turbo 进页：Lists 保持显示且**无闪隐**（若先显示再隐藏一瞬 = 门控前缀漏改，回报）。
+4. 关闭状态触发初始化面板（TM 菜单清空 token，或无缓存进页）：banner 挂在**网格列顶**、Lists 内容原地保留；保存并同步成功后 banner 消失、Lists 仍在原位。
+5. 关闭状态触发 Token 失效面板（401/403）：落位同 ④。
+6. 再点菜单切回「开」：Lists 立即重新隐藏、标签变「（开）」，刷新后仍隐藏。
+7. 4.4.0 行为不回归（Type/Language 多选筛选、筛选态分页、同步、搜索高亮）。
+8. 面板存在时切换开关：面板**立即迁移**到新落位（关 = 网格列顶 / 开 = Lists 槽位），不刷新页面。
+9. 菜单连点多次：菜单项恒为一个，标签「开/关」与 Lists 显隐同步（走 `options.id` 原地更新路径）。
+10. **节点可逆性**：开态显示初始化面板 → 关态 → 槽位里 blankslate / list 内容应**原样复活**（不是空白）；再切开态、面板回来仍只一份。
 
-调研结论（Verdict: Build）：TM 官方确认 `GM_registerMenuCommand` 返回菜单 id、`GM_unregisterMenuCommand` 移除后重注册可刷新标签（https://www.tampermonkey.net/documentation.php#GM_registerMenuCommand）；Lists 隐藏原链路（CSS 无条件规则 / JS hideListsSection / banner replaceWith）全为项目自研，无现成库可采。**banner 落位用户定案 = 方案 A 插入并存**（替换+还原方案 B 否决）。
+> 若某条失败：先确认装的是新 dist（控制台有 `[github-stars-grid] script loaded (document-start)`），再看 `DEVELOPER.md` §6「Hide Lists 开关」的两条腿（CSS 门控 + JS 标记）哪条没生效。
 
-### 4.5.0 审查（code-reviewer 子代理，报告 `.diag/review-4.5.0.md`）
-**0 🔴 / 3 🟡 / 9 🟢**（真机只读探针 + Node 逻辑复刻 + 产物对照验证）。三条 🟡 已全部修复（4.5.0 修复段）：
-- 🟡-1 切换开关时已存在的配置面板不迁移落位（关态下 banner 仍留 Lists 槽位）→ 抽 `placeSetupBanner()` + 新增 `repositionSetupBanner()`，菜单切换经 `setHideListsRepositionHandler` 回调重挂；**后半段残留（用户追问暴露）**：`placeSetupBanner` 仍用 `replaceWith` 吃掉 blankslate / `#profile-lists-container` 节点且全仓无还原路径 → 开态挂面板 → 切关态后 Lists 槽位永久空白（0 list 用户点不到「Create your first list」）→ 改 `slotTarget.before(bar)` 插入并存（原生隐藏本就由 hideListsSection 标记 + 门控 CSS 负责，节点留着即可逆）；
-- 🟡-2 **vite.config.ts 的 grant 实际从未改动**（此前 `replace` 因锚点格式被拒，误判为已改；产物 grant 来自插件 autoGrant 推断）→ 真补 `GM_unregisterMenuCommand` 显式声明 + DEVELOPER.md 过期 grant 描述纠正；
-- 🟡-3 unregister+re-register 是 TM 历史缺陷面 → 改用官方 `options.id` 原地更新（`gmRegisterMenuCommand` 加 options 透传），id 不可得时回退旧路径，并给 `gmUnregisterMenuCommand` 补降级日志。
-🟢 9 项含：CSS 门控前缀后 `@media` 包裹完好、两腿互为冗余且双向收敛（真机实测）、默认开路径与 4.4.0 逐字一致、document-start 读值三路径均正确（无闪隐）、菜单幂等不重复、调用方兼容。ⓘ 非本轮引入：窄视口下 frame-render 分支的 `hideListsSection()` 无 `isDesktop()` 门（4.4.0 既有）、TM 菜单标签不跨标签页同步。
+---
 
-### 4.5.0 真机验证清单（重装 dist）
-① 默认（未动菜单）：行为与 4.4.0 完全一致——Lists 隐藏、banner 插在 Lists 槽位（**节点不销毁**）、网格正常；
-② TM 菜单出现「🙈 隐藏 Lists 区块（开）」，点击后立即：Lists 原生内容显示（标题行 + 空态「Create your first list」或 list 内容）、菜单标签变「（关）」、控制台一行 Hide Lists 切换日志；
-③ 关闭状态下 F5 / `?tab=stars` 直载 / Turbo 进页：Lists 保持显示、**无闪隐**（若先显示再隐藏一瞬 = 门控前缀漏改，回报）；
-④ 关闭状态触发初始化面板（TM 菜单清 token 或无缓存进页）：banner 挂在**网格列顶**、Lists 内容原地保留；保存并同步成功后 banner 消失、Lists 仍在原位；
-⑤ 关闭状态触发 Token 失效面板（401/403）：同 ④；
-⑥ 再点菜单切回「开」：Lists 立即重新隐藏、标签变「（开）」，刷新后仍隐藏；
-⑦ 4.4.0 全部行为不回归（多选筛选/分页/同步/搜索高亮）。
-⑧ 面板存在时切换开关：面板**立即迁移**到新落位（关闭态 = 网格列顶 / 开启态 = Lists 槽位），不刷新页面（🟡-1 修复项）；
-⑨ 菜单连点多次：菜单项恒为一个、标签「开/关」与 Lists 显隐同步（🟡-3 `options.id` 原地更新路径）。
-⑩ **节点可逆性（🟡-1 后半段）**：开态显示初始化面板 → 关态 → 槽位里 blankslate / list 内容应**原样复活**（不是空白）；再切开态面板回来仍只一份；
+## 仍生效的设计决策
 
-### 上一轮（4.4.0，已提交）
-Type/Language 多选筛选（OR）+ 筛选结果分页化；code-reviewer 审查 0🔴 / 3🟡 全部已修（底部 pager 摘下插回、URL 大小写归一+哨兵合并先于去重、keepPage），报告 `.diag/review-4.4.0.md`，详细改动表见 git 历史。
+历史决策 D1（到货快照 diff）/ D2（双 404 逐条核对）/ D4（位移挂起）**已作废**——随 4.0.0 API 主模式与 4.0.10 死码清理整体删除，星状态真相改由整表 diff 权威判定。以下为现行决策。
 
+**D3 · Token 双格式（两种都要支持）**
 
-### 上一轮（4.3.5，已提交）
-Tags 审查修复四件：空态 li 补 role=none、删 6 处 renderTagFilterBar 直调并私有化、原位分支补 hasAnyTags 撤条门、注释诚实化。真机已验证。工装坑（防重蹈）：清数据必须 GM_setValue 与 localStorage 镜像**双清**（gmGet 迁移路径会自愈单边清理）。
-### 上一轮（4.3.4）
+- classic `ghp_`：有效 token 即可读全部 `/user/starred*`；**涉及私有仓库须勾 `repo` scope** —— 无 scope 时「无权限的私有仓库 404」与「真 unstar 404」不可区分（已定案不做同源页面 fallback，抓页面太重），属已知局限。
+- fine-grained `github_pat_`：账号权限 **Account permissions → Starring → Write**（Read 够读列表，但卡片星星按钮要 PUT/DELETE，故用 Write），仓库范围 **All repositories**。
+- 配置入口：TM 菜单「⭐ 设置 GitHub Token」+ 横幅内联粘贴行 + 「快速获取 Token」预填深链（`expires_in=90`）。留空 = 清除 token 并立即重开配置面板。
+- 权限表来源：<https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens>（“User permissions for Starring” 段列出全部 5 个 `/user/starred*` 端点）
 
-### 4.3.4 改了什么（已提交 117e90f）
+**D5 · 搜索口径**
 
-| 文件 | 改动 |
-|---|---|
-| `src/ui/tagFilter.ts` | **新增 `refreshTagFilterBar()`**（候选刷新唯一入口）：条已存在 → 原位重绘 chip 列表 + 按钮文案（popover 不关）；不存在 → 交 `renderTagFilterBar` 按需创建。`renderTagFilterBar` 渲染门槛从「当前候选为空不渲染」改为 **`hasAnyTags()`**（全缓存至少一个标签，与约束无关）——按钮不再时有时无。`renderTagFilterList` 空候选时渲染**禁用提示行** `.gsm-tag-chips-empty`「当前筛选结果暂无标签」（不再是一块空白像坏了）。chip 点击 handler 精简：删手动 `updateTagFilterButton`/`renderTagFilterList`（applyFilters 已统一刷） |
-| `src/filters.ts` | **`applyFilters()` 在 `updateLocalFilterControls()` 后调 `refreshTagFilterBar()`**——type/lang/搜索/勾选任何变化后候选即时收窄回填（根因修复：此前 applyFilters 从不刷新 Tags 候选，renderTagFilterBar 只挂在 transform/清搜索/卡片 pill 点击路径）。新增 `hasAnyTags()` |
-| `src/styles/base.css` | `.gsm-tag-chips-empty` 空态提示样式（muted 小字、非可点） |
-| `DEVELOPER.md` | tagFilter.ts 模块职责 + 「添加新的筛选条件」新增第 4 条 invariant：候选只能由 applyFilters → refreshTagFilterBar 统一刷新 |
-| `package.json` | 4.3.3 → **4.3.4** |
+- 自由文本只搜 **作者 / 仓库名 / 描述 / 标签 / 备注**；**语言不参与全文匹配**（否则 `ASC` 会子串命中 `JavaScript`），语言只走下拉筛选。
+- 命中词以 `<mark class="gsm-search-hit">` 高亮（四字段、大小写不敏感、只包文本节点、跳过输入控件）。
 
-**4.3.4 根因（真机复现实锤）**：① 脏候选 = chip 列表只在自身交互路径重绘，切 Language 后（实测 lang=Awk 1 卡）面板仍显示全量 10 个 tag，点不存在的 tag 出 0 结果；② 卡死空面板 = 空结果集取消勾选后 `computeTagCandidates()` 返回 `[]` 把面板清空，而候选刷新不随状态变化 → 永久空白只能整页刷新。修复后七步复测（注入 dist 真机）：lang=Awk → 空态提示；回 All → 10 个候选自动回填；lang=JS → 收窄 2 个；勾选/取消 微信 → 收窄/回填正常；type=Forks → 空态提示 + 2 卡；勾选时 popover 保持打开（R3 验收点）。
-**4.3.4 注入工装坑（防重蹈）**：`atob()` 直 `eval` 会把 bundle 内 UTF-8 字面量按 Latin-1 拆成乱码（`·`→`Â·`；中文不受影响因为来自 localStorage，极易漏判）——必须 `Uint8Array.from(atob(...), c=>c.charCodeAt(0))` + `TextDecoder('utf-8')` 解码后再 eval。另外注入前必须摘掉旧脚本产物**连同 `.stars-original-hidden` 类**（只删网格不摘类 → `getRepoItems` 全被过滤 → 重试耗尽回原生）。
+**D6/D7 · 同步与数据权威（现行总则）**
 
-### 上一轮（4.3.3，已验证随 4.3.4 一并过）
+- 有 PAT → API 主模式（全量缓存渲染 + 本地分页 + 本地筛选 + 纯 API 星星按钮）；无 PAT → 原生页 + `.gsm-setup-banner` 强推配置。
+- **权威边界**：远端权威 = 星标成员关系 / star 时间 / 仓库元数据；本地权威 = 标签 / 备注（同步绝不写 tags/notes）。
+- **完整性红线**：分页中断、解析失败、超 200 页上限、速率余量不足 → 整表放弃、不改任何数据（半张表会把未拉到的页全判 unstar）。
+- 单遍条件扫描：全 304 → 免额度早退；部分 200 → 只有变化页带 body，304 页用本地缓存切片复原。
 
-### 本轮改了什么（4.3.2 → 4.3.3，本次提交）
+**D8 · 同步入口与界面表述**
 
-| 文件 | 改动 |
-|---|---|
-| `src/styles/base.css` | **卡片 tag 胶囊终态 = 原本大小 + GitHub px 命名 token**：`.stars-tag` padding `var(--base-size-2,2px) var(--base-size-8,8px)`、radius `var(--base-size-12,12px)`、字号 `var(--text-body-size-small,12px)`、line-height 1.4 字面值（无对应 token）、**无边框**、不加粗、悬浮不变色（只留悬浮 ×）；**容器禁用 gap**——× 非悬浮时 width:0 但仍是 flex item，gap 恒占 4px 把文字顶向左（偏左根因），悬浮间距全由 `.stars-tag-del` 的 `margin-left:6px` 承担；行内配套 `.stars-card-tags min-height:22px` / `.stars-tag-add` 22×22 / `.stars-tag-input` 22px·`0 8px`·12px 圆角全部回原尺寸。**Tags 筛选面板重设计**：删旧 `.ActionListWrap` 尺寸规则；`.gsm-tag-chips` = **固定 320px 宽矩形**（primer/react Overlay widthMap `medium` 档）+ `flex-wrap` chip 铺排 + `max-height:300px` 内部滚动 + `overscroll-behavior:contain`；`.gsm-tag-chip` 用 TopicTag 尺寸但 **font-weight 400（不加粗）、悬浮仅 border-color 变色**（常驻透明边框防跳动）、选中 = emphasis 实心底 + 白字 |
-| `src/ui/tagFilter.ts` | 菜单从 checkbox 列表改 **chip 胶囊按钮**（ul `.gsm-tag-chips` + button `.gsm-tag-chip`，`role=menu`/`menuitemradio` + `aria-checked`）；ul 摘掉 `ActionListWrap` 类（样式全自管，防 GitHub 自带列表样式干扰） |
-| `src/filters.ts` | typeContainer 类名加 `mr-2`——修 Type 与 Language 筛选项之间缺 8px 间距（langContainer 不动，防与 sortContainer 的 `ml-2` 叠成双倍边距） |
-| `package.json` | 4.3.2 → **4.3.3** |
+- 手动同步 = **三个等价入口**：TM 菜单「🔄 立即全量同步」、横幅「立即同步」、标题行 Sync 按钮；一律经条件快筛后才决定是否整表。
+- 界面与 TM 菜单**不出现** P2.5 / P4 / 核对 等开发阶段表述（仅控制台日志与代码注释保留）。
+- GitHub **没有**创建个人 PAT 的 API，快捷获取永久只能靠预填 URL 深链（来源：<https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens>）。
+- 预填参数表（Pre-filling fine-grained PAT details using URL parameters）同上一链接；组织级端点 `/orgs/{org}/personal-access-tokens` 是审批/撤销管理，**非创建**。
 
-**4.3.3 调研结论（Verdict: Build，custom CSS）**：面板宽 320px = primer/react `Overlay/constants.ts` widthMap `medium` 档（small 256 / medium 320 / large 480）；交互依据 NN/g **Fitts 法则**（面板锚定按钮正下方 `side=outside-bottom,align=start` 零寻址 + chip 高 ≥24px 最小可点目标）与 **Steering 法则**（菜单应短而宽、窄长隧道式更慢）。**token 实锤**：primer/primitives `src/tokens/base/size/size.json5` 的 base-size 是 **px 命名**（`--base-size-2`=2px、`-8`=8px、`-12`=12px）——此前给 `--base-size-2` 写的 `4px` 兜底是错的（真值 2px，chip 实际高 ~26px 非 30px），兜底值与面板注释已同步纠正。
-**4.3.3 迭代过程（防重蹈）**：用户四轮反馈才收敛——① 全套 TopicTag 胶囊化 → ②「文字偏左」（根因 = gap 幽灵占位，非 × 未隐藏）→ ③「GitHub 尺寸但不加粗、悬浮不变色」合并方案 → ④ 卡片胶囊**回归原尺寸**、仅用 var 表达。教训：GitHub 化只针对筛选菜单，卡片胶囊用户要原样；大范围 CSS 锚点替换曾误删 chip 三条规则（锚点 `RSma` 实为空行而非选择器行），**大范围 replace 后必须 sed 复读核实括号配对**。
+---
 
-### 本轮改了什么（3.0.3 → 3.0.4，本次提交）
+## dev 模式必须知道的三件事
 
-| 文件 | 改动 |
-|---|---|
-| `vite.config.ts` | `match` 收敛为单条 **`https://github.com/*`**：旧 `*/*` 要求两段路径，匹配不到纯 `/YsLtr` → profile 页脚本根本没跑 |
-| `src/index.ts` | **全量重构**：`registerNavListeners()` 无条件前置（任何匹配页都挂 turbo/click 监听）；样式生命周期 `ensureStarsSetup()/deactivateStars()/exitStarsView()`；`transformAndReveal()` 成为唯一转换入口（重试耗尽=撤样式+恢复原生+大声日志）；删 observer/10s 块与重复 turbo:load；profile→Stars 到达时补注入样式 |
-| `src/boot.ts` | 隐藏从 `visibility:hidden` 改为 **`body{display:none!important}`**（不可被后代覆盖、零绘制）；挂载/解除都打日志（原因+耗时） |
-| `src/styles/persistent.css` | **新增常驻表**：`.stars-right-sidebar` 默认隐藏（防离开后残留空列）+ 侧边栏/头像 transition（离开时主表被撤，回弹过渡必须还在） |
-| `src/styles/base.css` | 4 条 transition 移去常驻表；`gsm-grid-in` 淡入改挂 `html.gsm-turbo-entry`——**直载不播淡入**（揭示后网格再淡入被用户当成闪） |
-| `src/gm.ts` | `gmAddStyle` 改为返回 `HTMLStyleElement` 句柄 |
-| `package.json` | 3.0.2 → **3.0.3** |
+1. **dev 下 GM API 不可见**：dev 代码经动态 `import()` 跑在 `unsafeWindow` 作用域，该作用域没有 GM_api（[vite-plugin-monkey#35](https://github.com/lisonge/vite-plugin-monkey/issues/35)）。已用 `server.mountGmApi: true` 解决（仅 dev 生效，产物不变）。
+2. **GitHub CSP 拦 dev loader**：`script-src` 白名单不含 `127.0.0.1`，dev loader 的动态 import 必被拒（`Failed to fetch dynamically imported module`），插件绕不过去。需装 CSP 放行扩展（只放 `github.com`）+ 允许 Local Network Access 弹窗。详见 `DEVELOPER.md` §2。
+3. **两个脚本不能同时启用**：`transformStarsList()` 见到 `.stars-grid-container` 就早退，正式版先跑会让 dev 版「改了没反应」。开发时在 Tampermonkey 里禁用正式版。
 
-**3.0.4 补丁（同日；用户对 3.0.3 反馈：仍闪 + 过一会恢复原始页面）**：① 直载时 Turbo 也会渲染初始 `user-profile-frame` → profile-frame 分支无条件 `transformAndReveal(true)` → 直载播了入场动画（网格淡入 + 侧边栏收缩）＝用户看到的「闪」→ 改为 `transformAndReveal(starsNavPending)`，并给 `revealAfterTransform` 加 `wasHidden` 幂等门（未处于隐藏绝不播动画，二次调用天然跳过）；② 首次 frame-render 时 `armNavFailsafe` 的 4s 定时器在成功揭示后**从未撤销**，到点误调 `exitStarsView` 整表撤样式 →「过一会脚本失效、恢复原始页面」→ 揭示成功即 `clearTimeout`，且回调自检仍隐藏才退出（残余定时器无害）。
-**3.0.5 补丁（同日 09:45；用户报「进入 ?tab=stars 仍旧整页刷新」）**：CDP 受信任点击抓链——GitHub 的 profile frame 带 `data-turbo-action`，Turbo FrameController 在 `fetchResponseLoaded → proposeVisitIfNavigatedWithAction` 于 frame 渲染完 **8ms 后补一次同 URL 整页 Drive visit**（`updateHistory:false`、`willRender:false`，纯重复）；该 visit 触发我们 `before-render → installBootHide` 的整页隐藏 + body 级渲染 = 用户看到的「整页刷新」（真机 boot 挂/摘日志与 152ms 空白窗口完全吻合，且 window/probe 状态未丢 = 非真刷新）。修法：`registerNavListeners()` 闭包记 `lastFrameRenderAt`（user-profile-frame/user-starred-repos 的 frame-render），`turbo:before-visit` 在 **1s 内且同 URL** 时 `preventDefault()`——下载 bundle 切片确认 `proposeVisit = allows && (...)`，取消即短路、无 `location.href` fallback；history 由 frame 的 action 自己维护（`changeHistory: if(this.action)`），被取消的 visit 本就 `updateHistory:false`，前进后退不受影响。**已热注入真机验证**：修复后两次 tab 往返无 `turbo:visit`/`before-render`/`turbo:load`、boot 0 次切换、grid 正常、URL 正确。**预期控制台变化**：tab 切换不再打印「防闪烁隐藏已挂载/解除」（before-render 不再触发，属正常）；仅直载/F5 与前进/后退仍走整页隐藏。
-**3.0.6 补丁（同日 10:00；用户报「Set status 悬浮展开后被遮挡」，确认就是裁剪）**：药丸静息态 = emoji 圆圈（36px），**悬停时 React 展开成完整药丸 101px（right=352）**，而我们 `.h-card{overflow:hidden}` 的裁剪边界在 x=344（180px 窄栏右缘）→ 展开部分右侧 8px 被切（命中测试 x346/350 原返回 Layout/MAIN 而非药丸）。修法：`overflow: hidden` → **`overflow: clip` + `overflow-clip-margin: 16px`**（裁剪职责保留、边界外扩 16px；16 < 列间距 24 不碰 Stars 网格）。真机验证：注入后命中 x346/350 返回 BUTTON/circle-badge 栈、截图圆角完整。**排查坑**：刷新页面后 React partial 水合有数秒延迟，期间药丸测得 36px 且悬停不展开——早期「clip 把药丸压塌」是误判（实为水合未完成）。`top` 悬停态 `document.elementsFromPoint` 会忽略 pointer-events:none 的 tool-tip，验证遮挡要换用元素自身坐标 + 截图。
-**3.0.7 补丁（同日 10:55；用户报「点分页 Next 闪一下才加载下一页」，要求直接截取数据原地更新）**：根因 = 分页链接在 `turbo-frame#user-starred-repos` 内（`.paginate-container` 下的 `a.btn.BtnGroup-item`），点击走 Turbo frame 导航 → 我们在 `before-frame-render` 给 frame 挂 `gsm-turbo-hidden` 整块藏住 + frame-render 后播入场动画 → 网络往返期间空白、到达后淡入 = 「闪」。修法：新模块 `src/pagination.ts`——**window 捕获阶段**拦分页链接点击（document-start 注册，先于 Turbo 一切 document 监听；`preventDefault`+`stopImmediatePropagation` 一处干掉 Turbo 与本脚本的 starsNavPending 误置位），直接取链接 `href`（**不解析游标参数，值不固定**）fetch 新页 HTML，`frame.innerHTML` 原地换入 + `transformStarsList()` 完整重建；不 pushState（原生 frame 翻页不改地址栏，链接无 data-turbo-action）；中键/Ctrl/Shift 不拦截；失败回落 `location.href`。**不动 frame[src]**（Turbo 监听 src 属性变化会二次加载再闪一次）。真机受信任点击端到端验证：首卡 utags→Lithe-IDEA→Ditto 连翻两页、`turbo:frame-render/visit/before-render` 与 `gsm-turbo-hidden` 计数全 0、地址栏保持 ?tab=stars、控制台两条「原地翻页完成」。**排查坑**：CDP Input 对**后台标签页静默失效**（tab `active:false` 时 click 不到达页面、无任何报错）——真机点击测试必须先 `Page.bringToFront` 再重测坐标（前台化后布局会偏移约 56px）。
-**3.0.8 补丁（同日 11:20；用户要求顶部复制分页器 + 点击转圈动画）**：① **顶部快捷翻页器**——`src/transform.ts` 末尾新增私有 `mountTopPager(colLg9, gridContainer)`（在 `appendChild(gridContainer)` 后调用，随 transform 完整重建同步，原地翻页后自动换新页状态）：克隆网格底部的 `.paginate-container` 挂到 `h2.f3-light`（「Starred repositories」）的父容器 `div.position-relative` 上并加 `gsm-top-pager` 类，父容器加 `gsm-header-row` 变 flex 两端对齐实现「行右边」（实测 topRect 右缘 = 行右缘 1456）；保留 `paginate-container` 类 → 分页拦截/转圈对顶底两份一视同仁，无需改 pagination.ts 的匹配逻辑。② **转圈动画**——按 Primer 官方 Button loading 态规范（文字保留透明占位防布局跳动 + aria-busy）：`swapPageInPlace` 签名加 `sourceLink`，开头加 `gsm-pager-loading` + `aria-busy=true`，`finally` 里摘除（成功时节点已被 transform 重建、脱离文档，remove 无害）；CSS 在 `base.css`：文字 `color:transparent` 占位保留，`::before` 画 14px 边框转圈（`border-top-color` 用 `var(--fgColor-default)` 适配暗色）+ `gsm-spin` keyframes + `pointer-events:none`/`cursor:progress`。**真机验证**（CDP `Network.emulateNetworkConditions` 限速 2s 拉开观察窗口 + 受信任点击顶部 Next）：点击即 `loading:1`、截图见 Next 内转圈而 Previous 文字保留、完成后 `loadingNow:0`；第 2 页顶/底 Previous 由 disabled 按钮变可点链接（状态同步 ✓）、首卡 utags→Lithe-IDEA、topRect 无跳动。**注意**：计数 `[aria-busy]` 时页面全局会有 ~60 个 GitHub 自己的 busy 区块，别误判。
+---
 
-### 本轮改了什么（3.0.8 → 3.0.10，已提交）
+## 真机调试要点
 
-| 文件 | 改动 |
-|---|---|
-| `src/starCheck.ts` | **新增（确认层 P2.5）**：PAT 存取与前缀校验（`ghp_`/`github_pat_`）、TM 菜单注册（`GM_registerMenuCommand` + prompt，非法前缀拒绝保存、只显示掩码）、`GET /user/starred/{owner}/{repo}` 串行核对队列（204=仍 star 只记裁决；404 间隔 1.5s **双确认**才走 unstar 宽限备份+清快照+卡片翻空星；条间隔 200ms、网络失败重试 1 次）、速率守卫（余量 <50 / 余量 0 / retry-after → 暂停至 reset+30s）、401/403 熔断当前 token（403 读 `X-Accepted-GitHub-Permissions` 给权限修复提示，换 token 自动恢复）、裁决缓存（starred 24h / unstarred 7d）、无 token 时只提示一次绝不改数据 |
-| `src/snapshot.ts` | **新增（检测层 P1 + 位移判定）**：`stars_page_snapshots` 按规范化页 URL（去 hash、page=1 归一、query 排序）记 `{repoId: owner/repo}`，**不存顺序**；同页成员 diff 出「消失」后 `expectationKey()` 按排序参数+页码算预期页——有模型（`created`+desc → 本页+1 / `asc` → 本页−1）→ `stars_shift_pending` 挂起（本页不核对，cap 60/TTL 30d），无模型（`updated`/`stars`、升序第 1 页）→ 直接 ≤8 核对（>12 提示走 P4）；到货先 `resolvePending()`：在到货页可见=位移确认即清、预期页缺失=才核对；`currentKey` 跟踪当前内容所属键（原地翻页不 pushState、Turbo 保留 frame 时防记错键）；空到货不更新也不结算；确认回调同时清全部快照与挂起（回调注册避免与 starCheck 循环 import）；内容未变不写盘 |
-| `src/gm.ts` | +`gmRegisterMenuCommand()`（调用时判定，非 TM 环境降级为 info 日志） |
-| `src/index.ts` | `transformAndReveal` 成功分支 +`recordArrival()`；`init()` 无条件 +`registerTokenMenu()` |
-| `src/pagination.ts` | 原地换页成功后 +`recordArrival(url)`（键 = 取回内容的 href） |
-| `src/constants.ts` / `src/types.ts` | +`github_pat` / `stars_page_snapshots` / `stars_star_verdicts` / `stars_shift_pending` 四键；+`StarVerdict` / `VerdictMap` / `PageSnapshots` / `ShiftPendingEntry` / `ShiftPendingMap` 类型 |
-| `vite.config.ts` | grant +`GM_registerMenuCommand`（仍显式声明，不靠 `$` 推断） |
-| `package.json` | 3.0.8 → **3.0.10** |
+- **必须前台标签页**：Chrome 冻结后台标签后测量/交互/定时器全部失真（后台定时器被节流到 1 次/分钟）。CDP 受信任点击对后台标签**静默失效**，先 `Page.bringToFront`。
+- **注入 dist 的工装坑**：`atob()` 直 `eval` 会把 bundle 内 UTF-8 字面量按 Latin-1 拆成乱码 —— 必须 `Uint8Array.from(atob(...), c => c.charCodeAt(0))` + `TextDecoder('utf-8')` 解码后再 eval。
+- **幂等早退**：改 transform 逻辑前先 `Page.reload()`，否则 `.stars-grid-container` 幂等检查会提前返回。
+- **清数据**：GM_setValue 与 localStorage 镜像**双清**（`gmGet` 迁移路径会自愈单边清理，只清一边看不出问题）。
 
-**3.0.10 补丁（同日 15:38；用户反馈：`/2akouwu/reverify` 被「新 star 挤到下一页」误判核对，并提出「按排序方式和每页数量直接计算」）**：位移判定改为**无序方案**（不存顺序、快照形状不变、零迁移）。线上实测排序参数 `sort=created/updated/stars` + `direction=desc/asc`（每页 30 卡）：`created`+desc（默认）消失 → 预期页 = 本页+1 挂起、**本页不核对**；`asc` → 预期页 = 本页−1；`updated`/`stars` → 无位移模型直接核对。任何页到货先结算：挂起项**在到货页可见 = 位移确认即清**；**预期页缺失 = 「本该在本页却没有」才核对**；方向猜错（上拉 / 一次跨多页）由 API 204 无害兜底。确认 unstar 后同步清挂起。
+```bash
+# 真机注入（.diag/ 已在 .gitignore）
+agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
+```
 
-**3.0.11 补丁（同日；用户报「搜 ASC：网络 1 条、脚本 21 条」+「搜索后 Sort 只剩 2 项」+「匹配字段要高亮」）**：① 根因 = 搜索表单被拦截后主体走 `searchCacheRepos()` **全缓存子串匹配**（当时 6 字段含语言），`ASC` 是 `javascript` 的子串 → 命中全部 JS 语言仓库 → **语言字段退出全文搜索**（只搜 名称/描述/标签/备注，语言仅走下拉筛选，见 D5）；② Sort 只剩 2 项 = 自建菜单写死两项（客户端排序需 `starred_at`，缓存没存）→ **「Recently starred」等 P4 回填后再补（用户定）**；③ 新增**命中高亮**：搜索重建卡片的 标题/描述/标签/备注 命中词包 `<mark class="gsm-search-hit">`（大小写不敏感、只包文本节点不动结构、跳过 textarea/input/contenteditable），CSS 用 Primer `--bgColor-attention-muted` 明暗自适应。
+---
 
-**3.1.0 P4 全量同步（同日 16:45；用户指令「开始实现 P4，同步按钮放标题行右侧翻页器左边」）**：① **新模块 `src/fullSync.ts`**——`GET /user/starred?per_page=100&page=N` + `Accept: application/vnd.github.star+json`（带 `starred_at`；防御 `repository`/`repo`/裸对象三形态，任一条解析失败=整体放弃）、页间 100ms、速率余量 <10 放弃、超 200 页上限放弃、401/403/限流报错带修复提示；**完整性红线：半张表绝不当整表用**——所有失败路径在 catch 里抛错、不改任何数据（否则未拉到的页会全被误判 unstar）。② **整表 diff 三向**：本地有远端无 → `starCheck.applyExternalUnstar()`（= `confirmExternalUnstar` 管线：宽限备份+清快照+卡片翻空星，**整表即权威确认跳过双 404**）+ 写 7d 裁决；远端有本地无 → `saveRepoData()` 建条目 / `pendingDelete` 内则 `markRepoStarred()` 恢复（标签备注连同恢复）；交集 → 回填 `starredAt` + desc/lang/stars/forks/updatedAt 刷新（`updated` 展示文本 API 还原不出，保留旧值）；顺带结算位移挂起（远端仍 star 的直接清）。写放大控制：交集回填整表只 load/save 各 1 次，新增/恢复按差异数走既有管线。③ **Sync 按钮**：`mountTopPager` 改返回标题行（`HTMLElement \| null`），transform 里 `mountSyncButton(headerRow)` 插到 `.gsm-top-pager` 左侧——CSS 把 `.gsm-header-row` 的 `h2` 改 `flex:1` 撑满（去掉 `space-between`），按钮与翻页器一起贴右；loading 复用 `gsm-pager-loading`；无 token 点击先弹 `promptForToken()`（starCheck 把菜单体抽成公共函数，菜单标签改「⭐ 设置 GitHub Token（核对 + P4 全量同步）」）。④ **快照 >12 升级为自动整表**：`snapshot.handleMissing` 消失 >12 **且已配 token** → `scheduleFullSync()`（单飞 + 60s 冷却），否则维持 ≤8 核对 +「配置 token 后自动走 P4」提示。⑤ **Sort 第 3 项落地（D5c 兑现）**：`SortKey + 'created'`、自建菜单 `+{created, Recently starred}`、`sortResults` star 时间降序（未回填沉底、稳定排序保到达序=原生服务端序）、`inheritNativeFilters` 遇原生 Recently starred → `'created'`、退出模式 URL 写回泛化为 `targetParams.set('sort', …)`。
-
-**4.0.0 API 主模式（2026-09-23 07:30；用户定案：全面强制 API + 分期 0/1/2 先行，见 D7）**：**A 安全+ETag**——PAT 移出 localStorage 镜像（gm.ts `SENSITIVE_KEYS`：lsWrite 跳写、gmGet 迁移清镜像，XSS 防护）；新增 `stars_full_sync_meta`（ETag/lastFullSyncAt/count）、`pullAllStarred` 带 `If-None-Match` 条件拉取（304 免额度免拉）、transform 成功后 `probeAndSync` 进页 idle 自动探（无变化免拉、超 TTL 强制整表）、`hasApiData()` 判渲染模式。
-**B 渲染源切换**——有全量缓存：`transformStarsList` 不再解析原生卡不再抽缓存（API 已权威），改挂 `renderBrowsePage`（原生列表+原生分页器 `stars-original-hidden` 藏起；`buildCardFromCache`+`createStarButtonForCached` 纯缓存渲染）；**本地分页**：自造 `gsm-local-pager`（`buildLocalPager`，`data-gsm-page`）顶/底两份由 `updateLocalPagers` 同步页码与 disabled，`pagination.ts` 只拦本地页码点击（零 fetch、零 Turbo）；**本地退出**：`exitCustomMode`（pushState `?tab=stars`，Clear filter 不再整页导航）；**搜索纯本地**（`fetchNativeSearchResults`/`nativeSearchResults` 等全删）；**星星按钮纯 API**（PUT/DELETE `/user/starred/{o}/{r}` + Bearer PAT，CSRF 提单/三处检测管线整体移除，失败回落原生 form 路径）；无缓存：原生页 + `.gsm-setup-banner` 横幅（「设置 token」= `promptForToken`、「立即同步」= `runFullSync('button')`，无 token 自动弹配置，完成后 `transformAndReveal` 重建出网格）。
-**C 死码清理**——snapshot.ts 删 `recordArrival`/位移/挂起全链只留 `purgeRepoFromSnapshots` 回调；starCheck 删 `enqueueVerify`/`kick`/`verifyOne`/`apiGet` 核对队列与双 404（P4 整表 diff 即权威确认，留 token/裁决写入/宽限区管线）；extract 删 `extractAndCacheRepoFromCard`；dom 删 `getRepoIdFromItem`；fullSync 删 `scheduleFullSync`（`probeAndSync` 接管）；filters 删原生搜索语言补充块与 `getTags` 死 import；+`NATIVE_PAGE_SIZE=30`（constants）。
-**4.0.1 Lists 槽位接管 + 快捷 Token 配置（2026-09-23 08:20；用户诉求：初始化 UI 太丑、网格态别露 Lists 空态、Token 获取要快）**：①**顶窗落位**——`showSetupBanner` 不再 `host.prepend`，改为替换 `#user-profile-frame > div` 下的空态 `div.blankslate`（0 个 list 的「Create your first list」）或 `#profile-lists-container`（有 list 时该容器本就被隐藏），都不在则退回旧行为；②**网格态静默隐藏空态**——`dom.ts hideListsSection` 增 blankslate 直接子节点判定 + `base.css` 静态兜底 `turbo-frame#user-profile-frame > div > div.blankslate{display:none!important}`（document-start 即生效，补 JS 首跑前窗口；已建 list 内容区仍走原 `#profile-lists-container` 隐藏 = 有 list 也整体隐藏）；③**快捷获取 Token**——新模块 `src/tokenConfig.ts`：官方 fine-grained PAT Template URL（`settings/personal-access-tokens/new?name=GithubStarsGrid&expires_in=none&starring=write`，GitHub 2025-08-26 changelog，write 含 read = 读列表+加星/去星全覆盖）一跳到预填创建页，横幅「快速获取 Token」→ 新建页复制 → 回横幅内联粘贴行（剪贴板读取/前缀校验/保存并同步；注意 `.gsm-token-row[hidden]` 必须 `!important` 盖过 inline-flex）+ TM 菜单第二项「快捷创建」；④**失效一键更新**——`notifyTokenIssue`：401（拉取/探测/星星按钮）与 403 **排除限速**后（无 `retry-after` 且 `x-ratelimit-remaining`≠0）→ 居中弹窗单例（打开创建页/从剪贴板粘贴/稍后/保存并同步），判定依据官方 troubleshooting；⑤**savedHandler**（init 注册）——任一入口保存成功 → 撤横幅 + `runFullSync('button')`，同步成功后再撤一次横幅 + 重建网格；`tokenConfig` 独立成模块防 `starCheck→filters→ui/cards` 循环导入；`promptForToken(notify)` 加参（runFullSync 按钮路径自己续跑，notify=false 防双跑）；权限文案 Read→Write（星星按钮要 write）。
-**4.0.2 三修（2026-09-23 09:10；用户报三问题）**：①**每次进页都全量同步**——实测：GitHub API 回 `Cache-Control: public, max-age=60`、CORS 暴露 ETag、条件请求 304 正常，官方 best-practices 明言「正确带 Authorization 的 304 不计主限流」；根因候选两枚并修：浏览器 HTTP 缓存（60s 内命中直接回缓存 200 不发请求；过期后本地合并 304 → JS 仍见 200）让 probeAndSync 误判「有变化」落入 runFullSync('auto')，且原 200 分支无日志无法区分「无基线」——修复：probe 与整表拉取的 fetch 都加 `cache:'no-store'`，补三条日志（整表后 `ETag 基线：已保存/未获得`、`ETag 探测 200：列表有变化→整表`、`ETag 快筛跳过（无基线/超TTL）`），下次真机看日志即定位；②**TM 菜单「快捷创建」无反应**——菜单回调没有用户激活，裸 `window.open` 被弹窗拦截器静默吞掉；gm.ts 新增 `gmOpenInTab()`（调用时判定），`@grant` 补 `GM_openInTab`，openTokenCreator 改走它，非 TM 环境回退 window.open；③**失效提示面板化**——tokenConfig.notifyTokenIssue 删居中弹窗，改 `setTokenIssueHandler` 回调（与 savedHandler 同模式），index 注册 → `showSetupBanner(detail)`（已有横幅刷新 `.gsm-setup-msg` 文案，否则槽位/列首挂面板），`bannerMessage()` 区分首次配置与失效文案，modal CSS 整块删除（95.39→93.81 kB）。来源：https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api 、https://www.tampermonkey.net/documentation.php?locale=en&q=GM_openInTab
-**4.0.3 五改（2026-09-23 14:50；用户问「二次同步为何不走 ETag」并提出 4 项修改 + 2 项调研）**：①**整表入口一律条件化**——`runFullSync` 被 菜单/保存后 直调时 `pullAllStarred` **不带 If-None-Match**（条件化原来只在 probeAndSync 探测里），手动同步因此永远 200 整表；现 runFullSync 开头读 `stars_full_sync_meta`，TTL(48h) 内带 `If-None-Match` 首页条件请求 → 304 走 `notModified` 早退（只刷 `lastFullSyncAt` 保基线、免额度免拉），超 TTL 不带条件强制全量；probe 逻辑不动。②**手动同步入口收敛 TM 菜单**——fullSync 新增 `registerSyncMenu()`（init 注册「🔄 立即全量同步（GitHub API）」，无 token 自动弹配置）；横幅「立即同步」按钮块与标题行 `mountSyncButton/syncFromButton` 整体删除（`SYNC_SVG`、`.gsm-sync-btn` CSS、transform 调用同清，`headerRow` 改裸调 `mountTopPager` 防未使用报错）；「保存并同步」自动路径不变（savedHandler）。③**预填过期 90 天**——tokenConfig Template URL `expires_in=none` → `expires_in=90`（官方参数表合法值 = **1–366 整数或 `none`**，默认 30 天）。④**留空清 token 立即重开面板**——`promptForToken` 空输入分支原本只 `gmSet('')+console` 静默 return（即用户问「为何没弹出」的根因），现补 `notifyTokenIssue('Token 已清除')` → `showSetupBanner`（菜单入口新建、横幅入口刷新文案），prompt 留空提示同步改写。⑤**界面/菜单去开发表述**——bannerMessage 默认文案、prompt 首行、TM 菜单标签（去「核对 + P4 全量同步」）全部改用户语言；P2.5/P4 只留控制台日志与代码注释。调研结论（用户问 1/2）：**官方无创建个人 PAT 的 API**（`/orgs/{org}/personal-access-tokens` 是组织侧审批/撤销管理，非创建），快捷获取只能走预填 URL 深链——来源见 D8。
-**4.0.4 逐页快筛 + 入口恢复（2026-09-23 15:30；用户报「菜单同步 304/200 交替」「点菜单没反应、头部按钮哪去了」并更正原话——要的是恢复横幅按钮而非删入口）**：①**quickCheck 逐页条件快筛**——`FullSyncMeta` 增 `etags[]`（`pullAllStarred` 每页收 `resp.headers.get('etag')`，任一页缺头则基线含空、下次直接整表重建）；`runFullSync` 开头逐页 If-None-Match（GitHub 每页独立 ETag；304 不计主限流；页间 200ms）：**全部 304** → 只刷 `lastFullSyncAt`、校验值原样保留**绝不从 304 响应头回读**（= 修 304/200 交替）；任一 200 即停转整表（位移使后续页失效，不浪费请求）；基线外**无条件探尾页 +1**（防「只在尾页追加」总数变长漏检）；401/403（非限速）→ `notifyTokenIssue` 上报初始化面板、error 早退不整表。②**三入口恢复**——横幅「立即同步」（替换原「手动设置」prompt 按钮）+ 标题行 Sync（`mountSyncButton` 贴顶部翻页器左侧，SYNC_SVG 图标自 4.0.3 删除后回补 `constants.ts`，转圈复用 `gsm-pager-loading`）+ TM 菜单，全部走同一条件化 `runFullSync`。③**填 token 框常驻**（`tokRow.hidden=false`，401/403 后面板一出现即可直接粘贴）；`probeAndSync` 瘦身 = 冷却 60s + 有 PAT 后直接 `runFullSync('auto')`。
-**4.0.5 修（同日 16:45；用户报「etag 字段错误出现 W 字符导致失败，先修这个」）**：破案证据链 = CDP 抓 TM 控制台真机日志 + 浏览器同款 `cache:no-store` 实测 + curl 三形式 A/B/C：① **W 无罪**——`W/"..."`、去 W 强形均稳定回 304（RFC 7232 弱比较必选行为），双发逗号列表反而 200（自证反例）；存储 `etags` 5 条 weirdEtags:0 格式规范；② **真凶 = 字节级 ETag 结构性抖动**——真机连续两次同步：基线 37 分钟龄与**几秒龄**都 `ETag 快筛：第 1 页 200 →…整表`，而整表 diff 恒为 0 新增 0 移除 0 恢复（仅元数据刷新）；响应体含 100 个热门仓库的 stars/forks 等实时字段，秒级即有字节变化 → 活跃列表在 48h TTL 内永远拿不到全页 304 → 每次同步 = 快筛必败 + 整表（「慢」与「失败」观感的根源，W 只是用户排查时在字段里撞见的正常形态）。修（`fullSync.ts`/`types.ts`）：① **`normEtag()` 弱前缀剥离**——`pullAllStarred` 收头、`quickCheck` 读基线、304 通过写回三处统一规范化，存/发皆强校验规范形（字段不再出现 W；弱比较等价已双实测 304，旧 W 值读取时自动规范形）；② `QuickVerdict` 增 **`changed-byte`**（页 200 = 字节变 ≠ 成员变），日志改「第 N 页 200 → 字节已变（可能只是仓库元数据抖动，非收藏变动）→ 整表比对确认」；③ **自适应字节窗口**：`FullSyncMeta.byteViableMs`——`changed-byte` 进整表后 added/restored/unstarred 全 0 = 判亏 → 收缩至 `max(30s, 基线龄/2)` 并打「字节快筛判亏…窗口收缩至 Xs」，窗口外 `quickCheck` 直接返回 changed 跳过（省一次注定 200 的请求）；全 304 在龄 A 通过 → 窗口回抬 A（封顶 TTL）；非判亏整表路径保留原窗口。版本 4.0.4 → 4.0.5，`pnpm check` 过（26 modules / 97.44 kB）。并行化同步（波次 4-6 并发、1s 波距）仍待用户点头（上轮「仅探讨」）。
-**4.0.6 撤 30s 字节窗口门（同日 18:45；用户问「为什么设 30s 门？为什么不一直带着 ETag 下次直接请求？」→ 选定 A 撤门）**：删三处联动 —— ① `quickCheck` 头部 `byteViableMs` 窗口判定（窗口外跳过快筛）；② `runFullSync` 的 `byteMissAt` 判亏探针 + 判亏收缩（`max(30s, 龄/2)`）/回写；③ 全 304 早退分支的 `passAge` 回抬；`FullSyncMeta.byteViableMs` 字段一并删除（存量 JSON 残键无害）。保留：48h TTL、缺基线/含空转整表、`normEtag` 规范形、页 200 `changed-byte` 日志、尾页 N+1 探测。**行为变化：条件快筛每次必发，Network 恒见 `If-None-Match`；全 304 免额度早退照旧；「跳过字节快筛」「字节快筛判亏」两组日志从此绝迹。**
-**4.0.6 补充（同日 19:05；用户报「每次同步完成恒有『外部 unstar 1』，是不是把候选 unstar 也算进去了？」+「快筛还是全 200」+「只首页 304 与全页 304 区别」）**：真机两支探针实锤 = `stars_pending_delete` 3 条中 **zai-org/ZCode 同时还在 `stars_repo_cache`**（入区 50 分钟、`bothCount:1`），另两条（synapse/pili-update-check）`inCache:false` 正常；详情页内嵌 JSON `viewerHasStarred:false` + Stars 搜不到 → 它**确系真取关**（17:58 首检无误），之后某回写路径把它写回缓存与宽限区并存 → `runFullSync` A 循环每轮调 `applyExternalUnstar`，confirm 见候选早退不写但**计数已 +1** → 恒 1。**用户猜测「候选被算进」部分成立：正常候选（已离缓存）不会被数，被数的是这个脏态。** 修（`starCheck.ts`+`fullSync.ts`）：① `confirmExternalUnstar` 改**幂等+自愈**——已入宽限区不再写区，但**仍删缓存回写脏态**；② `applyExternalUnstar` 返回「是否新确认」；③ A 循环只对新确认 `recordVerdict`+计数。下次同步 ZCode 离缓存即自愈、计数归 0。**另答两问**：快筛 200 属诚实判定（日志「元数据刷新 89/5」= 响应字节真变，GitHub 把热门仓实时 stars/forks 织进响应体，全 5 页逐字节不变在活跃列表天然稀有，客户端无解）；只首页 304（4.0.3 旧案）判据过弱——中部页取关/位移首页原样 304 会漏检整表已变，且曾有 `etag ?? ifNoneMatch` 落空致 304/200 交替的坑，逐页全 304（4.0.4 现案）= N 个免费请求（304 不计配额、无 body）换全覆盖，为正确取舍。`pnpm check` 过（26 modules / 96.34 kB，同属未提交的 4.0.6）。
-**4.0.7 同步并行化（2026-09-23 19:30；用户令「实现并行」，方案定稿见「目标」）**：`fullSync.ts` 三件套 —— ① 新增 **`runWaves()` 波次并发执行器**：`WAVE_CONCURRENCY=5`/波、发波间隔 ≥ `WAVE_GAP_MS=1000ms`（发波计时补足整 1s，慢网每波耗时自然拉大）；任一任务失败 → `AbortController` 中止在途请求 + 停发后续波，`pickRealError()` 滤掉主动 abort 的 AbortError 上抛真根因；外部主动中止信号（快筛已定论）同样停波、不算错误。② **`pullAllStarred` 重写**：第 1 页 `fetchStarredPage()` 先行拿 `Link` 头（`parseTotalPages`，`rel="last"` 取总页，无 Link = 单页）→ 超 `MAX_PAGES`(200) **立即**放弃（不再拉到第 200 页才发现）→ 页 2..N 分波并发写入按页码索引的 `results[]` → 按页序组装 + 校验（缺页/解析失败/拉到解不出一律抛错；`etags[i]` ↔ 页 i+1 严格对位，快筛依赖不失乱）；单页 401/403 上报、余量地板、非数组检查全在 `fetchStarredPage` 原样保留；逐页基线收集、diff、写盘路径零改动。③ **`quickCheck` 波次扫描**：`decide()` 定论机制——任一页 200 = `changed-byte` 即 `abort()` 中止在途、同波未发车任务让路、迟到响应丢弃、停发后续波；**`changed-byte` 优先级高于 `error`**（真变化信号不因同波一次网络失败而丢）；全 304 后尾页 N+1 无条件探测照旧（串行单请求）。`PAGE_GAP_MS=100` 串行页间睡删除。预期 26 页整表 10-18s → ~7s、5 页快筛 ~1s。`pnpm check` 过（26 modules / 98.47 kB，4.0.7）。
-**4.0.8 单遍合并 + 切片复用（同日 21:00；用户两连问：「pullAllStarred 和 quickCheck 重复了？」「搜下 starred api 每页数据怎么算、能否复用本地数据」→ 实锤后令「直接实现，完全可以合并」）**：调研实锤（docs.github.com/rest/activity/starring + 分页指南 + SO）：① `/user/starred` 默认序 = `sort=created`（按 **star 时间** starred_at）+ `direction=desc`；② 页码 = offset 分页、每请求按当下全集现算——star/unstar 使后续条目整体位移；③ 每条 = 完整 repo 对象（stars/forks/issues 等易变字段在 body）+ starred_at = 字节抖动源。**推论：任何成员变化必翻受影响页 ETag → 页还 304 ⇒ 成员与元数据都与上次同步一致 ⇒ 内容可用本地缓存切片复原**（缓存每条已有 starred_at，「全集降序每 100 切页」是本地纯函数，无须恢复 stars_page_snapshots）。实现：① `quickCheck`+`pullAllStarred` 删除，合并为 **`scanStarred()`**（返回 `ScanOutcome` 判别联合：unchanged / synced{items, etags, hybrid, freshIds, bodyPages, slicePages}）；② 波次条件扫 1..N+1（尾页无条件探增长；`fetchStarredPage` 增 `ifNoneMatch` 参数、304 → `notModified`，**不早停**——200 body 要收割）；③ 组装：正文页 `parseItem`、304 页 `buildLocalSlices(loadRepoCache())` 切片（ISO 串降序、PAGE_SIZE=100），重复 id 只计一次（切片平局互换防护）；④ **新基线**：正文页用响应 etag、**304 页沿用旧校验值**（绝不回读，4.0.4 交替坑）；⑤ 阀门（失守 → `pullAllUnconditional` 整表兜底）：缓存缺 starred_at / 切片盖不住 304 页 / 正文×切片重叠 <50%（排序模型失真）/ 尾页满页（增长可能超一页）；⑥ **A 循环分裂**：hybrid 模式 local-only 嫌疑先 `checkStarredGone()`（单条 GET：204=误报保留+日志 / 404=真取关入宽限管线 / null=本轮不动）——同秒 starred_at 平局跨 304|200 边界互换可造成假取关，此核对兜底；全正文模式整表即权威不核对；⑦ **C 循环**：元数据刷新只对 `freshIds`（正文页条目）做——切片条目 304 证明未变，缓存即真值，「元数据刷新 N」从此只数真抖动页。**胶水去重**：`apiHeaders()`（原 3 份请求头）+ 401/403 文案统一 `reportAuthIssue`+`authIssueMessage`（原逐字两份）。收益：常见 churn（1-3 页 200）= N 个条件请求、**只有 churn 页带 body**、时延≈一遍波次（比 4.0.7 两阶段再省约一半）；全静=全 304 早退不变；全变=N 正文=同整表，最坏不劣于 4.0.7。`pnpm check` 过（26 modules / 101.63 kB，4.0.8）。
-**4.0.9 尾页 tailEtag 条件探尾 + 并发提 6（同日 21:00 段；用户报「464 个 star 为何请求第 6 页」并三连推演定案）**：① **现状病理**：`scanStarred` 扫描范围恒含 N+1（4.0.4 尾页探测遗留），第 6 页**无条件**请求（无 If-None-Match → 必 200 空 body、**每轮花 1 点额度**）且独占第二波；464=5 页封顶，探测纯浪费。② **方案演进**：初案「DOM 计数器定页数」被用户否（计数器仅刷新进页可信）；二案「末页不满 100 不探」被用户再推（「干脆全条件探 N+1，304 不耗额度」）——**全条件探胜出**：判定不依赖位置推理（插入必头部）而靠 ETag 字节语义（越界页空数组变单条目必翻 200）、无判断分支、安静期 0 额度（同 4.0.6 撤门论证）。③ **实现**：`FullSyncMeta.tailEtag`（越界空页 etag，**独立于 etags 数组**——混入会破坏「基线长度=页数」切片对应）；尾页请求带它（`fetchStarredPage` ifm）→ **304=越界仍空：不算内容、不算变化**（hasChange / contentPages / 切片逻辑原样）；维护三态：304 沿用旧值（绝不回读，4.0.4 坑）、200 空=刷新、200 有货=尾页转正 → 清空（新越界页下次首探无条件后入库）；整表兜底（fullPullOutcome）后同样清空。`WAVE_CONCURRENCY` 5→6（官方容忍区间上限）：N 页+尾页一波到齐、quiet 扫描单 RTT；页数达 MAX_PAGES 不探尾。观测「80cb406b…」无 W/ etag = 空表示的**强校验器**（强弱是服务端自由，normEtag 强形存发照常工作；304 不出现只因该请求本无 If-None-Match）。**升级首扫注意**：tailEtag 无存量 → 首轮探尾仍无条件 1 次，随后入库恒条件。`pnpm check` 过（26 modules / 102.06 kB，4.0.9，提交 e577719）。
-**4.0.10 审查修复（同日 22:00 段；code-reviewer 子代理审查冗余/结构/性能/安全 → 报告 `.diag/review-4.0.9.md` → 用户定「立即修 🔴 + Top 🟡」）**：① **🔴 排雷：Link 正则恒失配**——GitHub 按请求参数顺序回显 Link（URL 尾 `&sort=…&direction=desc>; rel="last"`），4.0.8 钉 sort 参数后旧正则 `/page=(d+)>;s*rel="last"/` 永不匹配 → `?? 1` 把整表当 1 页 → 无条件整表路径（TTL 48h 到期 / 阀门兜底）把其余 ~364 条全判「外部 unstar」→ 标签/备注 24h 后**永久删除**（curl 实锤 + 源码双验证；条件扫描路径不受影响故尚未引爆，≤48h 必炸）。修：`parseTotalPages` 改「定位 rel=last 整段再抽 `[?&]page=`」（参数顺序无关、防 per_page 误匹配）+ **解析失败抛错、绝不猜页数**（无 Link 头 = 单页才回 1）。② **extract.ts fail-closed + 不覆盖好数据**（ZCode 类脏态源头，4.0.6 只做了事后自愈）：星态未知（about.star 缺失 / toggler 找不到）一律不写缓存（旧逻辑照写 = 已取关仓库复活）；stars/forks 区分 JSON 精确值（含真 0）与 DOM 兜底解析（0 = 未解析不写盘），保存改按字段条件 patch——解析失败不再把同步写入的好数据覆盖成 0/空。③ **死码簇拆除**：`snapshot.ts` 全仓零引用（purgeRepoFromSnapshots 承诺静默失效）删除；`recordVerdict` + 裁决缓存（`stars_star_verdicts` 只写不读无界增长）+ `onExternalUnstarConfirmed` 钩子（唯一注册者 = 死的 snapshot.ts）删除；`shiftPending` 管线（`clearShiftPendingForStarred` / `ShiftPendingMap` / `SyncSummary.shiftCleared`，3.0.9 遗产、4.0.0 起已无写入者）拆除；三历史键改 `LEGACY_STORAGE_KEYS`，init 一次性 `gmRemove`（新增 GM_deleteValue 包装 + `@grant`，GM 与 localStorage 镜像同删、幂等）。`pnpm check` 过（4.0.10）。报告其余条目（冗余 3🟡+2🟢 / 结构 1🟡+3🟢 / 性能 3🟡+2🟢 / 安全 3🟢）留待下轮逐条消化。
-**4.1.0 筛选/排序全本地化 A 期（2026-09-23 深夜；设计文档 `filters-sort-design-2026-09-23.md`，6 项需求 R1–R6；决策 D2 省略/D3 URL 只读/D6 合并按钮已定案，D1/D4/D5 按推荐）**：① **R1 排序 bug = `queryRepos()` 统一查询管线**（`filters.ts` 重构：lang → tags AND → search → 排序；`getTagFilteredRepos`/`searchCacheRepos`/`renderBrowsePage` 内联过滤全部收编）——根因「browse 态渲染与原生 Sort/URL 零同步（`filterState.sort` 恒 'stars'）」随全本地接管消除；② **排序规则（§4.3）**：`SortKey +'forks'`（Sort 菜单四项：Recently starred / Recently active / Most stars / **Most Forks**（本地扩展））× `direction`（desc/asc）；**缺失值恒沉底不随方向翻转**、平局 `name.localeCompare` 决胜全确定性（顺修次因 B：旧「沉底保到达序」注释与 `for..in` 整数键升序不符）；sort 默认 'stars'→**'created'** 对齐原生默认（次因 A）；③ **R5 方向按钮 = split button**（D6 定案）：与 Sort by 合并为一个按钮、中间一条竖线（CSS `margin-left:-1px` 边框重叠）、右段纯 octicon arrow-down/up **无文字**、点击切换；asc 时整组 `has-active` 高亮；④ **R6 URL 入口匹配**：`initFiltersFromUrl()` 在 transform 前调用，`?direction=asc&sort=stars&tab=stars` 即对齐本地态（sort/direction/language；q 仍由 search.ts 自动激活）；**URL 永远只读不写**（D3）；防覆盖 = 仅「URL 筛选参数签名」变化才覆盖（`exitCustomMode` pushState 后登记已解析；原生 Type 写入的 `type=` 不在签名内故不触发——比设计稿的整串比对更稳，实现注记）；`inheritNativeFilters()` 删除；⑤ **R2 常驻本地控件**：`updateLocalFilterControls()` 一次性接管（原生 Language/Sort `action-menu` **常驻隐藏**、节点保留作锚点；Type 留 4.2.0 本地接管），`tagMode`/`searchMode` 退场（`hasActiveFilter()` 派生：tags/lang/search 任一 = 筛选态平铺 + 信息条，browse 态本地分页不变）；⑥ **R3 Tags 共现收窄**：候选 = 结果集内标签 ∪ 已选（count 降序 + 字母序），`ui/tagFilter.ts` 抽 `renderTagFilterList()` **菜单原位重绘**（勾选 popover 不关）；Language 候选 = `queryRepos('lang')` 出现语言 ∪ 当前（D1 忽略自身值、替换语义）；⑦ 顺手修：信息条 Clear filter 原 `location.href` 整页导航隐患 → `exitCustomMode()` 本地化（`stopPropagation` 防与 index 拦截器双跑）。**Type 整簇（状态/数据回补/菜单/动态候选/信息条/URL 解析）留 4.2.0 B 期**。`pnpm check` 过（26 modules / 103.20 kB，4.1.0）。
-**4.2.0 Type 本地接管 B 期 + 4.1.0 三 bug 修复（2026-09-23 深夜；用户真机反馈：色圈空色 / 方向蓝圈多余 / Type 未本地）**：① **语言色圈修复**——API 同步条目无 langColor（REST 无颜色字段，真机实证）→ 新增 `src/langColors.ts`：**github-linguist/linguist `languages.yml` color 字段生成的 694 语言静态色表**（`.diag/gen-lang-colors.cjs` 重生成），`getLangColor(lang, stored)` 回退链 = 显式 langColor > 色表（键小写）> `#8b949e` 灰兜底，`cards.ts` 渲染期应用（Verdict: Adopt — linguist 官方色数据）；② **方向组 has-active 蓝圈移除**（D6 的「asc 整组高亮」被用户否）——方向态只由 ↑/↓ icon 表达，CSS `.gsm-sort-group.has-active` 规则删除；③ **Type 整簇（B 期）**：`RepoData` + `private`/`fork`/`isTemplate`/`mirror` 四标志（`parseItem` 逐项校验写入 + `buildLocalSlices` 切片 meta 携带 + C 循环条件 patch，4.0.10 不覆盖好数据原则）；**升级回补阀门 `typeFlagsComplete()`**——缓存任一条目缺标志 → 无条件整表回补一次（覆盖 all-304 场景，之后回归条件扫描）；`TypeFilter` 7 项（D2 省略 Can be sponsored）、本地 **Type 菜单**（布局 `[Tags][Type][Language][Sort│↓]`，All + `computeTypeCandidates()` 动态收窄替换语义）、原生 Type 菜单一并常驻隐藏、`queryRepos` 增 type 约束（`skip:'type'` 候选计算）、信息条 type 行、URL `type=` 进解析签名、`exitCustomMode` 清 type。`pnpm check` 过（27 modules / 125.94 kB，4.2.0）。
-**4.3.0 语言色运行时化（2026-09-24 00:2x；用户定：初始化直取数据源并缓存、未命中再取一次、取得后仍未命中才回退且只记一次、后续获取重检命中；不按仓库存色、不硬编码）**：① **`src/langColors.ts` 全量重写**——删除 694 语言硬编码色表，改为**运行时拉取 github-linguist/linguist `languages.yml`**（curl 实证 200 + CORS `*` + ETag）+ 15 行行扫描提取（与 `.diag/gen-lang-colors.cjs` 同一解析式，已全量验证 694 语言；只认两空格缩进带引号 color）+ GM 缓存 `stars_lang_colors`。生命周期：网格初始化（`transformStarsList` 首行 `initLangColors()`，每页一次）**直接获取并缓存** → 渲染遇未命中语言**再获取一次**（单飞合并 + 30s 失败冷却）→ **获取成功后仍未命中才记回退集**（灰圈，一种语言只记一次、后续渲染零请求）→ **后续任何一次获取都拿回退集对照新数据重检**（已命中摘出）；获取失败/解析为空 fail-closed 沿用旧缓存；数据落地后 `[data-gsm-lang]` 色点**原地重涂**（不重建网格，保滚动/交互）；② **`gm.ts` + `gmFetchText()`**（GM_xmlHttpRequest 优先、fetch 回退，调用时判定 + `@grant GM_xmlHttpRequest`）——不受页面 CSP/CORS 摆布；③ **拆 per-repo 存色**：`RepoData.langColor` 字段 + `extract.ts` 详情页色值提取/落盘（languageDot/Progress-item 两路）全删（颜色只由语言名决定），存量条目 langColor 残键无害；④ 卡片色点加 `data-gsm-lang`（encodeURIComponent 编码语言名）。Verdict: Build（custom 提取器）——无官方 JSON，仅第三方快照镜像（minojiro/gh-lang-colors、gh-tags 等非 canonical）。`pnpm check` 过（27 modules / 111.44 kB，色表拆除 −14.5 kB，4.3.0）。
-**4.3.1 修 Language 菜单脏值 "Watch1 (1)"/"Watch10 (10)"（2026-09-24 00:5x；用户报语言列表混入离谱语言）**：根因实锤（agent-browser-cli 登录态 fetch+DOMParser 探针）——2026 版详情页**没有 SidebarLanguages 模块、也没有 search?l= 链接**（有语言的 utags/utags 同样没有，DOM 语言提取整条链已死），extract.ts 只剩老版兜底 `.list-style-none li span` 还在跑，而 2026 页面第一个 `.list-style-none` = **Watch/Fork 计数条**（li 文本 `Watch1 (1)`/`Fork124 (124)`）→ 计数文本被当语言写缓存、**覆盖 API 的好数据**（skills-directory/skill-codex→"Watch10 (10)"、xstongxue/best-prompts→"Watch1 (1)"；464 条全量缓存均来自 API，唯独这两条被详情页访问污染）。修：① **extract.ts 删除整段 DOM 语言提取**（scope/link/兜底三路 + `patch.lang`）——lang 所有权全归 API `parseItem`，与 4.3.0 拆 langColor 同一哲学（宁缺勿错）；② `repoCache.ts loadRepoCache()` **读取即清洗**：lang 不合 linguist 命名字符域（`/^[A-Za-z0-9+#'.\-_ ]{1,40}$/`——字母/数字/空格/#/+'/-.，括号类必拒、C++/F#/1C Enterprise/Ren'Py 皆合法）→ `delete` 并写回一次（464 条全扫 µs 级，洗净后零写放大）——两条存量脏数据下次进页自动消失，卡片语言点暂缺属预期（下轮同步按 API 回填）。
-**4.3.2 Language 筛选加 None 项（2026-09-24 09:1x；用户需求：筛无语言仓库，None 放菜单末尾）**：`filters.ts` 增哨兵 `LANG_NONE='(none)'`（linguist 无同名语言，不撞车）——`queryRepos` 语言约束分流（哨兵 = `!data.lang`，其余照旧大小写不敏感匹配）；Language 菜单在**末尾**（字母序候选之后，用户定）渲染 **None** 项（`hasLangNoneCandidate()`：当前约束下存在无语言仓库才展示、已选恒可见——与 D1 动态收窄/替换语义一致）；候选并集排除哨兵防菜单出现 "(none)" 重影；按钮标签与信息条显示 None；URL `?language=none`（或 `(none)`，大小写不敏感）进页即筛无语言（URL 仍只读不写，D3）。
-
-**三 bug 根因（用户 2026-09-22 报告，本轮已修）**：① `@match */*` 匹配不到单段路径 `/YsLtr`，且 `init()` 在非 stars 页早退不挂导航监听 → profile 直入/点 Stars 均无效；② `visibility:hidden` 可被后代覆盖（GitHub 还有 app 层 CSS 未查全），且揭示后网格 `gsm-grid-in` 淡入 0.3s——「页面出现后内容再淡入」被当成闪；③ `gmAddStyle` 注入的布局样式**没有任何移除路径**，同文档 turbo 离开后 180px 侧边栏/120px 头像规则仍生效。
-**约束（永久生效）**：禁止 `import {GM_*} from '$'`（顶部一次性捕获与 document-start 不兼容，会固化成 undefined）；GM 一律走 `src/gm.ts`。
-
-**Turbo 导航模型**：profile 标签链接均 `data-turbo-frame="user-profile-frame"`（`user-starred-repos` 嵌套其中、侧边栏/头像在 frame 外持久存在）。**进**：`before-frame-render` 用 `detail.newFrame` 判断目标是 Stars 才藏 frame（切去 Repositories 绝不隐藏），`frame-render` 后 `transformAndReveal(true)`——**Turbo 按 id 保留嵌套 starred frame（src 未变不发 frame-render），profile-frame 分支必须主动调用**；入场动画 = `transformAndReveal` 开头先挂 `gsm-anim-prepare`（让样式注入瞬间停在 296 起点）→ 解除隐藏 → 强制 reflow → 摘 prepare（296→180 过渡）。**出**：`before-frame-render` 非目标 + `frame-render` 非 stars + `turbo:load` 非 stars 三处调 `exitStarsView()`（撤主样式表 → 原生恢复，transition 在常驻表里 → 180→296 带动画回弹）。4s 兜底 = `armNavFailsafe` + boot FAILSAFE。移动端全程不隐藏。
-
-### 数据存储（已向用户说明）
-- 主存储 GM：`stars_tags_<userId>` / `stars_notes_<userId>` / `stars_repo_cache` / `stars_pending_delete`（取不到 userId 回退 `stars_tags`/`stars_notes`）；localStorage 镜像同键加前缀 `github-stars-grid::`。
-- 迁移仅当 GM 为默认值时触发：GM 已有旧数据时，dev 写进 localStorage 的新数据**不会合并**。
-- 核对/同步相关：`github_pat`（PAT，**4.0.0 起不写 localStorage 镜像**）、`stars_page_snapshots`（到货页快照，4.0.0 起只清不写）、`stars_star_verdicts`（裁决缓存）、`stars_shift_pending`（位移挂起，历史数据）、`stars_full_sync_meta`（ETag/etags/**tailEtag**/lastFullSyncAt/count，4.0.0 新增、4.0.4 逐页 etags、4.0.5 normEtag 规范形、4.0.6 移除 byteViableMs 字段、**4.0.9 增 tailEtag 尾页越界空页条件探尾**）——机制见 DEVELOPER.md §5/§6，决策见下方「数据同步设计决策」D1–D8。
-- 语言色（4.3.0）：`stars_lang_colors` 全局语言→色映射缓存（运行时从 linguist languages.yml 获取；不按仓库存色——`RepoData.langColor` 字段已删，存量残键无害）。
-- Hide Lists 开关（4.5.0）：`stars_hide_lists` 布尔（默认 true = 隐藏 Lists 区块；TM 菜单「🙈 隐藏 Lists 区块」切换，机制见 DEVELOPER.md §6）。
-
-### 数据同步设计决策（2026-09-22 定稿，用户逐条确认）
-
-**D1 · 到货快照 diff（检测层，3.0.9 已实现）**：`stars_page_snapshots` 按**规范化页 URL** 记录每次到货的 `{repoId: owner/repo}`；成员真相以到货页为准，同页 diff 的「消失」只产生候选。原地翻页不改地址栏 → 翻页到货用**取回内容的 href** 作键（`snapshot.ts` 的 `currentKey` 跟踪，Turbo 保留 frame 时的重复 transform 也落在正确键上）。同键首访只建基线（持久化 → 跨会话可比）；空到货不更新（渲染失败不能当全量 unstar）。
-
-**D2 · 确认层（P2.5，3.0.9 已实现）**：双 404 确认**默认开启**（间隔 1.5s）；**不做同源 repo 页面 fallback**（用户定：抓页面太重）；网络失败 / 401 / 403 / 意外状态一律「不确定只当 stale」不改数据；预算 = 单次到货核对 ≤8、队列 ≤24、条间隔 200ms、速率余量 <50 或 retry-after 即暂停到 reset+30s（认证限额 5000/h）；单次缺失 >12 → 提示走 P4 全量（落地前只核前 8）。确认后复用 unstar 管线：缓存移入 `stars_pending_delete` 宽限备份、清标签/备注、**全量清快照**、卡片原地翻未 star；复 star 24h 内可恢复。
-
-**D3 · Token 双格式（用户定：classic / fine-grained 都要）**：
-- classic `ghp_`：有效 token 即可读全部 `/user/starred*`；**核对私有仓库需勾 `repo` scope**——无 scope 时「无权限的私有仓库 404」与「真 unstar 404」不可区分（D2 已排除页面 fallback，只能靠 token scope 规避），此为已知局限。
-- fine-grained `github_pat_`：官方 fine-grained 权限表 **“User permissions for Starring”** 列出全部 5 个端点（`GET /user/starred`、`GET/PUT/DELETE /user/starred/{owner}/{repo}`、`GET /users/{username}/starred`）→ 勾 **Account permissions → Starring → Read** + 仓库范围 **All repositories**（2026-06-30 stargazers 端点收紧名单**不含**这些端点）。
-- 配置入口：TM 菜单「⭐ 设置 GitHub Token」（任意 github.com 页可用）；存储键 `github_pat`；按前缀校验、非法拒绝保存；401/403 自动熔断当前 token，换 token 自动恢复。
-
-**D4 · 位移判定（3.0.10，用户 2026-09-22 反馈 reverify 误核对后定，修订 D1 的「消失→候选→API」）**：a) 「被新 star 挤到下一页」的消失**不触发核对**——按排序方式+每页数量直接算预期页（`created`+desc → 本页+1；`created`+asc → 本页−1；`updated`/`stars` 与升序第 1 页 → 无位移模型），消失先挂起 `stars_shift_pending`；b) 核对只发生在「本该在本页出现却没有出现」= 挂起项在预期页缺失（无模型排序仍直接有界核对，≤8 / >12 走 P4 照旧）；c) 结算用**集合成员检测、不存顺序**——挂起项在任何到货页出现即确认清（顺序只用于同货次区分尾部/中部，推迟到预期页成员检测等价且更简单，用户指出按排序+页数直接计算即可）；d) 方向猜错（上拉到页码更小的一页 / 一次跨多页）由「预期页缺失 → API 204」无害兜底；e) 确认 unstar 后清全部快照**与挂起**。
-
-**D5 · 搜索口径（3.0.11，用户定）**：a) **语言字段退出全文匹配**——自由文本只搜 作者/仓库名/描述/标签/备注，语言只通过下拉筛选指定（`ASC` 子串命中 `JavaScript` 的噪音消除，21 条 → 真实命中）；b) 搜索结果**命中字段高亮**——标题/描述/标签/备注四字段 `<mark class="gsm-search-hit">`（原生 meta 行不扫，语言已不参与匹配）；c) **「Recently starred」排序项等 P4**——客户端按 star 时间排序需要 `starred_at`，缓存未存；P4 用 PAT 拉 `GET /user/starred`（`star+json`）回填后，在自建 Sort 菜单补第 3 项（当前保持两项；`inheritNativeFilters()` 遇原生 Recently starred 回退 'stars' 属已知行为）。
-
-**D6 · P4 全量同步与 Sync 按钮（3.1.0，用户定：「开始实现 P4，按钮放标题行右侧翻页器左边」）**：a) 数据源选 **REST `GET /user/starred` + `Accept: application/vnd.github.star+json`**（GraphQL 未采用，先跑通 REST，ETag/GraphQL 分页优化留后续）——参考项目 GithubStarsManager 同法实现（每页 100、页间 100ms），但本项目须兼容 fine-grained PAT（D3；参考项目只支持 classic）；b) 触发 = 标题行 **Sync** 手动（无 token 先弹配置）+ 快照消失 >12 自动（**且已配 token**；单飞 + 60s 冷却）；c) 权威边界照总则——**远端权威**：星标成员关系、star 时间、仓库元数据；**本地权威**：标签/备注（`fullSync` 绝不写 tags/notes）；d) 整表拉取**即 unstar 的权威确认**，直接复用 P2.5 宽限管线（`confirmExternalUnstar`：备份+清快照+卡片翻转）并写 7d 裁决，跳过逐条双 404；e) **完整性红线**：分页中断 / 解析失败 / 超 200 页上限 → 整体放弃不改任何数据（半表会把未拉到的页全判 unstar）；f) 写放大控制：交集回填整表只 load/save 各 1 次；g) 已知局限：classic 无 `repo` scope 时私有仓库 star 不在列表 → 误判 unstar（与 D3 同源；fine-grained 选 All repositories 无此问题）；h) **D5c 兑现**：Sort 补第 3 项「Recently starred」（`starredAt` 降序，未回填沉底保到达序），`inheritNativeFilters` 遇原生 Recently starred → `'created'`。
-
-**D7 · 全面强制 API（2026-09-23 用户定，覆盖此前「双模式」初案）**：a) **有 PAT → API 主模式全功能；无 PAT → 原生页 + `.gsm-setup-banner` 配置横幅强推**（「立即同步」无 token 自动弹 `promptForToken`，配置完成点同步即出缓存网格）；b) 分期 **0/1/2 本轮已落地**（0 = PAT 移出 localStorage；1 = ETag 条件同步 + 进页自动 probe；2 = 渲染/分页/退出/搜索/星星按钮全本地化），3/4（周期自动同步、原生交互深化）后续；c) 非个人页 `github.com/<u>?tab=stars` 的 API 能力已调研——`GET /users/{u}/starred` 不受 2026-07 stargazers 端点收紧限制、可 unauth（60/h、100/页）、`star+json` 返回 `starred_at`——**本轮未接**（transform 只查本用户缓存），留后续。
-
-**D8 · 同步入口与界面表述收敛（4.0.3，用户 2026-09-23 定，修订 D6b/D7a）**：a) 手动同步**只留 TM 菜单**（横幅/标题行按钮删除；横幅只余 配置/粘贴 两动作，保存成功自动同步）；b) **任何整表入口都带 ETag 条件请求**（TTL 内 If-None-Match、304 免额度早退——覆盖手动与保存后），probe 判定不变；c) 预填 Token 过期固定 **90 天**（`expires_in=90`；官方合法值 = 1–366 整数或 `none`）；d) **留空清除 = 删 token + 立即重开初始化面板**（不再静默消失）；e) **界面与菜单不出现 P2.5/P4/核对 等开发阶段表述**（仅控制台与注释保留）；f) 已调研：**GitHub 没有创建个人 PAT 的 API**（官方文档只给手动网页流程；`/orgs/{org}/personal-access-tokens` 系组织侧对成员 token 的审批/撤销管理，非创建）——快捷获取永久只能靠预填 URL 深链。
-**D8 修订（4.0.4，用户 2026-09-23 15:0x 当面更正原话：要恢复的是横幅按钮而非删入口）**：手动同步 = **三等价入口**（横幅「立即同步」+ 标题行 Sync + TM 菜单），一律经 `quickCheck` 逐页条件快筛后才决定是否整表；横幅结构 = 快速获取 Token + 立即同步 + **常驻**填 token 行（保存成功自动同步不变）；界面仍无 P2.5/P4 字样。
-- 预填参数表（Pre-filling fine-grained personal access token details using URL parameters）: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens
-- 组织级 PAT 管理端点（非创建）: https://docs.github.com/en/rest/reference/orgs/personal-access-tokens
-
-**未实现（后续阶段）**：P3 local-first 首屏的**剩余部分**（4.0.0 渲染源已全走缓存 = P3 主体已达成；余 = 无 PAT 用户的本地镜像首屏与到货校正/增量 patch）；P4 余项——GraphQL 分页调研（REST 逐页 ETag 快筛 4.0.4 已落地）、**周期自动同步**（当前 = 进页 `probeAndSync`→`runFullSync` + 三入口手动：横幅/标题行/TM 菜单）；D7c 非个人页 `GET /users/{u}/starred` 接入。
-
-**来源**：
-- fine-grained 端点权限表（“User permissions for Starring” 段）: https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens
-- Starring API 204/404 语义: https://docs.github.com/en/rest/activity/starring
-- REST 速率限制（认证 5000/h）: https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api
-- X-Accepted-GitHub-Permissions 响应头（403 修复提示）: https://github.blog/changelog/2023-08-10-x-accepted-github-permissions-header-for-fine-grained-permission-actors/
-
-### dev 模式 GM 不可用的原因（已答用户）
-dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用域没有 GM_api（插件作者原话，issue #35）。官方解法：1 = `from '$'`（因上述根因已禁用）；2 = `server:{mountGmApi:true}` 把全部 GM 挂到 unsafeWindow（仅 dev 生效）——**已决定并加上（2026-09-22）**，dev 下 gm.ts 走 GM 分支、存储位置与正式版一致。来源: https://github.com/lisonge/vite-plugin-monkey/issues/35
-
-### DOM 变更对照（GitHub 2026 改版）
+## DOM 变更对照（GitHub 2026 改版，改选择器前先看）
 
 | 位置 | 旧 | 新 |
 |---|---|---|
@@ -192,63 +91,41 @@ dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用�
 | 原生筛选栏 | `.TableObject.border-bottom` + `mt-5` | flex 行 + `tmp-mt-5`，锚点 `#stars-language-filter-menu-button` |
 | 详情页 | `.BorderGrid` / `#repo-stars-counter-star` / `.starred form[action$="/unstar"]` | React + CSS-module；数据在 `script[data-target="react-app.embeddedData"]` → `payload.sidebarAbout`；star 按钮 `button[data-testid="star-button"]`，状态在 `aria-label` |
 | 搜索框 | `input[name=q]`、`form[action$="tab=stars"]` | **未变**，原拦截逻辑仍有效 |
-| Lists 标题行 | `.my-3…` + 内联隐藏即可 | `tmp-my-3…`，且 `.d-flex` 的 `!important` 压过内联 `display:none`，必须 `setProperty('display','none','important')`（`hideListsSection()`，已提交 2c84884） |
+| Lists 标题行 | `.my-3…` + 内联隐藏即可 | `tmp-my-3…`，且 `.d-flex` 的 `!important` 压过内联 `display:none`，必须 `element.style.setProperty('display','none','important')` |
 
-### 真机验证结论（CDP 注入 dist 到已开的 GitHub 标签页）
+---
 
-- stars 页（`github.com/YsLtr?tab=stars`）：30/30 卡片、repoId 全对、缓存 30 条且字段正确（`utags/utags`：JavaScript / 376 stars / 25 forks / 真实描述）、标签栏+药丸+备注正常、点标签进入筛选模式（自建 Language/Sort 出现、原生菜单隐藏）、无运行时错误。
-- 详情页（`github.com/utags/utags`）：内嵌 JSON 提取正确（repoId 611661896）、star 按钮识别为已 star、详情页**不**注入本项目样式（符合设计）。
+## 已知风险 / 待确认
 
-### 阻塞 / 风险 / 待确认
+1. **dev HMR 需浏览器放行 CSP**（见上「dev 模式三件事」第 2 条）。
+2. **经典 token + 私有仓库**：无 `repo` scope 时同步可能把私有仓库误判 unstar（见 D3，已知局限）。
+3. **TM 菜单标签不跨标签页同步**；窄视口下 frame-render 分支的 `hideListsSection()` 无 `isDesktop()` 门（既有行为，非缺陷主线）。
 
-1. **用户重装 `dist/github-stars-grid.user.js`（4.0.0）前台验证**：① **首次装（无 token）**：原生页 + `.gsm-setup-banner` 横幅出现；点「设置 token」弹 PAT 输入（classic `ghp_` / fine-grained `github_pat_` = Account permissions → Starring → Read + All repositories）、「立即同步」按钮转圈 → 控制台「★ P4 全量同步完成」→ 网格自动出现（全量缓存渲染）；② **有 token 重进页**：直接缓存网格无闪烁，控制台见「ETag 304」或「★ P4 全量同步完成」（进页 `probeAndSync` 自动）；③ **本地翻页**：点顶/底 Previous/Next 零网络（Network 无 GitHub 列表请求）、页码「N / M」随缓存与语言/排序筛选联动、按钮内转圈 = `gsm-pager-loading`；④ **搜索** `ASC` 纯本地出结果 + 命中词黄高亮（无 JavaScript 噪音）；⑤ **星星按钮**：点卡片星 → Network 见 `PUT/DELETE /user/starred/...` 204/205，刷新后状态保持，失败回滚；⑥ **退出自定义模式**：标签/搜索清空或点原生 Clear filter → 地址栏回 `?tab=stars` 且**不整页刷新**（pushState）；⑦ 离开/返回 Stars 侧边栏恢复与收缩动画正常、直进 `?tab=stars` 观察 10s 不回退原生；⑧ Sort 三项含 Recently starred（`starredAt` 降序，未回填沉底=到达序）。**判读**：②见「ETag 探测 HTTP 4xx」→ PAT 权限对照 D3；⑤ 404 → 仓库路径/私有权限；横幅不同步消失 → 「立即同步」报 401/403 换 token。若仍闪：要控制台 `script loaded / 防闪烁隐藏已挂载 / 防闪烁解除` 各行原文。
-**4.0.1 补充验证（同批重装后一并看；①的「替换」措辞已被 4.5.0 修订为「插入并存」，见「当前交接」）**：①首次装（无 token/无缓存）：横幅出现在 Lists 标题下槽位（不是列首多一块）；②点「快速获取 Token」新开预填创建页（名称 GithubStarsGrid、Account permissions → Starring: write 已勾）→ 生成复制 → 回横幅「从剪贴板粘贴」→ 输入框出现 token →「保存并同步」→ 横幅消失 + 控制台「★ P4 全量同步完成」+ 网格出现；③有 token 网格态：Lists 标题/空态/已建 list 内容全都不显示；④失效 token（401）或低权限 token（403 非限速）触发同步/星星按钮 → 居中弹窗，「打开创建页」预填、「保存并同步」后横幅撤 + 同步重跑；⑤ TM 菜单两项：「⭐ 设置…」prompt 权限文案已是 Write、「🔑 快捷创建…」新开预填页。
-**4.0.2 补充验证（同批重装）**：①**进页同步行为**：重装后第一次进页可能整表一次（建基线，控制台见 `ETag 基线：已保存`）；之后每次进页控制台应是 `ETag 304：star 列表无变化（免额度快筛）`，不再出现 `★ P4 全量拉取开始`；若再见整表，看日志属于 `无基线`（etag 没抓到 → 回报，备选 If-Modified-Since / GM_xmlHttpRequest 读头）还是 `200：列表有变化`（真变化）；②**TM 菜单「🔑 快捷创建」**点击应新开预填创建页标签（无报错、非静默无反应），横幅「快速获取 Token」同样；③**失效面板**：用低权限/失效 token 触发 401/403 → 列首或槽位出现 ⚠️ 文案横幅（含快速获取/手动设置/立即同步按钮），**不再有居中遮罩弹窗**；面板内保存后横幅消失并自动同步。
-**4.0.3 补充验证（同批重装；作废 4.0.0/4.0.1 清单里「立即同步」按钮相关步骤——按钮已删）**：①横幅只剩「快速获取 Token / 设置 token（+粘贴行）」，标题行只有顶部翻页器、无 Sync 按钮，全界面无 P2.5/P4 字样；②**手动同步走 TM 菜单**「🔄 立即全量同步（GitHub API）」：列表无变化时控制台应打 `ETag 304：star 列表无变化（免额度），跳过整表比对`、Network 只见第一页一条 304（无后续页）；新 star 一颗再同步 → 完整 `★ P4 全量同步完成`（新增 1）；③横幅「保存并同步」同为条件化（304 即完成并撤横幅）；④「快速获取 Token」新开页 **Expiration 默认 90 天**；⑤ TM 菜单「⭐ 设置 GitHub Token」**留空确定** → token 删除且初始化面板立即出现（横幅已在则文案刷新为「Token 已清除」）；⑥失效 token 面板、本地翻页、高亮等 4.0.0/4.0.2 清单项照旧。**判读**：② 若 304 后仍整表 → 看控制台 `ETag 基线` 是否「已保存」（已保存仍 200 → 回报 runFullSync 起始几行日志）；⑤ 面板没出 → 回报 `token 已清除` 那行之后的控制台。
-**4.0.4 验证（重装 4.0.4；叠加在 4.0.3 清单上、改判其中两条）**：①标题行出现 **Sync 按钮**（顶部翻页器左侧）、横幅出现**「立即同步」**（原「手动设置」prompt 已按更正移除）；②填 token 框**常驻可见**（无需先点快捷键或设置）；③菜单/横幅/标题行任一入口同步：无变化时 Network **每页都 304**、日志 `ETag 304：N 页全部无变化（免额度）`，且**连续点两次稳定复现 304**（不再 304/200 交替）；④中部造变化（另一设备 unstar 中段仓库）→ 快筛在该页 200 即转整表、差异正常应用；⑤新增一个 star（总数 +1）→ 尾页外探 200 → 整表收编；⑥401 失效 token 点任一入口 → 面板出现且填 token 行常驻、控制台无未捕获异常；⑦4.0.3 的 90 天预填 / 留空清 token 重开面板 / 全界面无 P2.5-P4 字样 仍作数。
-**4.0.5 验证（重装 4.0.5；叠加 4.0.4 清单，改判其第③条判读）**：①存储 `stars_full_sync_meta.etags` **不再含 `W/`**（旧 W 值下次保存自动规范形）；②首次同步大概率见 `字节快筛判亏：基线 Xs 内 ETag 已变但成员 0 变动（纯元数据抖动）→ 快筛窗口收缩至 Ys`——**这是修复生效的日志，不是失败**；③之后（间隔 > 窗口）再同步应见 `跳过字节快筛（该列表 ETag 抖动，可行窗口 Ys）→ 直接整表比对`，不再出现 `ETag 快筛：第 1 页 200`；④列表真变化时快筛 200 措辞 = 「字节已变（可能只是仓库元数据抖动，非收藏变动）→ 整表比对确认」，整表 diff 正确报新增/unstar；⑤安静窗口内仍可能 `ETag 304：N 页全部无变化（免额度）` 且窗口自动回抬。**作废** 4.0.4 清单第③条「无变化时每页都 304、连续两次稳定复现」——该期望在热门列表上被字节抖动证伪。若「跳过字节快筛」后仍嫌慢 = 整表本身耗时 → 转并行化讨论（方案已备）。
-**4.0.5 实证（同日 18:10，CDP 探针真机全链路捕获；纯观测零代码改动）**：① **条件请求实锤**——前台标签两连点：距上次 >30s 的点击走「跳过字节快筛」→ 全部请求 `inm=null` → **Network 永远全 200 是窗口门的设计行为，不是 304 失效**；完成后 0.7s 再点一次，第 1 页请求带 `If-None-Match: "d8bab3e9…"`（强形式无 W/，meta 实测 wCount=0、byteViableMs=30000、etags 5 条齐）——请求头链路闭环，响应 304 由早前同头直发测试背书（3a7f02f27abb/43819ef1de33）；② 响应头 `W/` 是 GitHub 服务端行为、客户端改不了也不需要改，4.0.5 客户端可控部分（存储+请求头）已全强形；③ **排查大坑：后台标签 Chrome 定时器节流 1 次/分钟**（再证 0fd2fc22f2a8）——探针 sleep 轮询在后台全失真（预算 300s 实走 330s、3s 归零窗口漏采），曾被误判为竞态/写滞后/点击被吞；真机计时类探针必须先前台化标签（`agent-browser-cli open <url> --focus --tab <id>` 会新开标签而非聚焦旧标签，注意用完关掉）；④ 附带实锤：外部 unstar 管线真实捕获 `zai-org/ZCode`（标签/备注已入 24h 宽限区），前台全量拉取 5 页约 14-31s。
-**4.0.6 验证（重装 4.0.6；叠加 4.0.5 清单，作废其「判亏→收缩→跳过」三步判读）**：① 三入口（TM 菜单/标题行/横幅）**任意间隔**点同步，第 1 页请求必带 `If-None-Match`（不再出现「跳过字节快筛」日志）；② 安静期（列表真无变动）应见全 304 早退；只有元数据抖动时页 200 → 整表、**成员 0 变动属预期**（但不再有判亏收缩日志）；③ 同步后 `stars_full_sync_meta` 仍有 etags 基线 + lastFullSyncAt，且**不再写入 byteViableMs**。
-**4.0.6 补充验证**：④ 同步完成行「外部 unstar」**不再恒 1**——ZCode 脏态在重装后首次同步自愈（缓存条目被清），其后各轮应为 0（真有新取关才 +1，且只 +1 一次）；⑤ Network 里点同步的**第 1 页请求任意时刻都带 If-None-Match**（已由日志无「跳过字节快筛」侧面印证）。
-**4.0.7 验证（重装 4.0.7；叠加 4.0.6 清单）**：① Network 观同步请求形态——整表 = **第 1 页先行，随后每波 5 个并发请求、波间约 1s**（不再是单线逐页 + 100ms 间隔）；快筛（安静期）同为 5 并发的 `If-None-Match` 波 + 尾页 1 个无条件探测；② **时延**：26 页整表应由 10-18s 降到 ~7s、5 页快筛 ~1s；③ diff 计数与串行版一致、完成行字段正常（新增/恢复/外部 unstar/回填）；④ **无 403/429**（次级限流未触；若见 retry-after 日志 = 波距需上调，回报）；⑤ 人为断网点同步：整表放弃且缓存/标签/备注不动（红线）。
-**4.0.8 验证（重装 4.0.8；叠加 4.0.6/4.0.7 清单）**：① **升级首扫必全 200**（URL 加 sort 参数换 ETag 表示，基线重建一次）——日志见「无条件整表拉取」或全正文模式，之后恢复条件扫描；② 安静期第二次同步：控制台「ETag 304：N 页全部无变化」、Network N 个条件请求全部无 body；③ **元数据抖动场景**（churn 后点同步）：日志「★ P4 扫描：N 页（正文 X + 本地切片 Y，切片混合模式…）」——只有 X 个请求带 body（其余 304 无 body 免额度），完成行「元数据刷新」只数正文页；④ 若日志出现「嫌疑核对：…仍 star（切片平局误报），保留」= 双态核对生效（预期罕见，出现属正常防护）；⑤ 若出现「切片阀门…回落无条件整表」= 阀门生效（预期不出现，出现请回报触发原因）；⑥ **外部 unstar 计数语义不变**：真取关才 +1 且只一次；⑦ Network 每个 starred 请求 URL 带 `sort=created&direction=desc`。
-**4.0.9 验证（重装 4.0.9；叠加 4.0.8 清单）**：① **安静期扫描 Network = 6 个请求全部带 If-None-Match、全部 304、同波同发**（含第 6 页），0 额度——第 6 页不再出现无条件 200 空 body；② **升级后首轮**尾页探测仍 1 次无条件（tailEtag 首存），其后恒条件 304；③ 新增 1 个 star 后扫描：第 1-5 页 200 带 body、第 6 页 304（越界仍空），完成行正常、元数据刷新只数正文页；④ 总数恰满 500 后再增长：第 6 页 200 带货 → 尾页转正为内容页（日志页数 +1）、下轮 tailEtag 首探入库；⑤ `stars_full_sync_meta` 含 `tailEtag` 字段、值与 Network 尾页响应 etag 一致（304 轮保持不变、不回读覆盖）。
-**4.0.10 验证（重装 4.0.10）**：① **排雷确认（最关键）**：手动触发无条件整表（TM 菜单同步 + 暂时清 `stars_full_sync_meta` 或等 48h TTL）——日志「★ P4 扫描」页数 = 真实页数（464 star = 5），**不再出现大批「外部 unstar」误判**；② 详情页访问一个未 star 仓库后查 `stars_repo_cache`：**不再新增条目**（星态未知不写）；访问已 star 仓库正常缓存（JSON 真 0 仍写 stars=0）；③ GM 存储中 `stars_page_snapshots` / `stars_star_verdicts` / `stars_shift_pending` 三键**消失**（init 一次性 gmRemove）；④ 同步完成行不再出现「位移挂起结算」字样。
-**4.1.0 验证（重装 4.1.0，独立清单；4.0.x 同步类清单不受影响）**：① `?direction=asc&sort=stars&tab=stars` 进页：Sort 显示 Most stars、方向 icon 为 ↑、网格 stars 升序；② 裸 `?tab=stars` 进页：Sort 显示 Recently starred、方向 ↓、**顺序 = starredAt 降序且与按钮一致（= R1 修复判据）**，缺 starredAt 条目沉底按名称序；③ Sort 菜单四项含 Most Forks：切 Most Forks = forks 降序；点方向 icon（Sort by 右段、竖线分隔、无文字、悬停有提示）：升序、icon 变 ↑、整组蓝边高亮；④ Tags 共现收窄（R3）：选 a 后菜单**原位刷新且 popover 不关**，只剩共现标签 b（无 a 共现的 c 消失），取消 a 恢复全量；⑤ Language 菜单候选随 tags/search 收窄，切换语言不必先清空（D1）；⑥ 本地 Language/Sort 常驻可见、原生 Language/Sort 不可见（**原生 Type 仍可见 = 4.2.0 前预期**）；信息条在 tags/lang/search 任一激活时出现，**Clear filter 只清筛选不改 sort/direction 且不整页刷新**（pushState）；⑦ 本地翻页、搜索高亮、星星按钮、同步流程照旧。**判读**：①② URL 不生效 → 确认重装的是新 dist + 控制台有 `script loaded`；④ 勾选时 popover 被关掉 = 原位重绘失效，回报；⑥ 若原生 Language/Sort 仍可见 = 菜单隐藏失配，回报选择器。
-**4.2.0 验证（重装 4.2.0；叠加 4.1.0 清单）**：① **语言色圈**：全部卡片圆点有色填充（Rust=#dea584、JS=#f1e05a 等与 GitHub 一致），冷门语言兜底灰圈不空；② 点方向 icon 切升序：**只变 ↑，无任何蓝圈/高亮**；③ **Type 本地生效**：菜单 = All + 可判项动态收窄（Can be sponsored 不出现 = D2 预期），选 Private/Forks 立即本地过滤、Network 无请求；原生 Type 菜单不可见；④ Type 候选随 tags/search 收窄、已选恒可见可切回 All；⑤ `?type=fork&tab=stars` 进页：Type 按钮显示 Forks、网格只显 fork 仓库；⑥ 信息条含 type 行；Clear filter 清 type 且不动 sort/direction；⑦ **升级首扫（4.1.0→4.2.0）**：日志见「缓存缺 Type 标志（升级回补）→ 无条件整表拉取一次」，其后 Type 筛选对全量条目准确、同步回归逐页条件快筛。**判读**：③ 私有/模板等筛不出 = 四标志未回补 → 看 ⑦ 的升级首扫日志；① 仍有空圈 = 回报语言名（色表未收录？）。
-**4.3.0 验证（重装 4.3.0；叠加 4.2.0 清单）**：① 首次进 stars 页：控制台「语言色已更新：N 语言（当前回退 0）」、色点全部有色（TM 环境数据流走 GM_xmlHttpRequest，Network 面板不一定可见，以控制台+颜色为准）；② GM 存储出现 `stars_lang_colors`（约 694 键映射），**不再有按仓库的 langColor 写入**（详情页访问后查 stars_repo_cache 无 langColor 新键）；③ 刷新/重进页：颜色立即可用（缓存先行），初始化仍发一次数据源获取；④ 未命中语言：灰圈 + **一次**补拉（Network/控制台可见），补拉后仍无 → 后续渲染**零请求**；此后另一未命中语言触发补拉时，先前回退的语言随新数据**重检**——若新数据已有该语言即自动上色（原地重涂，无需刷新）；⑤ 弱网/断网进页：沿用缓存颜色，控制台「语言色获取失败，沿用现有数据」且不刷屏（30s 冷却）。**判读**：① 无请求且全灰 → 回报控制台 gmFetchText/getLangColor 报错；④ 每次渲染都发请求 = 单飞/回退记录失效，回报。
-**4.3.1 验证（重装 4.3.1；叠加 4.3.0 清单）**：① 进 stars 页开 Language 菜单：**无 "Watch1 (1)"/"Watch10 (10)"**（清洗生效；对应两卡片语言点暂缺 = 预期，下轮整表/正文页同步按 API 回填真语言）；② 访问任意无语言侧栏的详情页（如上述两仓库）后查 `stars_repo_cache`：**不再出现括号类 lang**、API 好数据不被覆盖；③ 既有合法语言（C++/F#/1C Enterprise 等）不受字符域门影响。
-**4.3.2 验证（叠加 4.3.1 清单）**：① Language 菜单出现 None（存在无语言仓库时）；点选 → 网格只显无语言卡片、按钮 "Language: None"、信息条 language: None；② 再开菜单 None 勾选态保持、候选列表无 "(none)" 重影；③ 全部仓库都有语言时 None 不出现；④ `?language=none&tab=stars` 进页直出无语言集合；Clear filter 清掉 None 回全部。
-**4.3.5 验证（重装 4.3.5；叠加 4.3.4 清单；本轮已注入真机预验）**：① 4.3.4 清单全项不回归（候选收窄/回填/空态提示/popover 不关）；② 删除最后一个标签（或同步清空带标签仓库）后：Tags 按钮与面板**整体消失**、不再残留空面板；重新打标签 → 按钮自动回来；③ 卡片 pill 点击 → 筛选激活 + 面板候选收窄 + pill 选中态（冗余直调删除后行为不变）。**判读**：删光标签后 Tags 按钮仍在 = 不是 4.3.5（或 hasAnyTags 门未生效，查 refreshTagFilterBar 原位分支）。
-**4.3.4 验证（重装 4.3.4；叠加 4.3.3 清单；本轮已注入真机预验，重装后按此复核）**：① 选 Type/Language（含搜索）后**立即**开 Tags 面板：chip 只剩当前结果卡片上存在的标签（不再残留全量旧列表）；② 切到一个「结果集无标签」的筛选（如 lang=Awk 单卡无标签）：面板显示灰字「当前筛选结果暂无标签」、Tags 按钮仍在；③ 切回 All languages：全部候选**自动回填**（无需刷新页面）；④ 勾选 → 面板保持打开、chip 实心选中态、候选随共现收窄；取消勾选 → 候选立即回填上级集合；⑤ Type 与 Language 组合筛选后 ①–④ 同样成立；⑥ 面板空态行不可点击、muted 灰字。**判读**：候选不收窄 = 装的不是新 dist；面板空白无提示行 = `.gsm-tag-chips-empty` 未生效。
-**4.3.3 验证（叠加 4.3.2 清单）**：① **卡片 tag 胶囊 = 原大小**（约 21px 高、紧凑内边距 2px·8px、12px 圆角），文字垂直居中、无偏左；悬浮卡片出胶囊 → 悬浮胶囊尾部出 ×（间距由 margin 承担，无恒定空隙）；胶囊不加粗、悬浮不变色；② **+ 按钮 / 内联输入框**与胶囊同高（22px），同行无大小失衡；③ **Type/Language/Tags/Sort 筛选按钮间距均匀**（Type↔Language 有 8px 间隙）；④ **Tags 筛选面板 = 320px 固定宽矩形**：点开 Tags → 面板宽恒定（约每行 2-4 个胶囊 chip 多行铺排），不随内容横向伸缩；标签很多时面板内滚动（max-height 300px）且**滚轮不穿透滚动页面**；⑤ chip：不加粗、悬浮仅描边变蓝（底色字色不动、无布局跳动）、点选 = 实心蓝底白字、再点取消；⑥ 勾选后面板保持打开（原位刷新），筛选即时生效；暗色模式下以上颜色/描边均自适应。**判读**：胶囊变大/变粗/悬浮变色 → 装的不是新 dist；面板仍随内容伸缩 → `.gsm-tag-chips` 规则未生效（查是否被 GitHub 自带样式盖掉）；文字仍偏左 → 确认 `.stars-tag` 无 `gap` 属性。
-2. **dev HMR 在 github.com 上需要浏览器放行 CSP**：GitHub 的 `script-src` 白名单不含 `127.0.0.1`，dev loader 的动态 import 必被拒（`Failed to fetch dynamically imported module`）。插件绕不过，需装 CSP 放行扩展 + 允许 Local Network Access 弹窗。详见 `DEVELOPER.md` §2「dev 模式在 github.com 上的两个前置条件」。
-3. **两个脚本不能同时启用**：`transformStarsList()` 见到 `.stars-grid-container` 就提前返回，正式版先跑会让 dev 版"改了没反应"。开发时在 Tampermonkey 里禁用正式版。
-4. 真机验证必须**前台**：Chrome 冻结后台标签页后测量/交互全部失真（曾误判样式失效）。
-5. ~~`todo` 文件按上次决定继续留在未跟踪状态~~ **已变更（2026-09-24）**：`todo` 现纳入版本控制（提交 `55c81f7`，`git add -A` 时一并入库；用户确认「todo 保持现状」），后续修改正常提交，不再当作私有草稿。
+---
 
-### 下一步
+## 下一步
 
-1. **4.5.0 真机验证（清单见「当前交接」；重装 `dist/github-stars-grid.user.js`）**：Hide Lists 开关十项清单 + **4.4.0 回归**（多选 OR / 面板不收起 / 按钮与信息条文案 / 筛选态分页 / URL 多值 / Sort+Tags）。4.4.0 与 4.5.0（含审查修复 + 落位改插入并存）均已提交，真机验证发现问题 → 另开修复提交并更新验证清单。审查报告余项（`.diag/review-4.0.9.md`：冗余/结构/性能/安全 🟡🟢）与 4.3.5 架构建议（A 单遍 facet / B 响应式漏斗）仍待用户定夺。后续阶段（P3 剩余、GraphQL 分页调研、周期自动同步、D7c 非个人页 `GET /users/{u}/starred`）见「未实现」。
-2. **快速构建阶段（2026-09-22 起，用户已定）**：不跑 `tests/smoke/`，不写测试 fixture/断言；改完只 `pnpm check`，由用户在真实页面判断是否成功。
-3. 若 GitHub 再改版：先跑 `tests/diag/selectors.js` 定位失配点，再改 `src/dom.ts` 的 helper（**只改 helper，不要在业务模块里写选择器**）。
-4. 数据同步后续阶段（**P4 主体已在 3.1.0 落地**，见 D6）：**P3** local-first 首屏（缓存快照先显 + 到货校正 + DOM 增量 patch）；P4 余项——ETag/GraphQL 分页调研、**周期自动同步**（当前 Sync 手动 + 消失 >12 自动，可加定时 idle 同步）。见「数据同步设计决策」。
+1. 用户真机验证上面的 10 条清单；发现问题 → 另开修复提交并更新本文件清单。
+2. 后续阶段（详见 `todo` 与 `DEVELOPER.md` §13）：GraphQL 分页调研、周期自动同步、非本人 star 页 `GET /users/{u}/starred` 接入、导入导出、分页按钮可跳页。
+3. 未消化的架构建议：单遍 facet 计算、响应式漏斗（见 `starmgr-arch-review-report.md`）。
 
-### 常用命令
+## 快速构建约定
+
+不跑 `tests/smoke/`（快速构建期），改完只 `pnpm check`，由用户在真实页面判断成功与否。
+
+---
+
+## 常用命令
 
 ```bash
 pnpm check     # tsc --noEmit + build（改完必跑）
-pnpm build     # → dist/github-stars-grid.user.js（~100ms）
-pnpm dev       # HMR，需先解决上面第 2 条；URL: http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js
+pnpm build     # → dist/github-stars-grid.user.js
+pnpm dev       # HMR，需先解决上面 CSP 那条；入口 http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js
+pnpm build && node scripts/verify-css.cjs   # 产物 CSS 与源 CSS 等价性
 ```
 
-真机调试（无 HMR 时最快的验证路径，`agent-browser-cli` 需在跑）：
+---
 
-```bash
-# 1) 把 dist 脚本 base64 后拼成一段 eval 代码（stub 掉 GM_getValue/GM_setValue —— gm.ts 调用时会检测到并使用；GM_addStyle 已弃用不用 stub + 预置 __gmStore）
-# 2) agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js   # .diag/ 已在 .gitignore 里
-# 注意：改 transform 逻辑前先 Page.reload，否则幂等检查会提前返回
-```
+## 建议技能
 
-### 建议技能
-- `agent-browser-cli`：真机 DOM 探查、注入验证、截图。
+- `agent-browser-cli`：真机 DOM 探查、注入验证、截图、受信任点击。
