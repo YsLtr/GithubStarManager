@@ -20,7 +20,7 @@
 | `src/dom.ts` | +`isHideListsEnabled()` / `applyHideListsGate()`（`html.gsm-hide-lists` 门控类挂摘）/ `clearListsHiddenMarks()`；`hideListsSection()` 首行读开关——关闭时不打标记并清残留，transform 与 frame-render 两个既有调用点零改动 |
 | `src/styles/base.css` | 第 4 节全部 Lists 隐藏规则（3 条无条件 + CSS-only `:has()` 兜底）加 `html.gsm-hide-lists` 门控前缀——开关关闭时规则整体失效 |
 | `src/ui/hideListsMenu.ts` | **新增**：菜单项「🙈 隐藏 Lists 区块（开/关）」，回调 = 翻转存盘 → 门控类与 JS 标记即时生效 → unregister/re-register 刷标签（Turbo SPA 内菜单不自动刷新，TM 5.x id 机制） |
-| `src/index.ts` | document-start `applyHideListsGate()`（installBootHide 旁，关闭时无闪隐窗口）；`showSetupBanner` 落位按开关分流（开 = 原位替换 blankslate/容器，关 = `host.prepend` 挂网格列顶）；init 注册 `registerHideListsMenu()` |
+| `src/index.ts` | document-start `applyHideListsGate()`（installBootHide 旁，关闭时无闪隐窗口）；`showSetupBanner` 落位按开关分流（开 = **插到槽位节点之前** `slotTarget.before(bar)`，插入并存、原生节点保留不销毁；关 = `host.prepend` 挂网格列顶；切换开关经 `setHideListsRepositionHandler` 重挂）；init 注册 `registerHideListsMenu()` |
 | `package.json` / `DEVELOPER.md` | 4.4.0 → **4.5.0**；DEVELOPER.md 新增 §6「Hide Lists 开关」小节（含切换 invariant）/目录结构/存储键总述/grant 列表同步 |
 
 调研结论（Verdict: Build）：TM 官方确认 `GM_registerMenuCommand` 返回菜单 id、`GM_unregisterMenuCommand` 移除后重注册可刷新标签（https://www.tampermonkey.net/documentation.php#GM_registerMenuCommand）；Lists 隐藏原链路（CSS 无条件规则 / JS hideListsSection / banner replaceWith）全为项目自研，无现成库可采。**banner 落位用户定案 = 方案 A 插入并存**（替换+还原方案 B 否决）。
@@ -33,7 +33,7 @@
 🟢 9 项含：CSS 门控前缀后 `@media` 包裹完好、两腿互为冗余且双向收敛（真机实测）、默认开路径与 4.4.0 逐字一致、document-start 读值三路径均正确（无闪隐）、菜单幂等不重复、调用方兼容。ⓘ 非本轮引入：窄视口下 frame-render 分支的 `hideListsSection()` 无 `isDesktop()` 门（4.4.0 既有）、TM 菜单标签不跨标签页同步。
 
 ### 4.5.0 真机验证清单（重装 dist）
-① 默认（未动菜单）：行为与 4.4.0 完全一致——Lists 隐藏、banner 原位替换、网格正常；
+① 默认（未动菜单）：行为与 4.4.0 完全一致——Lists 隐藏、banner 插在 Lists 槽位（**节点不销毁**）、网格正常；
 ② TM 菜单出现「🙈 隐藏 Lists 区块（开）」，点击后立即：Lists 原生内容显示（标题行 + 空态「Create your first list」或 list 内容）、菜单标签变「（关）」、控制台一行 Hide Lists 切换日志；
 ③ 关闭状态下 F5 / `?tab=stars` 直载 / Turbo 进页：Lists 保持显示、**无闪隐**（若先显示再隐藏一瞬 = 门控前缀漏改，回报）；
 ④ 关闭状态触发初始化面板（TM 菜单清 token 或无缓存进页）：banner 挂在**网格列顶**、Lists 内容原地保留；保存并同步成功后 banner 消失、Lists 仍在原位；
@@ -202,7 +202,7 @@ dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用�
 ### 阻塞 / 风险 / 待确认
 
 1. **用户重装 `dist/github-stars-grid.user.js`（4.0.0）前台验证**：① **首次装（无 token）**：原生页 + `.gsm-setup-banner` 横幅出现；点「设置 token」弹 PAT 输入（classic `ghp_` / fine-grained `github_pat_` = Account permissions → Starring → Read + All repositories）、「立即同步」按钮转圈 → 控制台「★ P4 全量同步完成」→ 网格自动出现（全量缓存渲染）；② **有 token 重进页**：直接缓存网格无闪烁，控制台见「ETag 304」或「★ P4 全量同步完成」（进页 `probeAndSync` 自动）；③ **本地翻页**：点顶/底 Previous/Next 零网络（Network 无 GitHub 列表请求）、页码「N / M」随缓存与语言/排序筛选联动、按钮内转圈 = `gsm-pager-loading`；④ **搜索** `ASC` 纯本地出结果 + 命中词黄高亮（无 JavaScript 噪音）；⑤ **星星按钮**：点卡片星 → Network 见 `PUT/DELETE /user/starred/...` 204/205，刷新后状态保持，失败回滚；⑥ **退出自定义模式**：标签/搜索清空或点原生 Clear filter → 地址栏回 `?tab=stars` 且**不整页刷新**（pushState）；⑦ 离开/返回 Stars 侧边栏恢复与收缩动画正常、直进 `?tab=stars` 观察 10s 不回退原生；⑧ Sort 三项含 Recently starred（`starredAt` 降序，未回填沉底=到达序）。**判读**：②见「ETag 探测 HTTP 4xx」→ PAT 权限对照 D3；⑤ 404 → 仓库路径/私有权限；横幅不同步消失 → 「立即同步」报 401/403 换 token。若仍闪：要控制台 `script loaded / 防闪烁隐藏已挂载 / 防闪烁解除` 各行原文。
-**4.0.1 补充验证（同批重装后一并看）**：①首次装（无 token/无缓存）：Lists 空态被顶窗**原位替换**（横幅出现在 Lists 标题下槽位，不是列首多一块）；②点「快速获取 Token」新开预填创建页（名称 GithubStarsGrid、Account permissions → Starring: write 已勾）→ 生成复制 → 回横幅「从剪贴板粘贴」→ 输入框出现 token →「保存并同步」→ 横幅消失 + 控制台「★ P4 全量同步完成」+ 网格出现；③有 token 网格态：Lists 标题/空态/已建 list 内容全都不显示；④失效 token（401）或低权限 token（403 非限速）触发同步/星星按钮 → 居中弹窗，「打开创建页」预填、「保存并同步」后横幅撤 + 同步重跑；⑤ TM 菜单两项：「⭐ 设置…」prompt 权限文案已是 Write、「🔑 快捷创建…」新开预填页。
+**4.0.1 补充验证（同批重装后一并看；①的「替换」措辞已被 4.5.0 修订为「插入并存」，见「当前交接」）**：①首次装（无 token/无缓存）：横幅出现在 Lists 标题下槽位（不是列首多一块）；②点「快速获取 Token」新开预填创建页（名称 GithubStarsGrid、Account permissions → Starring: write 已勾）→ 生成复制 → 回横幅「从剪贴板粘贴」→ 输入框出现 token →「保存并同步」→ 横幅消失 + 控制台「★ P4 全量同步完成」+ 网格出现；③有 token 网格态：Lists 标题/空态/已建 list 内容全都不显示；④失效 token（401）或低权限 token（403 非限速）触发同步/星星按钮 → 居中弹窗，「打开创建页」预填、「保存并同步」后横幅撤 + 同步重跑；⑤ TM 菜单两项：「⭐ 设置…」prompt 权限文案已是 Write、「🔑 快捷创建…」新开预填页。
 **4.0.2 补充验证（同批重装）**：①**进页同步行为**：重装后第一次进页可能整表一次（建基线，控制台见 `ETag 基线：已保存`）；之后每次进页控制台应是 `ETag 304：star 列表无变化（免额度快筛）`，不再出现 `★ P4 全量拉取开始`；若再见整表，看日志属于 `无基线`（etag 没抓到 → 回报，备选 If-Modified-Since / GM_xmlHttpRequest 读头）还是 `200：列表有变化`（真变化）；②**TM 菜单「🔑 快捷创建」**点击应新开预填创建页标签（无报错、非静默无反应），横幅「快速获取 Token」同样；③**失效面板**：用低权限/失效 token 触发 401/403 → 列首或槽位出现 ⚠️ 文案横幅（含快速获取/手动设置/立即同步按钮），**不再有居中遮罩弹窗**；面板内保存后横幅消失并自动同步。
 **4.0.3 补充验证（同批重装；作废 4.0.0/4.0.1 清单里「立即同步」按钮相关步骤——按钮已删）**：①横幅只剩「快速获取 Token / 设置 token（+粘贴行）」，标题行只有顶部翻页器、无 Sync 按钮，全界面无 P2.5/P4 字样；②**手动同步走 TM 菜单**「🔄 立即全量同步（GitHub API）」：列表无变化时控制台应打 `ETag 304：star 列表无变化（免额度），跳过整表比对`、Network 只见第一页一条 304（无后续页）；新 star 一颗再同步 → 完整 `★ P4 全量同步完成`（新增 1）；③横幅「保存并同步」同为条件化（304 即完成并撤横幅）；④「快速获取 Token」新开页 **Expiration 默认 90 天**；⑤ TM 菜单「⭐ 设置 GitHub Token」**留空确定** → token 删除且初始化面板立即出现（横幅已在则文案刷新为「Token 已清除」）；⑥失效 token 面板、本地翻页、高亮等 4.0.0/4.0.2 清单项照旧。**判读**：② 若 304 后仍整表 → 看控制台 `ETag 基线` 是否「已保存」（已保存仍 200 → 回报 runFullSync 起始几行日志）；⑤ 面板没出 → 回报 `token 已清除` 那行之后的控制台。
 **4.0.4 验证（重装 4.0.4；叠加在 4.0.3 清单上、改判其中两条）**：①标题行出现 **Sync 按钮**（顶部翻页器左侧）、横幅出现**「立即同步」**（原「手动设置」prompt 已按更正移除）；②填 token 框**常驻可见**（无需先点快捷键或设置）；③菜单/横幅/标题行任一入口同步：无变化时 Network **每页都 304**、日志 `ETag 304：N 页全部无变化（免额度）`，且**连续点两次稳定复现 304**（不再 304/200 交替）；④中部造变化（另一设备 unstar 中段仓库）→ 快筛在该页 200 即转整表、差异正常应用；⑤新增一个 star（总数 +1）→ 尾页外探 200 → 整表收编；⑥401 失效 token 点任一入口 → 面板出现且填 token 行常驻、控制台无未捕获异常；⑦4.0.3 的 90 天预填 / 留空清 token 重开面板 / 全界面无 P2.5-P4 字样 仍作数。
@@ -225,11 +225,11 @@ dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用�
 2. **dev HMR 在 github.com 上需要浏览器放行 CSP**：GitHub 的 `script-src` 白名单不含 `127.0.0.1`，dev loader 的动态 import 必被拒（`Failed to fetch dynamically imported module`）。插件绕不过，需装 CSP 放行扩展 + 允许 Local Network Access 弹窗。详见 `DEVELOPER.md` §2「dev 模式在 github.com 上的两个前置条件」。
 3. **两个脚本不能同时启用**：`transformStarsList()` 见到 `.stars-grid-container` 就提前返回，正式版先跑会让 dev 版"改了没反应"。开发时在 Tampermonkey 里禁用正式版。
 4. 真机验证必须**前台**：Chrome 冻结后台标签页后测量/交互全部失真（曾误判样式失效）。
-5. `todo` 文件按上次决定继续留在未跟踪状态，未纳入提交。
+5. ~~`todo` 文件按上次决定继续留在未跟踪状态~~ **已变更（2026-09-24）**：`todo` 现纳入版本控制（提交 `55c81f7`，`git add -A` 时一并入库；用户确认「todo 保持现状」），后续修改正常提交，不再当作私有草稿。
 
 ### 下一步
 
-1. **4.5.0 真机验证（清单见「当前交接」；重装 `dist/github-stars-grid.user.js`）**：Hide Lists 开关七项清单 + **4.4.0 回归**（多选 OR / 面板不收起 / 按钮与信息条文案 / 筛选态分页 / URL 多值 / Sort+Tags）。4.4.0 已提交；4.5.0 改动未提交，真机验证通过后再提交。真机发现问题 → 另开修复提交并更新验证清单。审查报告余项（`.diag/review-4.0.9.md`：冗余/结构/性能/安全 🟡🟢）与 4.3.5 架构建议（A 单遍 facet / B 响应式漏斗）仍待用户定夺；**`todo` 按第 5 条保持不入库**。后续阶段（P3 剩余、GraphQL 分页调研、周期自动同步、D7c 非个人页 `GET /users/{u}/starred`）见「未实现」。
+1. **4.5.0 真机验证（清单见「当前交接」；重装 `dist/github-stars-grid.user.js`）**：Hide Lists 开关十项清单 + **4.4.0 回归**（多选 OR / 面板不收起 / 按钮与信息条文案 / 筛选态分页 / URL 多值 / Sort+Tags）。4.4.0 与 4.5.0（含审查修复 + 落位改插入并存）均已提交，真机验证发现问题 → 另开修复提交并更新验证清单。审查报告余项（`.diag/review-4.0.9.md`：冗余/结构/性能/安全 🟡🟢）与 4.3.5 架构建议（A 单遍 facet / B 响应式漏斗）仍待用户定夺。后续阶段（P3 剩余、GraphQL 分页调研、周期自动同步、D7c 非个人页 `GET /users/{u}/starred`）见「未实现」。
 2. **快速构建阶段（2026-09-22 起，用户已定）**：不跑 `tests/smoke/`，不写测试 fixture/断言；改完只 `pnpm check`，由用户在真实页面判断是否成功。
 3. 若 GitHub 再改版：先跑 `tests/diag/selectors.js` 定位失配点，再改 `src/dom.ts` 的 helper（**只改 helper，不要在业务模块里写选择器**）。
 4. 数据同步后续阶段（**P4 主体已在 3.1.0 落地**，见 D6）：**P3** local-first 首屏（缓存快照先显 + 到货校正 + DOM 增量 patch）；P4 余项——ETag/GraphQL 分页调研、**周期自动同步**（当前 Sync 手动 + 消失 >12 自动，可加定时 idle 同步）。见「数据同步设计决策」。
