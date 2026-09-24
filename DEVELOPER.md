@@ -81,7 +81,7 @@ src/
     pendingDelete.ts  待删除区（unstar 宽限期，含标签/备注备份）
   ui/
     cards.ts          卡片构建 + API 星星按钮（4.0.0：PUT/DELETE Bearer PAT，CSRF 双模式已删）
-    tagFilter.ts      标签 pill、筛选栏（R3：原位重绘 = 共现收窄，勾选不关 popover）、pill 选中态同步；refreshTagFilterBar = 候选随约束收窄/回填的唯一入口（applyFilters 每次调用，4.3.4）
+    tagFilter.ts      标签 pill、筛选栏（R3：原位重绘 = 共现收窄，勾选不关 popover）、pill 选中态同步；refreshTagFilterBar = 候选随约束收窄/回填/撤条的唯一入口（applyFilters 每次调用；renderTagFilterBar 已私有化，创建/撤条只经它，4.3.5）
     notes.ts          备注渲染与编辑
   styles/
     base.css          >= 768px 布局与组件样式

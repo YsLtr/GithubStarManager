@@ -1,6 +1,6 @@
 import { applyFilters } from './filters';
 import { filterState } from './state';
-import { refreshTagPillStates, renderTagFilterBar } from './ui/tagFilter';
+import { refreshTagPillStates } from './ui/tagFilter';
 
 /** 拦截原生搜索表单，改为全缓存搜索 */
 export function interceptSearchForm(): void {
@@ -50,6 +50,5 @@ export function clearSearch(): void {
   if (searchInput) searchInput.value = '';
 
   applyFilters();
-  renderTagFilterBar();
   refreshTagPillStates();
 }

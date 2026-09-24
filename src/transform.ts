@@ -2,7 +2,6 @@ import { getRepoItems, getStarsMainColumn, hideListsSection } from './dom';
 import { applyFilters } from './filters';
 import { interceptSearchForm } from './search';
 import { mountSyncButton } from './fullSync';
-import { renderTagFilterBar } from './ui/tagFilter';
 import { initLangColors } from './langColors';
 import { isDesktop } from './utils';
 
@@ -62,8 +61,7 @@ export function transformStarsList(): boolean {
     }
   }
 
-  // 渲染筛选栏并应用筛选
-  renderTagFilterBar();
+  // 应用筛选（Tags 候选条由 applyFilters→refreshTagFilterBar 按需创建/收窄/撤条）
   interceptSearchForm();
   applyFilters();
 

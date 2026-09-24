@@ -13,7 +13,7 @@ import { loadRepoCache } from './storage/repoCache';
 import { loadAllTags } from './storage/tags';
 import { buildCardFromCache, createStarButtonForCached } from './ui/cards';
 import { renderNotes } from './ui/notes';
-import { refreshTagFilterBar, refreshTagPillStates, renderTagFilterBar, renderTags } from './ui/tagFilter';
+import { refreshTagFilterBar, refreshTagPillStates, renderTags } from './ui/tagFilter';
 import { escapeHtml } from './utils';
 import type { FilteredRepo, RepoData, TypeFilter } from './types';
 
@@ -143,7 +143,8 @@ export function queryRepos(skip?: QuerySkip): FilteredRepo[] {
  * Tags 候选（R3 共现收窄，加选语义）：
  * 结果集（含全部当前约束）内出现的标签 ∪ 已选标签（已选恒可见，可取消）。
  * 可见性 ⇔ 加入该标签后仍有 ≥1 条结果 = 该标签在结果集内出现 ≥1 次。
- * 按命中数降序、平局字母序（计数为 queryRepos 副产品，零额外成本）。
+ * 按命中数降序、平局字母序。注意：这是 applyFilters 链上独立于 queryRepos 的
+ * 第二次全遍历（464 条约 2.3ms，当前无感）；合并进单遍查询 = 审查报告 A 案。
  */
 export function computeTagCandidates(): string[] {
   const allTags = loadAllTags();
@@ -439,7 +440,6 @@ export function exitCustomMode(): void {
   );
   if (searchInput) searchInput.value = '';
   applyFilters();
-  renderTagFilterBar();
   refreshTagPillStates();
   history.pushState({}, '', location.pathname + '?tab=stars');
   // pushState 后的 search 串登记为「已解析」：sort/direction 是用户浏览状态，

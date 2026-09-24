@@ -5,12 +5,28 @@
 
 ---
 
-## 当前交接（2026-09-24 11:0x +0800；焦点 = 4.3.4 Tags 候选随筛选收窄/回填（已真机验证））
+## 当前交接（2026-09-24 12:0x +0800；焦点 = 4.3.5 审查修复（🟡×4 已真机验证））
 
 ### 目标
-GitHub 2026 改版适配至 **4.3.4**（…4.3.3 标签/筛选 UI 精修 → **4.3.4 修 Tags 候选不随 Type/Language/搜索收窄 + 空结果取消勾选后面板永久空白**），版本沿革见下方各段。**本会话焦点：4.3.4 已实现并真机验证通过（`pnpm check` 过 27 modules / 113.79 kB，七步复测 + popover 不关全过）；审查报告余项待续消化**。
+GitHub 2026 改版适配至 **4.3.5**（…4.3.4 Tags 候选收窄/回填 → **4.3.5 code-reviewer 审查修复：🟡-1 空态 li 补 role=none、🟡-2 删 6 处冗余 renderTagFilterBar 直调并私有化、🟡-3 原位分支补 hasAnyTags 撤条门（真隐患）、🟡-4 诚实化重复遍历注释**），版本沿革见下方各段。**本会话焦点：4.3.5 已实现并真机验证（`pnpm check` 过 27 modules / 113.73 kB，七步回归 + 撤条/回条 + pill 点击全过）；审查报告架构建议（A 单遍查询产 facet / B 响应式单一漏斗）待用户定夺**。
 
-### 本轮改了什么（4.3.3 → 4.3.4，本次提交）
+### 本轮改了什么（4.3.4 → 4.3.5，本次提交）
+
+| 文件 | 改动 |
+|---|---|
+| `src/ui/tagFilter.ts` | 🟡-1 空态提示 li 补 `role="none"`（role=menu 合法子元素不含裸 li）；🟡-2 `renderTagFilterBar` 降私有（pill 点击/pill ×/添加标签三处直调删除，全走 applyFilters→refreshTagFilterBar 唯一入口）；🟡-3 `refreshTagFilterBar` 原位分支开头补 **hasAnyTags 门**：全缓存无任何标签 → `existing.remove()`（同步管线 `confirmExternalUnstar` 绕过 pill 预清理直写 saveTags 后，不留「Tags 按钮在、面板空」残留） |
+| `src/filters.ts` | 🟡-2 exitCustomMode 删直调；🟡-4 computeTagCandidates 注释诚实化（独立第二次全遍历 ~2.3ms/464 条，合并 = 审查 A 案） |
+| `src/search.ts` / `src/transform.ts` | 🟡-2 clearSearch / transform 删直调与 import |
+| `package.json` | 4.3.4 → **4.3.5** |
+
+**4.3.5 真机验证**：① 七步回归（4.3.4 清单）全过；② 🟡-3 撤条：GM+镜像双清空 → 任一筛选变化 → 条消失；恢复 → 条自动回来（chips 正常）；③ pill 点击：筛选激活 + 面板候选收窄 + pill 选中态。**工装坑（防重蹈）**：页面上 `typeof GM_getValue === 'function'`（TM 把 GM 桥接进页面上下文）——注入实例走 **GM 分支而非 localStorage 回退**，且 `gmGet` 有迁移路径（GM=默认值而镜像有数据时自动迁回）——**清数据必须 GM_setValue 与 localStorage 镜像双清**，只清一边会被迁移自愈，三次误判「修复无效」皆源于此。
+
+### 审查结论（code-reviewer 子代理，报告 `.diag/review-4.3.4.md`）
+0 🔴 / 4 🟡（全部已修）/ 3 🟢（refreshTagPillStates 四路径冗余=双保险无害、快速双击丢第二击=旧代码等价、hasAnyTags 不校验 cache 成员=可辩护）。**循环导入安全**（tagFilter 段先于 filters 段、全函数声明零顶层执行，vite 顺序翻转也无 TDZ 风险）。**架构建议（未做，待定）**：A = 单遍查询产出全部 facet 候选（~100 行，根治重复遍历）；B = 响应式状态驱动单一 render 漏斗（~200 行跨 4 文件，根治「忘刷新」类机制缺口，需回归 R3 全清单）。
+
+### 上一轮（4.3.4）
+
+### 4.3.4 改了什么（已提交 117e90f）
 
 | 文件 | 改动 |
 |---|---|
@@ -176,6 +192,7 @@ dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用�
 **4.3.0 验证（重装 4.3.0；叠加 4.2.0 清单）**：① 首次进 stars 页：控制台「语言色已更新：N 语言（当前回退 0）」、色点全部有色（TM 环境数据流走 GM_xmlHttpRequest，Network 面板不一定可见，以控制台+颜色为准）；② GM 存储出现 `stars_lang_colors`（约 694 键映射），**不再有按仓库的 langColor 写入**（详情页访问后查 stars_repo_cache 无 langColor 新键）；③ 刷新/重进页：颜色立即可用（缓存先行），初始化仍发一次数据源获取；④ 未命中语言：灰圈 + **一次**补拉（Network/控制台可见），补拉后仍无 → 后续渲染**零请求**；此后另一未命中语言触发补拉时，先前回退的语言随新数据**重检**——若新数据已有该语言即自动上色（原地重涂，无需刷新）；⑤ 弱网/断网进页：沿用缓存颜色，控制台「语言色获取失败，沿用现有数据」且不刷屏（30s 冷却）。**判读**：① 无请求且全灰 → 回报控制台 gmFetchText/getLangColor 报错；④ 每次渲染都发请求 = 单飞/回退记录失效，回报。
 **4.3.1 验证（重装 4.3.1；叠加 4.3.0 清单）**：① 进 stars 页开 Language 菜单：**无 "Watch1 (1)"/"Watch10 (10)"**（清洗生效；对应两卡片语言点暂缺 = 预期，下轮整表/正文页同步按 API 回填真语言）；② 访问任意无语言侧栏的详情页（如上述两仓库）后查 `stars_repo_cache`：**不再出现括号类 lang**、API 好数据不被覆盖；③ 既有合法语言（C++/F#/1C Enterprise 等）不受字符域门影响。
 **4.3.2 验证（叠加 4.3.1 清单）**：① Language 菜单出现 None（存在无语言仓库时）；点选 → 网格只显无语言卡片、按钮 "Language: None"、信息条 language: None；② 再开菜单 None 勾选态保持、候选列表无 "(none)" 重影；③ 全部仓库都有语言时 None 不出现；④ `?language=none&tab=stars` 进页直出无语言集合；Clear filter 清掉 None 回全部。
+**4.3.5 验证（重装 4.3.5；叠加 4.3.4 清单；本轮已注入真机预验）**：① 4.3.4 清单全项不回归（候选收窄/回填/空态提示/popover 不关）；② 删除最后一个标签（或同步清空带标签仓库）后：Tags 按钮与面板**整体消失**、不再残留空面板；重新打标签 → 按钮自动回来；③ 卡片 pill 点击 → 筛选激活 + 面板候选收窄 + pill 选中态（冗余直调删除后行为不变）。**判读**：删光标签后 Tags 按钮仍在 = 不是 4.3.5（或 hasAnyTags 门未生效，查 refreshTagFilterBar 原位分支）。
 **4.3.4 验证（重装 4.3.4；叠加 4.3.3 清单；本轮已注入真机预验，重装后按此复核）**：① 选 Type/Language（含搜索）后**立即**开 Tags 面板：chip 只剩当前结果卡片上存在的标签（不再残留全量旧列表）；② 切到一个「结果集无标签」的筛选（如 lang=Awk 单卡无标签）：面板显示灰字「当前筛选结果暂无标签」、Tags 按钮仍在；③ 切回 All languages：全部候选**自动回填**（无需刷新页面）；④ 勾选 → 面板保持打开、chip 实心选中态、候选随共现收窄；取消勾选 → 候选立即回填上级集合；⑤ Type 与 Language 组合筛选后 ①–④ 同样成立；⑥ 面板空态行不可点击、muted 灰字。**判读**：候选不收窄 = 装的不是新 dist；面板空白无提示行 = `.gsm-tag-chips-empty` 未生效。
 **4.3.3 验证（叠加 4.3.2 清单）**：① **卡片 tag 胶囊 = 原大小**（约 21px 高、紧凑内边距 2px·8px、12px 圆角），文字垂直居中、无偏左；悬浮卡片出胶囊 → 悬浮胶囊尾部出 ×（间距由 margin 承担，无恒定空隙）；胶囊不加粗、悬浮不变色；② **+ 按钮 / 内联输入框**与胶囊同高（22px），同行无大小失衡；③ **Type/Language/Tags/Sort 筛选按钮间距均匀**（Type↔Language 有 8px 间隙）；④ **Tags 筛选面板 = 320px 固定宽矩形**：点开 Tags → 面板宽恒定（约每行 2-4 个胶囊 chip 多行铺排），不随内容横向伸缩；标签很多时面板内滚动（max-height 300px）且**滚轮不穿透滚动页面**；⑤ chip：不加粗、悬浮仅描边变蓝（底色字色不动、无布局跳动）、点选 = 实心蓝底白字、再点取消；⑥ 勾选后面板保持打开（原位刷新），筛选即时生效；暗色模式下以上颜色/描边均自适应。**判读**：胶囊变大/变粗/悬浮变色 → 装的不是新 dist；面板仍随内容伸缩 → `.gsm-tag-chips` 规则未生效（查是否被 GitHub 自带样式盖掉）；文字仍偏左 → 确认 `.stars-tag` 无 `gap` 属性。
 2. **dev HMR 在 github.com 上需要浏览器放行 CSP**：GitHub 的 `script-src` 白名单不含 `127.0.0.1`，dev loader 的动态 import 必被拒（`Failed to fetch dynamically imported module`）。插件绕不过，需装 CSP 放行扩展 + 允许 Local Network Access 弹窗。详见 `DEVELOPER.md` §2「dev 模式在 github.com 上的两个前置条件」。

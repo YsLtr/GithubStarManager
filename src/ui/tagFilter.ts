@@ -17,8 +17,12 @@ export function updateTagFilterButton(): void {
   btn.classList.toggle('has-active', filterState.tags.length > 0);
 }
 
-/** 渲染 Tags 多选筛选栏（原生 Popover API + ActionList 结构） */
-export function renderTagFilterBar(): void {
+/**
+ * 渲染 Tags 多选筛选栏（原生 Popover API + ActionList 结构）。
+ * 私有：创建/撤条只经 refreshTagFilterBar 一条路（4.3.5 删掉全部散点直调，
+ * 落实 DEVELOPER.md「候选刷新唯一入口」invariant）。
+ */
+function renderTagFilterBar(): void {
   const filterRow = getNativeFilterRow();
   if (!filterRow) return;
 
@@ -98,6 +102,7 @@ export function renderTagFilterList(menuList: HTMLUListElement): void {
     // 明示原因，面板不再是一块空白（会被当成坏了）；约束一变即自动回填
     const li = document.createElement('li');
     li.className = 'gsm-tag-chips-empty';
+    li.setAttribute('role', 'none'); // role=menu 合法子元素不含裸 li（审查 🟡-1）
     li.textContent = '当前筛选结果暂无标签';
     menuList.appendChild(li);
     return;
@@ -145,6 +150,12 @@ export function refreshTagFilterBar(): void {
   const filterRow = getNativeFilterRow();
   if (!filterRow) return;
   const existing = filterRow.querySelector<HTMLElement>('.stars-tag-filter');
+  // 全缓存已无任何标签（如同步管线 confirmExternalUnstar 清空最后一个带标签仓库，
+  //   不经 pill × 的预清理）→ 撤条，不留「Tags 按钮在、面板空」的残留（审查 🟡-3）
+  if (!hasAnyTags()) {
+    existing?.remove();
+    return;
+  }
   if (!existing) {
     renderTagFilterBar();
     return;
@@ -191,7 +202,6 @@ export function renderTags(tagsContainer: HTMLElement): void {
         filterState.tags.push(tag);
       }
       applyFilters();
-      renderTagFilterBar();
       refreshTagPillStates();
     });
 
@@ -204,7 +214,7 @@ export function renderTags(tagsContainer: HTMLElement): void {
       current.splice(idx, 1);
       saveTags(repoId, current);
       renderTags(tagsContainer);
-      renderTagFilterBar();
+      // applyFilters 会按需创建/收窄/撤条（4.3.5 删冗余直调）
       applyFilters();
     });
 
@@ -235,7 +245,7 @@ export function renderTags(tagsContainer: HTMLElement): void {
         current.push(val);
         saveTags(repoId, current);
         renderTags(tagsContainer);
-        renderTagFilterBar();
+        // 新标签入库后 applyFilters→refreshTagFilterBar 会建条/收窄（4.3.5 删冗余直调）
         applyFilters();
       } else {
         input.remove();
