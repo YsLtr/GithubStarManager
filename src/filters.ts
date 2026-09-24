@@ -13,7 +13,7 @@ import { loadRepoCache } from './storage/repoCache';
 import { loadAllTags } from './storage/tags';
 import { buildCardFromCache, createStarButtonForCached } from './ui/cards';
 import { renderNotes } from './ui/notes';
-import { refreshTagPillStates, renderTagFilterBar, renderTags } from './ui/tagFilter';
+import { refreshTagFilterBar, refreshTagPillStates, renderTagFilterBar, renderTags } from './ui/tagFilter';
 import { escapeHtml } from './utils';
 import type { FilteredRepo, RepoData, TypeFilter } from './types';
 
@@ -159,6 +159,19 @@ export function computeTagCandidates(): string[] {
   return Array.from(counts.entries())
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([tag]) => tag);
+}
+
+/**
+ * 全缓存是否至少有一个标签（与筛选约束无关）。
+ * Tags 按钮的渲染门槛：用户从未打过标签 → 不渲染按钮；
+ * 有标签但当前约束（type/lang/搜索）筛空了候选 → 仍渲染按钮 + 面板空态提示。
+ */
+export function hasAnyTags(): boolean {
+  const allTags = loadAllTags();
+  for (const repoId in allTags) {
+    if (allTags[repoId].length > 0) return true;
+  }
+  return false;
 }
 
 /**
@@ -351,6 +364,9 @@ export function applyFilters(): void {
 
   // 常驻本地控件（Type / Language / Sort+方向）：状态驱动重建，同时保证原生菜单持续隐藏
   updateLocalFilterControls();
+  // Tags 候选随当前约束刷新（R3，4.3.4）：type/lang/搜索/勾选变化后原位收窄回填——
+  // 杜绝「切了 Type/Language 后 chip 列表还是旧全集」与「空结果取消勾选后面板永久空白」
+  refreshTagFilterBar();
 
   // 2. 无任何筛选激活（sort/direction 属浏览状态）→ browse 态：本地分页
   if (!hasActiveFilter()) {

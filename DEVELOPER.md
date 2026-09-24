@@ -81,7 +81,7 @@ src/
     pendingDelete.ts  待删除区（unstar 宽限期，含标签/备注备份）
   ui/
     cards.ts          卡片构建 + API 星星按钮（4.0.0：PUT/DELETE Bearer PAT，CSRF 双模式已删）
-    tagFilter.ts      标签 pill、筛选栏（R3：菜单列表原位重绘 = 共现收窄，勾选不关 popover）、pill 选中态同步
+    tagFilter.ts      标签 pill、筛选栏（R3：原位重绘 = 共现收窄，勾选不关 popover）、pill 选中态同步；refreshTagFilterBar = 候选随约束收窄/回填的唯一入口（applyFilters 每次调用，4.3.4）
     notes.ts          备注渲染与编辑
   styles/
     base.css          >= 768px 布局与组件样式
@@ -302,6 +302,7 @@ filterState.page / totalPages  // 本地浏览页码 / 总页数（browse 态本
 1. `state.ts`：加状态字段
 2. `ui/tagFilter.ts`：加筛选 UI（参考 Tags 按钮的 Popover + ActionList 结构）
 3. `filters.ts`：在 `queryRepos()` 统一管线里加筛选逻辑，facet 候选计算同处扩展（`computeTagCandidates` / `computeLanguageCandidates`）
+4. **候选刷新 invariant（4.3.4 教训）**：候选列表只能由 `applyFilters() → refreshTagFilterBar()` 统一原位刷新，不得只在自身交互路径重绘——否则其它维度（type/lang/搜索）变化后候选残留脏值，空结果集取消勾选后面板永久空白（只能刷新还原）
 
 ### 添加新的存储键
 

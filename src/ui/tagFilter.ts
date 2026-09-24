@@ -1,7 +1,7 @@
 import { TRIANGLE_DOWN_SVG } from '../constants';
 import { getNativeFilterRow } from '../dom';
 import { filterState } from '../state';
-import { applyFilters, computeTagCandidates } from '../filters';
+import { applyFilters, computeTagCandidates, hasAnyTags } from '../filters';
 import { getTags, saveTags } from '../storage/tags';
 
 /** 同步 Tags 筛选按钮的文案与高亮态 */
@@ -26,8 +26,10 @@ export function renderTagFilterBar(): void {
   if (existing) existing.remove();
 
   // R3 动态收窄：候选 = 当前约束下共现的标签 ∪ 已选；无可选项就不渲染按钮
-  const candidates = computeTagCandidates();
-  if (candidates.length === 0) return;
+  // 按钮渲染门槛 = 全缓存至少有一个标签（与筛选约束无关，hasAnyTags）；
+  // 当前约束下候选为空时仍渲染按钮、面板内显示空态提示——
+  // 候选随约束（type/lang/搜索）动态收窄回填，按钮不能时有时无（4.3.4）
+  if (!hasAnyTags()) return;
 
   const container = document.createElement('div');
   container.className = 'stars-tag-filter mb-1 mb-lg-0 mr-2';
@@ -90,7 +92,18 @@ export function renderTagFilterBar(): void {
 export function renderTagFilterList(menuList: HTMLUListElement): void {
   menuList.innerHTML = '';
 
-  computeTagCandidates().forEach((tag) => {
+  const candidates = computeTagCandidates();
+  if (candidates.length === 0) {
+    // 空态（4.3.4）：当前约束（type/lang/搜索）下结果集无标签且无已选——
+    // 明示原因，面板不再是一块空白（会被当成坏了）；约束一变即自动回填
+    const li = document.createElement('li');
+    li.className = 'gsm-tag-chips-empty';
+    li.textContent = '当前筛选结果暂无标签';
+    menuList.appendChild(li);
+    return;
+  }
+
+  candidates.forEach((tag) => {
     const li = document.createElement('li');
     li.setAttribute('role', 'none');
 
@@ -110,16 +123,35 @@ export function renderTagFilterList(menuList: HTMLUListElement): void {
       } else {
         filterState.tags.push(tag);
       }
-      updateTagFilterButton();
+      // applyFilters → refreshTagFilterBar 统一原位重绘（候选收窄 + 空态 + 按钮文案），
+      // popover 保持打开（R3 验收点）；此处不再手动重绘，防双重替换
       applyFilters();
-      // 原位重绘：共现收窄 + 勾选态，popover 保持打开（R3 验收点）
-      renderTagFilterList(menuList);
       refreshTagPillStates();
     });
 
     li.appendChild(chip);
     menuList.appendChild(li);
   });
+}
+
+/**
+ * Tags 候选跟随筛选状态刷新（applyFilters 每次调用，4.3.4）：
+ * 条已存在 → 原位重绘 chip 列表 + 按钮文案（popover 若开着不关闭）；
+ * 条不存在 → 交 renderTagFilterBar 按需创建（用户从未打标签则仍不渲染）。
+ * 修复：Type/Language/搜索变化后候选残留脏值（点不存在的 tag 出 0 结果）；
+ * 以及空结果集取消勾选后面板被清空、再无回填路径只能整页刷新。
+ */
+export function refreshTagFilterBar(): void {
+  const filterRow = getNativeFilterRow();
+  if (!filterRow) return;
+  const existing = filterRow.querySelector<HTMLElement>('.stars-tag-filter');
+  if (!existing) {
+    renderTagFilterBar();
+    return;
+  }
+  updateTagFilterButton();
+  const menuList = existing.querySelector<HTMLUListElement>('#stars-tag-filter-list');
+  if (menuList) renderTagFilterList(menuList);
 }
 
 /** 同步卡片上标签 pill 的选中态 */

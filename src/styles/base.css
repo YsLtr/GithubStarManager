@@ -492,6 +492,13 @@
     color: var(--fgColor-onEmphasis, #ffffff);
     border-color: transparent;
   }
+  /* 面板空态（4.3.4）：当前约束下结果集无标签且无已选——非可点项，仅说明原因 */
+  .gsm-tag-chips-empty {
+    color: var(--fgColor-muted, #59636e);
+    font-size: var(--text-body-size-small, 12px);
+    line-height: var(--text-body-lineHeight-small, 20px);
+    user-select: none;
+  }
   /* 卡片标签 pill 选中态 */
   .stars-tag-active {
     background: var(--fgColor-accent, #0969da) !important;
