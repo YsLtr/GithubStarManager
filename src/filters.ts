@@ -96,13 +96,15 @@ export function queryRepos(skip?: QuerySkip): FilteredRepo[] {
     const data = cache[repoId];
     // Type 筛选（单选，替换语义）
     if (skip !== 'type' && filterState.type && !typeMatches(data, filterState.type)) continue;
-    // 语言筛选（单选，替换语义）
-    if (
-      skip !== 'lang' &&
-      filterState.lang &&
-      (data.lang || '').toLowerCase() !== filterState.lang.toLowerCase()
-    ) {
-      continue;
+    // 语言筛选（单选，替换语义）；LANG_NONE = 无语言仓库（菜单 None 项，4.3.2）
+    if (skip !== 'lang' && filterState.lang) {
+      if (
+        filterState.lang === LANG_NONE
+          ? !!data.lang
+          : (data.lang || '').toLowerCase() !== filterState.lang.toLowerCase()
+      ) {
+        continue;
+      }
     }
 
     // 标签筛选（多选 AND）
@@ -168,8 +170,22 @@ export function computeLanguageCandidates(): string[] {
   for (const { data } of queryRepos('lang')) {
     if (data.lang) langs.add(data.lang);
   }
-  if (filterState.lang) langs.add(filterState.lang);
+  if (filterState.lang && filterState.lang !== LANG_NONE) langs.add(filterState.lang);
   return Array.from(langs).sort((a, b) => a.localeCompare(b));
+}
+
+/** Language 菜单「None」哨兵值：无语言仓库（data.lang 为空；linguist 无同名语言，不会撞车） */
+export const LANG_NONE = '(none)';
+/** None 在界面上的显示文案 */
+export const LANG_NONE_LABEL = 'None';
+
+/** 无语言仓库是否存在（当前约束下动态收窄，D1；已选恒可见） */
+function hasLangNoneCandidate(): boolean {
+  if (filterState.lang === LANG_NONE) return true;
+  for (const { data } of queryRepos('lang')) {
+    if (!data.lang) return true;
+  }
+  return false;
 }
 
 /**
@@ -303,7 +319,7 @@ export function renderFilterInfoBar(count: number): void {
     desc += ' · type: <strong>' + escapeHtml(label) + '</strong>';
   }
   if (filterState.lang) {
-    desc += ' · language: <strong>' + escapeHtml(filterState.lang) + '</strong>';
+    desc += ' · language: <strong>' + escapeHtml(filterState.lang === LANG_NONE ? LANG_NONE_LABEL : filterState.lang) + '</strong>';
   }
   infoSpan.innerHTML = desc;
   infoDiv.appendChild(infoSpan);
@@ -453,7 +469,9 @@ export function initFiltersFromUrl(): void {
       : 'created';
   filterState.direction = p.get('direction') === 'asc' ? 'asc' : 'desc';
   // URLSearchParams 已解码（`jupyter+notebook` → 空格、`c%23` → `c#`），匹配时大小写不敏感
-  filterState.lang = p.get('language') || '';
+  const langParam = p.get('language') || '';
+  // `?language=none`（或 `(none)`）= 无语言（4.3.2）
+  filterState.lang = /^\(?none\)?$/i.test(langParam) ? LANG_NONE : langParam;
   const type = p.get('type');
   filterState.type =
     type === 'public' ||
@@ -587,7 +605,9 @@ function buildLangMenu(): HTMLElement {
   langContainer.className = 'stars-custom-filter mb-1 mb-lg-0';
 
   const languages = computeLanguageCandidates();
-  const langBtnLabel = filterState.lang ? 'Language: ' + filterState.lang : 'Language';
+  const langBtnLabel = filterState.lang
+    ? 'Language: ' + (filterState.lang === LANG_NONE ? LANG_NONE_LABEL : filterState.lang)
+    : 'Language';
   const langBtnEl = document.createElement('button');
   langBtnEl.type = 'button';
   langBtnEl.id = 'stars-custom-lang-button';
@@ -661,6 +681,29 @@ function buildLangMenu(): HTMLElement {
     li.appendChild(content);
     langList.appendChild(li);
   });
+
+  // None 项（无语言仓库）放菜单末尾（字母序候选之后）；当前约束下存在才展示，D1 动态收窄
+  if (hasLangNoneCandidate()) {
+    const noneLi = document.createElement('li');
+    noneLi.className = 'ActionListItem';
+    noneLi.setAttribute('role', 'none');
+    const noneContent = document.createElement('a');
+    noneContent.className = 'ActionListContent';
+    noneContent.setAttribute('role', 'menuitemradio');
+    noneContent.setAttribute('aria-checked', String(filterState.lang === LANG_NONE));
+    const noneLabel = document.createElement('span');
+    noneLabel.className = 'ActionListItem-label';
+    noneLabel.textContent = LANG_NONE_LABEL;
+    noneContent.appendChild(noneLabel);
+    noneContent.addEventListener('click', (e) => {
+      e.preventDefault();
+      filterState.lang = LANG_NONE;
+      langOverlay.hidePopover();
+      applyFilters();
+    });
+    noneLi.appendChild(noneContent);
+    langList.appendChild(noneLi);
+  }
 
   langBody.appendChild(langList);
   langInner.appendChild(langBody);

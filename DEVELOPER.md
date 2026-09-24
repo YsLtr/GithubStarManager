@@ -65,7 +65,7 @@ src/
   dom.ts              getRepoIdMeta / getToggler / isStarredInToggler（DOM 查询小工具）
   extract.ts          详情页数据提取 → 写缓存（4.0.0：列表卡提取已删，API 为权威源）
   transform.ts        列表 → 卡片网格转换
-  filters.ts          筛选引擎（4.1.0 全本地化，4.2.0 Type 接管）：queryRepos 统一查询管线（type/lang/tags/search）、4 排序键×双向+名称决胜、facet 候选收窄、URL 入口匹配 initFiltersFromUrl、常驻本地筛选栏（Type/Language/Sort+方向 split button）
+  filters.ts          筛选引擎（4.1.0 全本地化，4.2.0 Type 接管）：queryRepos 统一查询管线（type/lang/tags/search）、4 排序键×双向+名称决胜、facet 候选收窄、URL 入口匹配 initFiltersFromUrl、常驻本地筛选栏（Type/Language/Sort+方向 split button；Language 含 None=无语言仓库，4.3.2）
   search.ts           搜索表单拦截（4.0.0：纯本地，原生结果补充已删）
   gm.ts              GM API 兼容层（调用时判定；localStorage 兜底与迁移）
   boot.ts            document-start 防闪烁隐藏生命周期（FOUC）
