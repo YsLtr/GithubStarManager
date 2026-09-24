@@ -231,15 +231,18 @@
     min-height: 22px;
   }
 
-  /* 单个标签 pill */
+  /* 单个标签 pill — 原本大小（2px·8px 内边距 / 12px 圆角 / 12px 字号·1.4 行高 / 无边框），
+     数值能对上 GitHub 预设 token 的用 var（--base-size-* 按 px 命名）；不加粗、悬浮不变色（仅保留悬浮 × 效果）。
+     勿给容器加 gap：× 非悬浮时 width:0 但仍是 flex item，gap 会恒占 4px 把文字往左顶
+     （文字偏左的根因）；悬浮时的间距全由 .stars-tag-del 的 margin-left 承担。 */
   .stars-tag {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-size: 12px;
-    line-height: 1.4;
+    padding: var(--base-size-2, 2px) var(--base-size-8, 8px);
+    border-radius: var(--base-size-12, 12px);
+    font-size: var(--text-body-size-small, 12px);
+    font-weight: var(--base-text-weight-normal, 400);
+    line-height: 1.4; /* 无对应预设 token（lineHeight-small=20/12），保持原值 */
     background: var(--bgColor-accent-muted, #ddf4ff);
     color: var(--fgColor-accent, #0969da);
     white-space: nowrap;
@@ -258,7 +261,7 @@
   }
   .stars-tag:hover .stars-tag-del {
     width: 12px;
-    margin-left: 2px;
+    margin-left: 6px; /* 原=容器 gap 4px + margin 2px；gap 已移除，悬浮间距全额由 margin 承担 */
     opacity: 0.6;
   }
   .stars-tag .stars-tag-del:hover {
@@ -271,9 +274,9 @@
     align-items: center;
     justify-content: center;
     position: relative;
+    border-radius: 50%;
     width: 22px;
     height: 22px;
-    border-radius: 50%;
     border: 1px dashed var(--borderColor-default, #d1d9e0);
     color: var(--fgColor-muted, #656d76);
     cursor: pointer;
@@ -443,13 +446,52 @@
     border-color: var(--fgColor-accent, #0969da) !important;
     color: var(--fgColor-accent, #0969da) !important;
   }
-  /* 下拉列表滚动约束 */
-  .stars-tag-filter .ActionListWrap {
-    min-width: 200px;
+  /* Tags 筛选面板：固定宽矩形（Primer Overlay medium = 320px）。
+     设计要点：① 几何恒定 → 指针移动时 chip 不重排（无移动靶）；
+     ② 短而宽（NN/g steering law）→ chip 换行铺排、高度封顶内部滚动；
+     ③ 320-24 = 296px 内容宽 ≈ 每行 2-4 个 chip，横向指针路径短；
+     ④ chip 实际高约 26px（20px 行高 + 2px·2 内边距 + 1px·2 边框）≥ 24px 最小可点目标（WCAG 2.2 / Fitts）。 */
+  .stars-tag-filter .gsm-tag-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    align-content: flex-start;
+    gap: 8px;
+    box-sizing: border-box;
+    width: 320px;
     max-height: 300px;
     overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 12px;
+    margin: 0;
+    list-style: none;
   }
-
+  .gsm-tag-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: var(--base-size-2, 2px) var(--base-size-12, 12px); /* 实测 --base-size-2=2px（px 命名档），兜底同值 */
+    border-radius: var(--borderRadius-full, 100vh);
+    font-size: var(--text-body-size-small, 12px);
+    font-weight: var(--base-text-weight-normal, 400);
+    line-height: var(--text-body-lineHeight-small, 20px);
+    border: var(--borderWidth-thin, 1px) solid transparent; /* 常驻透明边框：悬浮描边不引起布局跳动 */
+    background: var(--bgColor-accent-muted, #ddf4ff);
+    color: var(--fgColor-accent, #0969da);
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+    font-family: inherit;
+  }
+  .gsm-tag-chip:hover {
+    /* 悬浮仅描边变色：底色/字色不动 */
+    border-color: var(--fgColor-accent, #0969da);
+  }
+  .gsm-tag-chip[aria-checked='true'] {
+    /* 选中 = 实心 emphasis 底 + 白字（现有效果） */
+    background: var(--bgColor-accent-emphasis, #0969da);
+    color: var(--fgColor-onEmphasis, #ffffff);
+    border-color: transparent;
+  }
   /* 卡片标签 pill 选中态 */
   .stars-tag-active {
     background: var(--fgColor-accent, #0969da) !important;

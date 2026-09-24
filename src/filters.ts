@@ -529,7 +529,7 @@ function updateLocalFilterControls(): void {
 /** 自定义 Type 按钮 + 菜单（候选 = computeTypeCandidates 动态收窄，D1 替换语义；All 恒在） */
 function buildTypeMenu(): HTMLElement {
   const typeContainer = document.createElement('div');
-  typeContainer.className = 'stars-custom-filter mb-1 mb-lg-0';
+  typeContainer.className = 'stars-custom-filter mb-1 mb-lg-0 mr-2';
 
   const activeOpt = TYPE_OPTIONS.find((o) => o.value === filterState.type);
   const typeBtnEl = document.createElement('button');

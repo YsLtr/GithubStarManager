@@ -5,10 +5,22 @@
 
 ---
 
-## 当前交接（2026-09-24 09:06 +0800；焦点 = 4.3.2 Language None 项（待真机验证））
+## 当前交接（2026-09-24 10:2x +0800；焦点 = 4.3.3 标签/筛选 UI 精修（待真机验证））
 
 ### 目标
-GitHub 2026 改版适配至 **4.3.2**（…4.3.0 语言色运行时化 → 4.3.1 修 Language 菜单脏值 → **4.3.2 Language 筛选加 None 项（无语言）**），版本沿革见下方各段。**本会话焦点：4.3.2 已实现（`pnpm check` 过 27 modules / 112.36 kB）→ 待真机验证（清单「4.3.2 验证」+「4.3.1 验证」+「4.3.0 验证」）；审查报告余项待续消化**。
+GitHub 2026 改版适配至 **4.3.3**（…4.3.2 Language None 项 → **4.3.3 标签/筛选 UI 精修：卡片 tag 胶囊回归原尺寸（GitHub token var 表达）+ Tags 筛选面板 320px 固定矩形 + chip 胶囊化 + Type/Language 间距**），版本沿革见下方各段。**本会话焦点：4.3.3 已实现（`pnpm check` 过 27 modules / 112.88 kB）→ 待真机验证（清单「4.3.3 验证」叠加 4.3.x 既有清单）；审查报告余项待续消化**。
+
+### 本轮改了什么（4.3.2 → 4.3.3，本次提交）
+
+| 文件 | 改动 |
+|---|---|
+| `src/styles/base.css` | **卡片 tag 胶囊终态 = 原本大小 + GitHub px 命名 token**：`.stars-tag` padding `var(--base-size-2,2px) var(--base-size-8,8px)`、radius `var(--base-size-12,12px)`、字号 `var(--text-body-size-small,12px)`、line-height 1.4 字面值（无对应 token）、**无边框**、不加粗、悬浮不变色（只留悬浮 ×）；**容器禁用 gap**——× 非悬浮时 width:0 但仍是 flex item，gap 恒占 4px 把文字顶向左（偏左根因），悬浮间距全由 `.stars-tag-del` 的 `margin-left:6px` 承担；行内配套 `.stars-card-tags min-height:22px` / `.stars-tag-add` 22×22 / `.stars-tag-input` 22px·`0 8px`·12px 圆角全部回原尺寸。**Tags 筛选面板重设计**：删旧 `.ActionListWrap` 尺寸规则；`.gsm-tag-chips` = **固定 320px 宽矩形**（primer/react Overlay widthMap `medium` 档）+ `flex-wrap` chip 铺排 + `max-height:300px` 内部滚动 + `overscroll-behavior:contain`；`.gsm-tag-chip` 用 TopicTag 尺寸但 **font-weight 400（不加粗）、悬浮仅 border-color 变色**（常驻透明边框防跳动）、选中 = emphasis 实心底 + 白字 |
+| `src/ui/tagFilter.ts` | 菜单从 checkbox 列表改 **chip 胶囊按钮**（ul `.gsm-tag-chips` + button `.gsm-tag-chip`，`role=menu`/`menuitemradio` + `aria-checked`）；ul 摘掉 `ActionListWrap` 类（样式全自管，防 GitHub 自带列表样式干扰） |
+| `src/filters.ts` | typeContainer 类名加 `mr-2`——修 Type 与 Language 筛选项之间缺 8px 间距（langContainer 不动，防与 sortContainer 的 `ml-2` 叠成双倍边距） |
+| `package.json` | 4.3.2 → **4.3.3** |
+
+**4.3.3 调研结论（Verdict: Build，custom CSS）**：面板宽 320px = primer/react `Overlay/constants.ts` widthMap `medium` 档（small 256 / medium 320 / large 480）；交互依据 NN/g **Fitts 法则**（面板锚定按钮正下方 `side=outside-bottom,align=start` 零寻址 + chip 高 ≥24px 最小可点目标）与 **Steering 法则**（菜单应短而宽、窄长隧道式更慢）。**token 实锤**：primer/primitives `src/tokens/base/size/size.json5` 的 base-size 是 **px 命名**（`--base-size-2`=2px、`-8`=8px、`-12`=12px）——此前给 `--base-size-2` 写的 `4px` 兜底是错的（真值 2px，chip 实际高 ~26px 非 30px），兜底值与面板注释已同步纠正。
+**4.3.3 迭代过程（防重蹈）**：用户四轮反馈才收敛——① 全套 TopicTag 胶囊化 → ②「文字偏左」（根因 = gap 幽灵占位，非 × 未隐藏）→ ③「GitHub 尺寸但不加粗、悬浮不变色」合并方案 → ④ 卡片胶囊**回归原尺寸**、仅用 var 表达。教训：GitHub 化只针对筛选菜单，卡片胶囊用户要原样；大范围 CSS 锚点替换曾误删 chip 三条规则（锚点 `RSma` 实为空行而非选择器行），**大范围 replace 后必须 sed 复读核实括号配对**。
 
 ### 本轮改了什么（3.0.3 → 3.0.4，本次提交）
 
@@ -149,6 +161,7 @@ dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用�
 **4.3.0 验证（重装 4.3.0；叠加 4.2.0 清单）**：① 首次进 stars 页：控制台「语言色已更新：N 语言（当前回退 0）」、色点全部有色（TM 环境数据流走 GM_xmlHttpRequest，Network 面板不一定可见，以控制台+颜色为准）；② GM 存储出现 `stars_lang_colors`（约 694 键映射），**不再有按仓库的 langColor 写入**（详情页访问后查 stars_repo_cache 无 langColor 新键）；③ 刷新/重进页：颜色立即可用（缓存先行），初始化仍发一次数据源获取；④ 未命中语言：灰圈 + **一次**补拉（Network/控制台可见），补拉后仍无 → 后续渲染**零请求**；此后另一未命中语言触发补拉时，先前回退的语言随新数据**重检**——若新数据已有该语言即自动上色（原地重涂，无需刷新）；⑤ 弱网/断网进页：沿用缓存颜色，控制台「语言色获取失败，沿用现有数据」且不刷屏（30s 冷却）。**判读**：① 无请求且全灰 → 回报控制台 gmFetchText/getLangColor 报错；④ 每次渲染都发请求 = 单飞/回退记录失效，回报。
 **4.3.1 验证（重装 4.3.1；叠加 4.3.0 清单）**：① 进 stars 页开 Language 菜单：**无 "Watch1 (1)"/"Watch10 (10)"**（清洗生效；对应两卡片语言点暂缺 = 预期，下轮整表/正文页同步按 API 回填真语言）；② 访问任意无语言侧栏的详情页（如上述两仓库）后查 `stars_repo_cache`：**不再出现括号类 lang**、API 好数据不被覆盖；③ 既有合法语言（C++/F#/1C Enterprise 等）不受字符域门影响。
 **4.3.2 验证（叠加 4.3.1 清单）**：① Language 菜单出现 None（存在无语言仓库时）；点选 → 网格只显无语言卡片、按钮 "Language: None"、信息条 language: None；② 再开菜单 None 勾选态保持、候选列表无 "(none)" 重影；③ 全部仓库都有语言时 None 不出现；④ `?language=none&tab=stars` 进页直出无语言集合；Clear filter 清掉 None 回全部。
+**4.3.3 验证（叠加 4.3.2 清单）**：① **卡片 tag 胶囊 = 原大小**（约 21px 高、紧凑内边距 2px·8px、12px 圆角），文字垂直居中、无偏左；悬浮卡片出胶囊 → 悬浮胶囊尾部出 ×（间距由 margin 承担，无恒定空隙）；胶囊不加粗、悬浮不变色；② **+ 按钮 / 内联输入框**与胶囊同高（22px），同行无大小失衡；③ **Type/Language/Tags/Sort 筛选按钮间距均匀**（Type↔Language 有 8px 间隙）；④ **Tags 筛选面板 = 320px 固定宽矩形**：点开 Tags → 面板宽恒定（约每行 2-4 个胶囊 chip 多行铺排），不随内容横向伸缩；标签很多时面板内滚动（max-height 300px）且**滚轮不穿透滚动页面**；⑤ chip：不加粗、悬浮仅描边变蓝（底色字色不动、无布局跳动）、点选 = 实心蓝底白字、再点取消；⑥ 勾选后面板保持打开（原位刷新），筛选即时生效；暗色模式下以上颜色/描边均自适应。**判读**：胶囊变大/变粗/悬浮变色 → 装的不是新 dist；面板仍随内容伸缩 → `.gsm-tag-chips` 规则未生效（查是否被 GitHub 自带样式盖掉）；文字仍偏左 → 确认 `.stars-tag` 无 `gap` 属性。
 2. **dev HMR 在 github.com 上需要浏览器放行 CSP**：GitHub 的 `script-src` 白名单不含 `127.0.0.1`，dev loader 的动态 import 必被拒（`Failed to fetch dynamically imported module`）。插件绕不过，需装 CSP 放行扩展 + 允许 Local Network Access 弹窗。详见 `DEVELOPER.md` §2「dev 模式在 github.com 上的两个前置条件」。
 3. **两个脚本不能同时启用**：`transformStarsList()` 见到 `.stars-grid-container` 就提前返回，正式版先跑会让 dev 版"改了没反应"。开发时在 Tampermonkey 里禁用正式版。
 4. 真机验证必须**前台**：Chrome 冻结后台标签页后测量/交互全部失真（曾误判样式失效）。
@@ -156,7 +169,7 @@ dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用�
 
 ### 下一步
 
-1. **4.3.0 真机验证（清单 =「4.3.0 验证」+「4.2.0 验证」+「4.1.0 验证」叠加）**；通过后：审查报告余项续消化（`.diag/review-4.0.9.md`：冗余 3🟡+2🟢、结构 1🟡+3🟢、性能 3🟡+2🟢、安全 3🟢）按严重度处置，改完 `pnpm check` → bump + 双文档 → 提交；**`todo` 按第 5 条保持不入库**。后续阶段（P3 剩余、GraphQL 分页调研、周期自动同步、D7c 非个人页 `GET /users/{u}/starred`）见「未实现」。
+1. **4.3.3 真机验证（清单 =「4.3.3 验证」+「4.3.2 验证」+「4.3.1/4.3.0/4.2.0/4.1.0 验证」叠加）**；通过后：审查报告余项续消化（`.diag/review-4.0.9.md`：冗余 3🟡+2🟢、结构 1🟡+3🟢、性能 3🟡+2🟢、安全 3🟢）按严重度处置，改完 `pnpm check` → bump + 双文档 → 提交；**`todo` 按第 5 条保持不入库**。后续阶段（P3 剩余、GraphQL 分页调研、周期自动同步、D7c 非个人页 `GET /users/{u}/starred`）见「未实现」。
 2. **快速构建阶段（2026-09-22 起，用户已定）**：不跑 `tests/smoke/`，不写测试 fixture/断言；改完只 `pnpm check`，由用户在真实页面判断是否成功。
 3. 若 GitHub 再改版：先跑 `tests/diag/selectors.js` 定位失配点，再改 `src/dom.ts` 的 helper（**只改 helper，不要在业务模块里写选择器**）。
 4. 数据同步后续阶段（**P4 主体已在 3.1.0 落地**，见 D6）：**P3** local-first 首屏（缓存快照先显 + 到货校正 + DOM 增量 patch）；P4 余项——ETag/GraphQL 分页调研、**周期自动同步**（当前 Sync 手动 + 消失 >12 自动，可加定时 idle 同步）。见「数据同步设计决策」。

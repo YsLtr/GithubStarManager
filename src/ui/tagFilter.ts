@@ -69,7 +69,7 @@ export function renderTagFilterBar(): void {
   // 菜单列表容器 — 使用原生 ActionList 结构（勾选后由 renderTagFilterList 原位重绘）
   const menuList = document.createElement('ul');
   menuList.id = 'stars-tag-filter-list';
-  menuList.className = 'ActionListWrap--inset ActionListWrap';
+  menuList.className = 'gsm-tag-chips';
   menuList.setAttribute('role', 'menu');
   renderTagFilterList(menuList);
 
@@ -92,29 +92,16 @@ export function renderTagFilterList(menuList: HTMLUListElement): void {
 
   computeTagCandidates().forEach((tag) => {
     const li = document.createElement('li');
-    li.className = 'ActionListItem';
     li.setAttribute('role', 'none');
 
-    const content = document.createElement('label');
-    content.className = 'ActionListContent';
-    content.setAttribute('role', 'menuitemcheckbox');
-    content.setAttribute('aria-checked', String(filterState.tags.includes(tag)));
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'gsm-tag-chip';
+    chip.setAttribute('role', 'menuitemcheckbox');
+    chip.setAttribute('aria-checked', String(filterState.tags.includes(tag)));
+    chip.textContent = tag;
 
-    const visual = document.createElement('span');
-    visual.className = 'ActionListItem-visual ActionListItem-action--leading';
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = filterState.tags.includes(tag);
-    visual.appendChild(cb);
-
-    const labelSpan = document.createElement('span');
-    labelSpan.className = 'ActionListItem-label';
-    labelSpan.textContent = tag;
-
-    content.appendChild(visual);
-    content.appendChild(labelSpan);
-
-    content.addEventListener('click', (e) => {
+    chip.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
       const idx = filterState.tags.indexOf(tag);
@@ -130,7 +117,7 @@ export function renderTagFilterList(menuList: HTMLUListElement): void {
       refreshTagPillStates();
     });
 
-    li.appendChild(content);
+    li.appendChild(chip);
     menuList.appendChild(li);
   });
 }
