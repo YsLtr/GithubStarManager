@@ -14,10 +14,10 @@ import type { SortDirection, SortKey, TypeFilter } from './types';
 export interface FilterState {
   /** 已选中的标签（多选，需全部命中） */
   tags: string[];
-  /** 语言筛选，'' = 全部 */
-  lang: string;
-  /** Type 筛选（'' = All；4.2.0 本地接管） */
-  type: TypeFilter;
+  /** 语言筛选（多选 OR），[] = 全部；可含 LANG_NONE 哨兵（无语言仓库，4.3.2） */
+  langs: string[];
+  /** Type 筛选（多选 OR），[] = All；4.2.0 本地接管、4.4.0 单选改多选 */
+  types: TypeFilter[];
   /** 排序方式 */
   sort: SortKey;
   /** 排序方向（desc = 默认；asc = 反向，缺失值仍恒沉底） */
@@ -32,8 +32,8 @@ export interface FilterState {
 
 export const filterState: FilterState = {
   tags: [],
-  lang: '',
-  type: '',
+  langs: [],
+  types: [],
   sort: 'created',
   direction: 'desc',
   searchQuery: '',
@@ -42,14 +42,14 @@ export const filterState: FilterState = {
 };
 
 /**
- * 是否有任何「筛选」激活（tags/lang/type/search 任一）。
+ * 是否有任何「筛选」激活（tags/langs/types/search 任一）。
  * sort/direction 属浏览状态，不算筛选、不进信息条（D4）。
  */
 export function hasActiveFilter(): boolean {
   return (
     filterState.tags.length > 0 ||
-    !!filterState.lang ||
-    !!filterState.type ||
+    filterState.langs.length > 0 ||
+    filterState.types.length > 0 ||
     !!filterState.searchQuery
   );
 }

@@ -1,6 +1,7 @@
 import {
   ARROW_DOWN_SVG,
   ARROW_UP_SVG,
+  CHECK_SVG,
   NATIVE_PAGE_SIZE,
   SORT_OPTIONS,
   TRIANGLE_DOWN_SVG,
@@ -18,12 +19,12 @@ import { escapeHtml } from './utils';
 import type { FilteredRepo, RepoData, TypeFilter } from './types';
 
 /**
- * 筛选/排序引擎（4.1.0 全本地化；4.2.0 Type 接管）：
+ * 筛选/排序引擎（4.1.0 全本地化；4.2.0 Type 接管；4.4.0 Type/Language 多选 + 勾选不收起）：
  * - `queryRepos()`：唯一查询管线（type → lang → tags AND → search → 排序），
  *   browse 态、标签筛选、搜索、facet 候选计算全部走它（R2）；
  * - `sortResults()`：4 排序键 × asc/desc + 缺失值恒沉底 + 名称决胜（R1/R4/R5）；
  * - `initFiltersFromUrl()`：进页时从 URL 参数初始化（URL 只读不写，R6/D3）；
- * - `updateLocalFilterControls()`：常驻本地 Type/Language/Sort(+方向) 接管原生菜单。
+ * - `updateLocalFilterControls()`：常驻本地 Type/Language/Sort(+方向) 接管原生菜单（4.4.0 起容器只建一次 + 原位刷新）。
  */
 
 /** facet 候选计算时可跳过的约束维度 */
@@ -94,17 +95,16 @@ export function queryRepos(skip?: QuerySkip): FilteredRepo[] {
 
   for (const repoId in cache) {
     const data = cache[repoId];
-    // Type 筛选（单选，替换语义）
-    if (skip !== 'type' && filterState.type && !typeMatches(data, filterState.type)) continue;
-    // 语言筛选（单选，替换语义）；LANG_NONE = 无语言仓库（菜单 None 项，4.3.2）
-    if (skip !== 'lang' && filterState.lang) {
-      if (
-        filterState.lang === LANG_NONE
-          ? !!data.lang
-          : (data.lang || '').toLowerCase() !== filterState.lang.toLowerCase()
-      ) {
-        continue;
-      }
+    // Type 筛选（多选 OR：命中任一已选类型即过，4.4.0）
+    if (skip !== 'type' && filterState.types.length > 0) {
+      if (!filterState.types.some((t) => typeMatches(data, t))) continue;
+    }
+    // 语言筛选（多选 OR）；LANG_NONE 哨兵 = 无语言仓库（菜单 None 项，4.3.2）
+    if (skip !== 'lang' && filterState.langs.length > 0) {
+      const hit = filterState.langs.some((l) =>
+        l === LANG_NONE ? !data.lang : (data.lang || '').toLowerCase() === l.toLowerCase()
+      );
+      if (!hit) continue;
     }
 
     // 标签筛选（多选 AND）
@@ -176,15 +176,17 @@ export function hasAnyTags(): boolean {
 }
 
 /**
- * Language 候选（单选替换语义，D1：忽略自身当前值，否则选完就剩一项没法切）：
- * `queryRepos('lang')` 里出现的语言 ∪ 当前 lang（已选恒可见）。
+ * Language 候选（多选，D1 忽略自身维度约束——否则选完就剩一项没法加选）：
+ * `queryRepos('lang')` 里出现的语言 ∪ 已选语言（已选恒可见，可取消）。
  */
 export function computeLanguageCandidates(): string[] {
   const langs = new Set<string>();
   for (const { data } of queryRepos('lang')) {
     if (data.lang) langs.add(data.lang);
   }
-  if (filterState.lang && filterState.lang !== LANG_NONE) langs.add(filterState.lang);
+  for (const l of filterState.langs) {
+    if (l !== LANG_NONE) langs.add(l);
+  }
   return Array.from(langs).sort((a, b) => a.localeCompare(b));
 }
 
@@ -195,7 +197,7 @@ export const LANG_NONE_LABEL = 'None';
 
 /** 无语言仓库是否存在（当前约束下动态收窄，D1；已选恒可见） */
 function hasLangNoneCandidate(): boolean {
-  if (filterState.lang === LANG_NONE) return true;
+  if (filterState.langs.includes(LANG_NONE)) return true;
   for (const { data } of queryRepos('lang')) {
     if (!data.lang) return true;
   }
@@ -203,8 +205,8 @@ function hasLangNoneCandidate(): boolean {
 }
 
 /**
- * Type 候选（单选替换语义，同上忽略自身当前值）：
- * `queryRepos('type')` 结果里能命中的 type 值 ∪ 当前 type；菜单顺序固定为原生序。
+ * Type 候选（多选，同 Language 忽略自身维度约束）：
+ * `queryRepos('type')` 结果里能命中的 type 值 ∪ 已选 type；菜单顺序固定为原生序。
  */
 export function computeTypeCandidates(): TypeFilter[] {
   const present = new Set<TypeFilter>();
@@ -213,20 +215,32 @@ export function computeTypeCandidates(): TypeFilter[] {
       if (typeMatches(data, opt.value)) present.add(opt.value);
     }
   }
-  if (filterState.type) present.add(filterState.type); // 已选恒可见（可切回 All）
+  for (const t of filterState.types) present.add(t); // 已选恒可见（可取消）
   return TYPE_OPTIONS.map((o) => o.value).filter((v) => present.has(v));
 }
 
-/** 4.0.0 纯本地浏览态：缓存 → 查询管线 → 切页渲染（无筛选激活时分页浏览全部缓存） */
-export function renderBrowsePage(page: number): void {
+/**
+ * 本地分页渲染（4.0.0 browse 态 → 4.4.0 起筛选态统一走这里）：
+ * 缓存 → 查询管线 → 切 NATIVE_PAGE_SIZE/页渲染。Type 的 Public/Sources 这类大集合
+ * 筛选不再一次平铺全部结果卡（渲染卡顿根因），单次渲染恒 ≤ 30 张。
+ * 搜索高亮在此应用——翻页后的新卡片同样带高亮。
+ * @returns 查询结果总数（applyFilters 拿去渲信息条计数，避免二次全遍历）
+ */
+export function renderBrowsePage(page: number): number {
   const gridContainer = document.querySelector('.stars-grid-container');
-  if (!gridContainer) return;
+  if (!gridContainer) return 0;
 
   const results = queryRepos();
   const totalPages = Math.max(1, Math.ceil(results.length / NATIVE_PAGE_SIZE));
   filterState.page = Math.min(Math.max(1, page), totalPages);
   filterState.totalPages = totalPages;
   const start = (filterState.page - 1) * NATIVE_PAGE_SIZE;
+  const terms = filterState.searchQuery.toLowerCase().split(/\s+/).filter((t) => t.length > 0);
+
+  // 底部本地分页器常驻：innerHTML 清空会把它一并删掉（4.4.0 审查 🟡-1：4.0.0 起底部
+  // 分页器实际只活到首帧渲染就被清空）——先摘下、渲染完插回，顶部克隆在标题行不受影响
+  const bottomPager = gridContainer.querySelector<HTMLElement>('.paginate-container.gsm-local-pager');
+  if (bottomPager) bottomPager.remove();
 
   gridContainer.innerHTML = '';
   for (const { repoId, data } of results.slice(start, start + NATIVE_PAGE_SIZE)) {
@@ -237,9 +251,11 @@ export function renderBrowsePage(page: number): void {
     if (tagsContainer) renderTags(tagsContainer);
     const notesContainer = card.querySelector<HTMLElement>('.stars-card-notes');
     if (notesContainer) renderNotes(notesContainer);
+    if (terms.length > 0) highlightMatchesInCard(card, terms);
   }
-
+  if (bottomPager) gridContainer.appendChild(bottomPager);
   updateLocalPagers();
+  return results.length;
 }
 
 /** 同步顶/底两份本地分页器：页码文字 + Previous/Next 禁用态 */
@@ -328,12 +344,13 @@ export function renderFilterInfoBar(count: number): void {
   if (filterState.tags.length > 0) {
     desc += ' with tags: ' + filterState.tags.map((t) => '<strong>' + escapeHtml(t) + '</strong>').join(', ');
   }
-  if (filterState.type) {
-    const label = TYPE_OPTIONS.find((o) => o.value === filterState.type)?.label || filterState.type;
-    desc += ' · type: <strong>' + escapeHtml(label) + '</strong>';
+  if (filterState.types.length > 0) {
+    const labels = filterState.types.map((t) => TYPE_OPTIONS.find((o) => o.value === t)?.label || t);
+    desc += ' · type: <strong>' + escapeHtml(labels.join(', ')) + '</strong>';
   }
-  if (filterState.lang) {
-    desc += ' · language: <strong>' + escapeHtml(filterState.lang === LANG_NONE ? LANG_NONE_LABEL : filterState.lang) + '</strong>';
+  if (filterState.langs.length > 0) {
+    const names = filterState.langs.map((l) => (l === LANG_NONE ? LANG_NONE_LABEL : l));
+    desc += ' · language: <strong>' + escapeHtml(names.join(', ')) + '</strong>';
   }
   infoSpan.innerHTML = desc;
   infoDiv.appendChild(infoSpan);
@@ -354,85 +371,48 @@ export function renderFilterInfoBar(count: number): void {
   colLg9.insertBefore(bar, gridContainer);
 }
 
-/** 应用当前筛选状态：browse 态分页渲染 / 筛选态平铺 + 信息条；常驻本地控件随状态重建 */
-export function applyFilters(): void {
+/**
+ * 应用当前筛选状态（4.4.0 统一漏斗）：browse 与筛选态都走本地分页渲染，
+ * 只有原生 clear 条显隐与信息条随态切换——大集合筛选不再平铺全部结果卡。
+ * 常驻本地控件**原位刷新**（容器只建一次），Type/Language 菜单的 popover
+ * 在勾选过程中保持打开（勾选不收起）。
+ */
+export function applyFilters(opts: { keepPage?: boolean } = {}): void {
   // 1. 移除旧的缓存卡片
   document.querySelectorAll('.stars-grid-card-cached').forEach((el) => el.remove());
 
-  const cards = document.querySelectorAll('.stars-grid-card:not(.stars-grid-card-cached)');
-  const gridContainer = document.querySelector('.stars-grid-container');
-  const paginator = gridContainer ? gridContainer.querySelector<HTMLElement>('.paginate-container') : null;
-
-  // 常驻本地控件（Type / Language / Sort+方向）：状态驱动重建，同时保证原生菜单持续隐藏
+  // 2. 常驻本地控件（Type / Language / Sort+方向）原位刷新，同时保证原生菜单持续隐藏
   updateLocalFilterControls();
   // Tags 候选随当前约束刷新（R3，4.3.4）：type/lang/搜索/勾选变化后原位收窄回填——
   // 杜绝「切了 Type/Language 后 chip 列表还是旧全集」与「空结果取消勾选后面板永久空白」
   refreshTagFilterBar();
 
-  // 2. 无任何筛选激活（sort/direction 属浏览状态）→ browse 态：本地分页
-  if (!hasActiveFilter()) {
-    cards.forEach((card) => card.classList.remove('stars-tag-filtered'));
-    if (paginator) paginator.style.display = '';
-    document.querySelectorAll<HTMLElement>('.gsm-top-pager').forEach((el) => {
-      el.style.display = '';
-    });
-    renderBrowsePage(1);
+  const filtered = hasActiveFilter();
+  const colLg9 = getStarsMainColumn();
 
-    // 移除 info bar 并恢复原生 clear filter 条
+  // 3. 原生 clear filter 条：筛选态藏（信息条顶替）、browse 态还
+  if (colLg9) {
+    const nativeBar = getNativeFilterBar(colLg9);
+    if (nativeBar) nativeBar.style.display = filtered ? 'none' : '';
+  }
+  if (!filtered) {
     document.querySelectorAll('.stars-tag-info-bar').forEach((el) => el.remove());
-    const colLg9 = getStarsMainColumn();
-    if (colLg9) {
-      const nativeBar = getNativeFilterBar(colLg9);
-      if (nativeBar) nativeBar.style.display = '';
-    }
-    return;
   }
 
-  // 3. 筛选态（tags/lang/type/search 任一激活）：结果平铺不分页（D5）
-  cards.forEach((card) => card.classList.add('stars-tag-filtered'));
-  if (paginator) paginator.style.display = 'none';
-  // 顶部分页器同藏（它在 headerRow 里，不在 gridContainer 内）
-  document.querySelectorAll<HTMLElement>('.gsm-top-pager').forEach((el) => {
-    el.style.display = 'none';
-  });
+  // 4. 统一分页渲染：筛选变化回第 1 页；unstar 翻卡等「结果集变、条件没变」的调用传
+  // { keepPage: true } 保住当前页码（4.4.0 审查 🟡-3）；纯翻页（pagination.ts 直调
+  // renderBrowsePage）不经这里、页码不回卷
+  const total = renderBrowsePage(opts.keepPage ? filterState.page : 1);
 
-  const results = queryRepos();
-  if (!gridContainer) return;
-
-  // 4. 为每个结果构建缓存卡片
-  results.forEach(({ repoId, data }) => {
-    const cachedCard = buildCardFromCache(repoId, data);
-    gridContainer.appendChild(cachedCard);
-
-    // 星星按钮
-    createStarButtonForCached(cachedCard, data);
-
-    // 标签
-    const tagsContainer = cachedCard.querySelector<HTMLElement>('.stars-card-tags');
-    if (tagsContainer) renderTags(tagsContainer);
-
-    // 备注
-    const notesContainer = cachedCard.querySelector<HTMLElement>('.stars-card-notes');
-    if (notesContainer) renderNotes(notesContainer);
-
-    // 搜索模式：高亮命中词（标题 / 描述 / 标签 / 备注）
-    if (filterState.searchQuery) {
-      highlightMatchesInCard(
-        cachedCard,
-        filterState.searchQuery.toLowerCase().split(/\s+/).filter((t) => t.length > 0)
-      );
-    }
-  });
-
-  // 5. 展示计数信息条
-  renderFilterInfoBar(results.length);
+  // 5. 筛选态：计数信息条（总数 = 查询结果全集，非当前页）
+  if (filtered) renderFilterInfoBar(total);
 }
 
-/** 退出全部筛选（Clear filter 本地化）：清 tags/lang/type/search，保留 sort/direction（D4）→ 干净地址栏 */
+/** 退出全部筛选（Clear filter 本地化）：清 tags/langs/types/search，保留 sort/direction（D4）→ 干净地址栏 */
 export function exitCustomMode(): void {
   filterState.tags = [];
-  filterState.lang = '';
-  filterState.type = '';
+  filterState.langs = [];
+  filterState.types = [];
   filterState.searchQuery = '';
   filterState.page = 1;
   const searchInput = document.querySelector<HTMLInputElement>(
@@ -470,6 +450,15 @@ function markUrlParsed(): void {
   lastParsedUrlSignature = urlFilterSignature();
 }
 
+/** URL 语言值 → 缓存中的规范 casing（菜单勾选态比对是大小写不敏感的，但显示用原名防重影） */
+function canonicalLangName(raw: string): string {
+  const lower = raw.toLowerCase();
+  for (const data of Object.values(loadRepoCache())) {
+    if (data.lang && data.lang.toLowerCase() === lower) return data.lang;
+  }
+  return lower;
+}
+
 /** 进页时 Sort/方向/语言/Type 与 URL 参数匹配（仅 URL 筛选参数变化时覆盖本地状态） */
 export function initFiltersFromUrl(): void {
   const sig = urlFilterSignature();
@@ -485,24 +474,53 @@ export function initFiltersFromUrl(): void {
       : 'created';
   filterState.direction = p.get('direction') === 'asc' ? 'asc' : 'desc';
   // URLSearchParams 已解码（`jupyter+notebook` → 空格、`c%23` → `c#`），匹配时大小写不敏感
+  // 4.4.0 多选：逗号分隔（`?language=javascript,python`）；`none`（或 `(none)`）= 无语言（4.3.2）
   const langParam = p.get('language') || '';
-  // `?language=none`（或 `(none)`）= 无语言（4.3.2）
-  filterState.lang = /^\(?none\)?$/i.test(langParam) ? LANG_NONE : langParam;
-  const type = p.get('type');
-  filterState.type =
-    type === 'public' ||
-    type === 'private' ||
-    type === 'source' ||
-    type === 'fork' ||
-    type === 'mirror' ||
-    type === 'template'
-      ? type
-      : '';
+  filterState.langs = langParam
+    ? Array.from(
+        new Set(
+          langParam
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+            // 大小写归一（4.4.0 审查 🟡-2）：`?language=none,None` 必须合并成一个哨兵、
+            // `JavaScript,javascript` 不能存成双变体（取消看似无效 / 菜单重影双行都打勾）
+            // —— 先映射到缓存规范 casing / LANG_NONE，再去重。缓存没有的值取
+            // lowercase 形态（匹配本就不区分大小写，且不在候选列表中、不会重影）
+            .map((s) => (/^\(?none\)?$/i.test(s) ? LANG_NONE : canonicalLangName(s)))
+        )
+      )
+    : [];
+  // 4.4.0 多选：逗号分隔（`?type=fork,source`）；非法值丢弃
+  const VALID_TYPES: readonly string[] = [
+    'public',
+    'private',
+    'source',
+    'fork',
+    'mirror',
+    'template',
+  ];
+  const typeParam = p.get('type') || '';
+  filterState.types = typeParam
+    ? Array.from(
+        new Set(
+          typeParam
+            .split(',')
+            // 大小写归一（4.4.0 审查 🟡-2）：`?type=Fork,FORK` 合并为一项
+            .map((s) => s.trim().toLowerCase())
+            .filter((s) => VALID_TYPES.includes(s))
+        )
+      ) as TypeFilter[]
+    : [];
   filterState.page = 1;
 }
 
 /* ================================================================
- * 常驻本地筛选控件（R2 + R5，4.2.0 Type 接管）：一次性接管，不再随模式切换
+ * 常驻本地筛选控件（R2 + R5；4.2.0 Type 接管；4.4.0 Type/Language 多选 +
+ * 勾选不收起）。结构约束：容器**只创建一次**（缺失才建），之后每次
+ * applyFilters 原位刷新（按钮文案 / 勾选态 / 候选列表）——整体重建会把开着
+ * 的 popover 拆掉，「勾选后面板保持打开」依赖这一点（与 Tags 面板
+ * refreshTagFilterBar 同一模式）。
  * ================================================================ */
 
 /** 常驻隐藏原生 Type/Language/Sort action-menu（节点保留：getNativeFilterRow 依赖其锚点） */
@@ -518,50 +536,104 @@ function hideNativeFilterMenus(): void {
   }
 }
 
-/** 重建常驻本地控件（Type / Language 菜单 + Sort 合并组）；幂等，applyFilters 每次调用 */
+/** 重建或原位刷新常驻本地控件（幂等，applyFilters 每次调用） */
 function updateLocalFilterControls(): void {
   hideNativeFilterMenus();
-  document.querySelectorAll('.stars-custom-filter').forEach((el) => el.remove());
 
   const filterRow = getNativeFilterRow();
   if (!filterRow) return;
 
-  // 布局 [Tags][Type][Language][Sort by│↓]：锚点 = Tags 之后（无 Tags 时行首）
-  const tagFilter = filterRow.querySelector('.stars-tag-filter');
-  const anchorNode: ChildNode | null = tagFilter || filterRow.firstChild;
-
-  const typeContainer = buildTypeMenu();
-  const langContainer = buildLangMenu();
-  const sortContainer = buildSortGroup();
-  if (anchorNode && anchorNode.parentNode === filterRow) {
-    filterRow.insertBefore(typeContainer, anchorNode.nextSibling);
-  } else {
-    filterRow.appendChild(typeContainer);
+  const typeContainer = filterRow.querySelector<HTMLElement>('.gsm-type-filter');
+  if (!typeContainer) {
+    // 首次创建：布局 [Tags][Type][Language][Sort│↓]，锚点 = Tags 之后（无 Tags 时行首）
+    const tagFilter = filterRow.querySelector('.stars-tag-filter');
+    const anchorNode: ChildNode | null = tagFilter || filterRow.firstChild;
+    const typeMenu = buildTypeMenu();
+    const langMenu = buildLangMenu();
+    const sortMenu = buildSortGroup();
+    if (anchorNode && anchorNode.parentNode === filterRow) {
+      filterRow.insertBefore(typeMenu, anchorNode.nextSibling);
+    } else {
+      filterRow.appendChild(typeMenu);
+    }
+    filterRow.insertBefore(langMenu, typeMenu.nextSibling);
+    filterRow.insertBefore(sortMenu, langMenu.nextSibling);
   }
-  filterRow.insertBefore(langContainer, typeContainer.nextSibling);
-  filterRow.insertBefore(sortContainer, langContainer.nextSibling);
+
+  // 创建与刷新统一走原位更新（新建容器的动态内容也在这里补齐）
+  refreshTypeMenu(filterRow.querySelector<HTMLElement>('.gsm-type-filter')!);
+  const langContainer = filterRow.querySelector<HTMLElement>('.gsm-lang-filter');
+  if (langContainer) refreshLangMenu(langContainer);
+  const sortContainer = filterRow.querySelector<HTMLElement>('.gsm-sort-filter');
+  if (sortContainer) refreshSortGroup(sortContainer);
 }
 
-/** 自定义 Type 按钮 + 菜单（候选 = computeTypeCandidates 动态收窄，D1 替换语义；All 恒在） */
+/**
+ * 多选菜单项（4.4.0）：label **后置** ✓（需求原文「在该筛选条件后打钩」）。
+ * 未选项的 check 以 visibility:hidden 占位——勾选/取消时行宽与文字位置不跳。
+ */
+function buildMultiSelectItem(label: string, checked: boolean, onClick: () => void): HTMLLIElement {
+  const li = document.createElement('li');
+  li.className = 'ActionListItem';
+  li.setAttribute('role', 'none');
+  const content = document.createElement('a');
+  content.className = 'ActionListContent';
+  content.setAttribute('role', 'menuitemcheckbox');
+  content.setAttribute('aria-checked', String(checked));
+  const labelEl = document.createElement('span');
+  labelEl.className = 'ActionListItem-label';
+  labelEl.textContent = label;
+  const check = document.createElement('span');
+  check.className = 'ActionListItem-visual ActionListItem-visual--trailing gsm-check-visual';
+  check.innerHTML = CHECK_SVG;
+  check.style.visibility = checked ? 'visible' : 'hidden';
+  content.append(labelEl, check);
+  content.addEventListener('click', (e) => {
+    e.preventDefault();
+    onClick();
+  });
+  li.appendChild(content);
+  return li;
+}
+
+/* ---------------- Type（多选 OR） ---------------- */
+
+/** Type 候选切换：命中任一已选类型即过（OR）；再次点击取消 */
+function toggleTypeSelection(value: TypeFilter): void {
+  const idx = filterState.types.indexOf(value);
+  if (idx >= 0) filterState.types.splice(idx, 1);
+  else filterState.types.push(value);
+  applyFilters();
+}
+
+/** Type 按钮文案：无选中 = Type；单选 = Type: X；多选 = Type: N selected（对齐 Tags 风格） */
+function typeButtonLabel(): string {
+  const n = filterState.types.length;
+  if (n === 0) return 'Type';
+  if (n === 1) {
+    const l = filterState.types[0];
+    const opt = TYPE_OPTIONS.find((o) => o.value === l);
+    return 'Type: ' + (opt ? opt.label : l);
+  }
+  return `Type: ${n} selected`;
+}
+
+/** Type 容器骨架（只建一次）：按钮 + popover overlay + 空 ul；内容全走 refreshTypeMenu */
 function buildTypeMenu(): HTMLElement {
   const typeContainer = document.createElement('div');
-  typeContainer.className = 'stars-custom-filter mb-1 mb-lg-0 mr-2';
+  typeContainer.className = 'stars-custom-filter gsm-type-filter mb-1 mb-lg-0 mr-2';
 
-  const activeOpt = TYPE_OPTIONS.find((o) => o.value === filterState.type);
   const typeBtnEl = document.createElement('button');
   typeBtnEl.type = 'button';
   typeBtnEl.id = 'stars-custom-type-button';
   typeBtnEl.setAttribute('popovertarget', 'stars-custom-type-overlay');
   typeBtnEl.setAttribute('aria-haspopup', 'true');
   typeBtnEl.className = 'Button--secondary Button--medium Button';
-  if (filterState.type) typeBtnEl.classList.add('has-active');
   typeBtnEl.innerHTML =
     '<span class="Button-content"><span class="Button-label"></span></span>' +
     '<span class="Button-visual Button-trailingAction">' +
     TRIANGLE_DOWN_SVG +
     '</span>';
-  const typeLabelEl = typeBtnEl.querySelector('.Button-label');
-  if (typeLabelEl) typeLabelEl.textContent = activeOpt ? 'Type: ' + activeOpt.label : 'Type';
 
   const typeOverlay = document.createElement('anchored-position');
   typeOverlay.id = 'stars-custom-type-overlay';
@@ -579,34 +651,6 @@ function buildTypeMenu(): HTMLElement {
   typeList.className = 'ActionListWrap--inset ActionListWrap';
   typeList.setAttribute('role', 'menu');
 
-  const addItem = (label: string, value: TypeFilter): void => {
-    const li = document.createElement('li');
-    li.className = 'ActionListItem';
-    li.setAttribute('role', 'none');
-    const content = document.createElement('a');
-    content.className = 'ActionListContent';
-    content.setAttribute('role', 'menuitemradio');
-    content.setAttribute('aria-checked', String(filterState.type === value));
-    const labelEl = document.createElement('span');
-    labelEl.className = 'ActionListItem-label';
-    labelEl.textContent = label;
-    content.appendChild(labelEl);
-    content.addEventListener('click', (e) => {
-      e.preventDefault();
-      filterState.type = value;
-      typeOverlay.hidePopover();
-      applyFilters();
-    });
-    li.appendChild(content);
-    typeList.appendChild(li);
-  };
-
-  addItem('All', '');
-  for (const value of computeTypeCandidates()) {
-    const opt = TYPE_OPTIONS.find((o) => o.value === value);
-    if (opt) addItem(opt.label, value);
-  }
-
   typeBody.appendChild(typeList);
   typeInner.appendChild(typeBody);
   typeOverlay.appendChild(typeInner);
@@ -615,29 +659,78 @@ function buildTypeMenu(): HTMLElement {
   return typeContainer;
 }
 
-/** 自定义 Language 按钮 + 菜单（候选 = computeLanguageCandidates 动态收窄，D1 替换语义） */
+/** Type 原位刷新：按钮文案 + has-active + 菜单项重绘（popover 保持打开，勾选不收起） */
+function refreshTypeMenu(typeContainer: HTMLElement): void {
+  const btn = typeContainer.querySelector('.Button');
+  if (btn) {
+    btn.classList.toggle('has-active', filterState.types.length > 0);
+    const labelEl = btn.querySelector('.Button-label');
+    if (labelEl) labelEl.textContent = typeButtonLabel();
+  }
+  const typeList = typeContainer.querySelector<HTMLUListElement>('ul');
+  if (!typeList) return;
+
+  typeList.innerHTML = '';
+  // All：勾选态 = 本维度无任何已选；点击清空本维度其余选择（面板不收起）
+  typeList.appendChild(
+    buildMultiSelectItem('All', filterState.types.length === 0, () => {
+      filterState.types = [];
+      applyFilters();
+    })
+  );
+  for (const value of computeTypeCandidates()) {
+    const opt = TYPE_OPTIONS.find((o) => o.value === value);
+    if (!opt) continue;
+    typeList.appendChild(
+      buildMultiSelectItem(opt.label, filterState.types.includes(value), () =>
+        toggleTypeSelection(value)
+      )
+    );
+  }
+}
+
+/* ---------------- Language（多选 OR） ---------------- */
+
+/** 语言已选判定（大小写不敏感：URL 入口的值与缓存值可能大小写不同） */
+function langSelected(lang: string): boolean {
+  return filterState.langs.some((l) => l.toLowerCase() === lang.toLowerCase());
+}
+
+/** 语言候选切换：命中任一已选语言即过（OR）；LANG_NONE = 无语言仓库；再次点击取消 */
+function toggleLangSelection(lang: string): void {
+  const idx = filterState.langs.findIndex((l) => l.toLowerCase() === lang.toLowerCase());
+  if (idx >= 0) filterState.langs.splice(idx, 1);
+  else filterState.langs.push(lang);
+  applyFilters();
+}
+
+/** Language 按钮文案：无选中 = Language；单选 = Language: X；多选 = Language: N selected */
+function langButtonLabel(): string {
+  const n = filterState.langs.length;
+  if (n === 0) return 'Language';
+  if (n === 1) {
+    const l = filterState.langs[0];
+    return 'Language: ' + (l === LANG_NONE ? LANG_NONE_LABEL : l);
+  }
+  return `Language: ${n} selected`;
+}
+
+/** Language 容器骨架（只建一次），同 buildTypeMenu */
 function buildLangMenu(): HTMLElement {
   const langContainer = document.createElement('div');
-  langContainer.className = 'stars-custom-filter mb-1 mb-lg-0';
+  langContainer.className = 'stars-custom-filter gsm-lang-filter mb-1 mb-lg-0';
 
-  const languages = computeLanguageCandidates();
-  const langBtnLabel = filterState.lang
-    ? 'Language: ' + (filterState.lang === LANG_NONE ? LANG_NONE_LABEL : filterState.lang)
-    : 'Language';
   const langBtnEl = document.createElement('button');
   langBtnEl.type = 'button';
   langBtnEl.id = 'stars-custom-lang-button';
   langBtnEl.setAttribute('popovertarget', 'stars-custom-lang-overlay');
   langBtnEl.setAttribute('aria-haspopup', 'true');
   langBtnEl.className = 'Button--secondary Button--medium Button';
-  if (filterState.lang) langBtnEl.classList.add('has-active');
   langBtnEl.innerHTML =
     '<span class="Button-content"><span class="Button-label"></span></span>' +
     '<span class="Button-visual Button-trailingAction">' +
     TRIANGLE_DOWN_SVG +
     '</span>';
-  const langLabelEl = langBtnEl.querySelector('.Button-label');
-  if (langLabelEl) langLabelEl.textContent = langBtnLabel;
 
   const langOverlay = document.createElement('anchored-position');
   langOverlay.id = 'stars-custom-lang-overlay';
@@ -655,72 +748,6 @@ function buildLangMenu(): HTMLElement {
   langList.className = 'ActionListWrap--inset ActionListWrap';
   langList.setAttribute('role', 'menu');
 
-  // "All languages" 选项
-  const allLi = document.createElement('li');
-  allLi.className = 'ActionListItem';
-  allLi.setAttribute('role', 'none');
-  const allContent = document.createElement('a');
-  allContent.className = 'ActionListContent';
-  allContent.setAttribute('role', 'menuitemradio');
-  allContent.setAttribute('aria-checked', String(!filterState.lang));
-  const allLabel = document.createElement('span');
-  allLabel.className = 'ActionListItem-label';
-  allLabel.textContent = 'All languages';
-  allContent.appendChild(allLabel);
-  allContent.addEventListener('click', (e) => {
-    e.preventDefault();
-    filterState.lang = '';
-    langOverlay.hidePopover();
-    applyFilters();
-  });
-  allLi.appendChild(allContent);
-  langList.appendChild(allLi);
-
-  languages.forEach((lang) => {
-    const li = document.createElement('li');
-    li.className = 'ActionListItem';
-    li.setAttribute('role', 'none');
-    const content = document.createElement('a');
-    content.className = 'ActionListContent';
-    content.setAttribute('role', 'menuitemradio');
-    content.setAttribute('aria-checked', String(filterState.lang.toLowerCase() === lang.toLowerCase()));
-    const label = document.createElement('span');
-    label.className = 'ActionListItem-label';
-    label.textContent = lang;
-    content.appendChild(label);
-    content.addEventListener('click', (e) => {
-      e.preventDefault();
-      filterState.lang = lang;
-      langOverlay.hidePopover();
-      applyFilters();
-    });
-    li.appendChild(content);
-    langList.appendChild(li);
-  });
-
-  // None 项（无语言仓库）放菜单末尾（字母序候选之后）；当前约束下存在才展示，D1 动态收窄
-  if (hasLangNoneCandidate()) {
-    const noneLi = document.createElement('li');
-    noneLi.className = 'ActionListItem';
-    noneLi.setAttribute('role', 'none');
-    const noneContent = document.createElement('a');
-    noneContent.className = 'ActionListContent';
-    noneContent.setAttribute('role', 'menuitemradio');
-    noneContent.setAttribute('aria-checked', String(filterState.lang === LANG_NONE));
-    const noneLabel = document.createElement('span');
-    noneLabel.className = 'ActionListItem-label';
-    noneLabel.textContent = LANG_NONE_LABEL;
-    noneContent.appendChild(noneLabel);
-    noneContent.addEventListener('click', (e) => {
-      e.preventDefault();
-      filterState.lang = LANG_NONE;
-      langOverlay.hidePopover();
-      applyFilters();
-    });
-    noneLi.appendChild(noneContent);
-    langList.appendChild(noneLi);
-  }
-
   langBody.appendChild(langList);
   langInner.appendChild(langBody);
   langOverlay.appendChild(langInner);
@@ -729,19 +756,54 @@ function buildLangMenu(): HTMLElement {
   return langContainer;
 }
 
+/** Language 原位刷新：All languages + 候选 + None（末尾，4.3.2）；popover 保持打开 */
+function refreshLangMenu(langContainer: HTMLElement): void {
+  const btn = langContainer.querySelector('.Button');
+  if (btn) {
+    btn.classList.toggle('has-active', filterState.langs.length > 0);
+    const labelEl = btn.querySelector('.Button-label');
+    if (labelEl) labelEl.textContent = langButtonLabel();
+  }
+  const langList = langContainer.querySelector<HTMLUListElement>('ul');
+  if (!langList) return;
+
+  langList.innerHTML = '';
+  langList.appendChild(
+    buildMultiSelectItem('All languages', filterState.langs.length === 0, () => {
+      filterState.langs = [];
+      applyFilters();
+    })
+  );
+  for (const lang of computeLanguageCandidates()) {
+    langList.appendChild(
+      buildMultiSelectItem(lang, langSelected(lang), () => toggleLangSelection(lang))
+    );
+  }
+  // None 项放菜单末尾（字母序候选之后）；当前约束下存在才展示，D1 动态收窄
+  if (hasLangNoneCandidate()) {
+    langList.appendChild(
+      buildMultiSelectItem(LANG_NONE_LABEL, filterState.langs.includes(LANG_NONE), () =>
+        toggleLangSelection(LANG_NONE)
+      )
+    );
+  }
+}
+
+/* ---------------- Sort + 方向（单选，行为不变：选择后收起） ---------------- */
+
 /**
- * Sort 合并组（R5 split button）：左段 = Sort by 菜单，右段 = 纯方向 icon
+ * Sort 合并组骨架（R5 split button）：左段 = Sort by 菜单，右段 = 纯方向 icon
  * （无文字，点击切换 asc/desc），中间只有一条竖线分隔（CSS 边框重叠）。
  * 方向态只由 icon（↑/↓）表达——不加 has-active 蓝圈（用户 4.2.0 反馈：多余）。
  */
 function buildSortGroup(): HTMLElement {
   const sortContainer = document.createElement('div');
-  sortContainer.className = 'stars-custom-filter mb-1 mb-lg-0 ml-2';
+  sortContainer.className = 'stars-custom-filter gsm-sort-filter mb-1 mb-lg-0 ml-2';
 
   const group = document.createElement('div');
   group.className = 'gsm-sort-group';
 
-  // --- 左段：Sort by 菜单 ---
+  // --- 左段：Sort by 菜单按钮 ---
   const sortBtnEl = document.createElement('button');
   sortBtnEl.type = 'button';
   sortBtnEl.id = 'stars-custom-sort-button';
@@ -753,22 +815,13 @@ function buildSortGroup(): HTMLElement {
     '<span class="Button-visual Button-trailingAction">' +
     TRIANGLE_DOWN_SVG +
     '</span>';
-  const sortLabelEl = sortBtnEl.querySelector('.Button-label');
-  if (sortLabelEl) {
-    const active = SORT_OPTIONS.find((o) => o.key === filterState.sort) || SORT_OPTIONS[0];
-    sortLabelEl.textContent = 'Sort by: ' + active.label;
-  }
 
   // --- 右段：方向切换（纯 icon） ---
   const dirBtn = document.createElement('button');
   dirBtn.type = 'button';
   dirBtn.id = 'stars-custom-dir-button';
   dirBtn.className = 'Button--secondary Button--medium Button gsm-dir-btn';
-  const isAsc = filterState.direction === 'asc';
-  dirBtn.title = isAsc ? '排序方向：升序（点击切为降序）' : '排序方向：降序（点击切为升序）';
   dirBtn.setAttribute('aria-label', '切换排序方向');
-  dirBtn.innerHTML =
-    '<span class="Button-content">' + (isAsc ? ARROW_UP_SVG : ARROW_DOWN_SVG) + '</span>';
   dirBtn.addEventListener('click', () => {
     filterState.direction = filterState.direction === 'desc' ? 'asc' : 'desc';
     applyFilters();
@@ -794,6 +847,34 @@ function buildSortGroup(): HTMLElement {
   sortList.className = 'ActionListWrap--inset ActionListWrap';
   sortList.setAttribute('role', 'menu');
 
+  sortBody.appendChild(sortList);
+  sortInner.appendChild(sortBody);
+  sortOverlay.appendChild(sortInner);
+  sortContainer.appendChild(sortOverlay);
+  return sortContainer;
+}
+
+/**
+ * Sort 原位刷新：左段文案 + 右段方向 icon + 菜单项 radio 勾选态。
+ * Sort 仍为单选（menuitemradio，选择后收起面板）——多选化只针对 Type/Language。
+ */
+function refreshSortGroup(sortContainer: HTMLElement): void {
+  const sortLabelEl = sortContainer.querySelector('.Button-label');
+  if (sortLabelEl) {
+    const active = SORT_OPTIONS.find((o) => o.key === filterState.sort) || SORT_OPTIONS[0];
+    sortLabelEl.textContent = 'Sort by: ' + active.label;
+  }
+  const dirBtn = sortContainer.querySelector<HTMLElement>('#stars-custom-dir-button');
+  if (dirBtn) {
+    const isAsc = filterState.direction === 'asc';
+    dirBtn.title = isAsc ? '排序方向：升序（点击切为降序）' : '排序方向：降序（点击切为升序）';
+    dirBtn.innerHTML =
+      '<span class="Button-content">' + (isAsc ? ARROW_UP_SVG : ARROW_DOWN_SVG) + '</span>';
+  }
+  const sortList = sortContainer.querySelector<HTMLUListElement>('ul');
+  if (!sortList) return;
+
+  sortList.innerHTML = '';
   SORT_OPTIONS.forEach((opt) => {
     const li = document.createElement('li');
     li.className = 'ActionListItem';
@@ -809,16 +890,10 @@ function buildSortGroup(): HTMLElement {
     content.addEventListener('click', (e) => {
       e.preventDefault();
       filterState.sort = opt.key;
-      sortOverlay.hidePopover();
+      sortContainer.querySelector<HTMLElement>('#stars-custom-sort-overlay')?.hidePopover();
       applyFilters();
     });
     li.appendChild(content);
     sortList.appendChild(li);
   });
-
-  sortBody.appendChild(sortList);
-  sortInner.appendChild(sortBody);
-  sortOverlay.appendChild(sortInner);
-  sortContainer.appendChild(sortOverlay);
-  return sortContainer;
 }

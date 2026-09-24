@@ -133,8 +133,9 @@ function updateGridCard(repoId: string): void {
   const notesEl = card.querySelector<HTMLElement>('.stars-card-notes');
   if (notesEl) renderNotes(notesEl);
 
-  // 有筛选激活（tags/lang/search 任一）时：仓库已从缓存移除，重算筛选结果；无筛选（browse 态）不动
-  if (filterState.tags.length > 0 || filterState.lang || filterState.searchQuery) applyFilters();
+  // 有筛选激活（tags/langs/types/search 任一）时：仓库已从缓存移除，重算筛选结果；
+  // 无筛选（browse 态）不动。keepPage: 结果集变但条件没变，不把用户拉回第 1 页（🟡-3）
+  if (filterState.tags.length > 0 || filterState.langs.length > 0 || filterState.types.length > 0 || filterState.searchQuery) applyFilters({ keepPage: true });
 }
 
 /* ---------------- P4 全量同步的复用入口 ---------------- */

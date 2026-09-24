@@ -435,11 +435,6 @@
     display: none !important;
   }
 
-  /* 标签筛选隐藏卡片 */
-  .stars-tag-filtered {
-    display: none !important;
-  }
-
   /* ===== 筛选栏 Tags 按钮 ===== */
   /* 有选中标签时按钮高亮 */
   .stars-tag-filter .has-active {
@@ -514,6 +509,14 @@
     min-width: 180px;
     max-height: 300px;
     overflow-y: auto;
+  }
+
+  /* 4.4.0 Type/Language 多选菜单项：label 后置 ✓（需求「在该筛选条件后打钩」）。
+     未选时 visibility:hidden 占位——勾选/取消不引起行宽变化、文字不左右跳 */
+  .stars-custom-filter .gsm-check-visual {
+    display: inline-flex;
+    align-items: center;
+    margin-left: var(--control-medium-gap, 8px);
   }
 
   /* ===== Sort 合并组（R5 split button）：左 Sort by 菜单 + 单条竖线 + 右方向 icon（无文字） ===== */

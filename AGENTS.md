@@ -5,25 +5,29 @@
 
 ---
 
-## 当前交接（2026-09-24 12:0x +0800；焦点 = 4.3.5 审查修复（🟡×4 已真机验证））
+## 当前交接（2026-09-24 17:5x +0800；焦点 = 4.4.0 Type/Language 多选 + 筛选结果分页（已实现，**未提交**，待用户真机验证））
 
 ### 目标
-GitHub 2026 改版适配至 **4.3.5**（…4.3.4 Tags 候选收窄/回填 → **4.3.5 code-reviewer 审查修复：🟡-1 空态 li 补 role=none、🟡-2 删 6 处冗余 renderTagFilterBar 直调并私有化、🟡-3 原位分支补 hasAnyTags 撤条门（真隐患）、🟡-4 诚实化重复遍历注释**），版本沿革见下方各段。**本会话焦点：4.3.5 已实现并真机验证（`pnpm check` 过 27 modules / 113.73 kB，七步回归 + 撤条/回条 + pill 点击全过）；审查报告架构建议（A 单遍查询产 facet / B 响应式单一漏斗）待用户定夺**。
+GitHub 2026 改版适配至 **4.4.0**（…4.3.5 Tags 审查修复 → **4.4.0 用户需求：① Type/Language 多选筛选（OR 逻辑，Tags 维持 AND 不变）；② 筛选按钮点击不收起、选中项后置 ✓、按钮显示单项名/多选数、All 清空本维度；③ 筛选结果分页化（修 Type Public/Sources 大集合平铺 464 卡的渲染卡顿）**），版本沿革见下方各段。**本会话焦点：4.4.0 已实现（`pnpm check` 过 27 modules / 114.25 kB），code-reviewer 审查 0 🔴 / 3 🟡 全部已修；待用户重装 dist 真机验证**。
 
-### 本轮改了什么（4.3.4 → 4.3.5，本次提交）
+### 本轮改了什么（4.3.5 → 4.4.0，未提交）
 
 | 文件 | 改动 |
 |---|---|
-| `src/ui/tagFilter.ts` | 🟡-1 空态提示 li 补 `role="none"`（role=menu 合法子元素不含裸 li）；🟡-2 `renderTagFilterBar` 降私有（pill 点击/pill ×/添加标签三处直调删除，全走 applyFilters→refreshTagFilterBar 唯一入口）；🟡-3 `refreshTagFilterBar` 原位分支开头补 **hasAnyTags 门**：全缓存无任何标签 → `existing.remove()`（同步管线 `confirmExternalUnstar` 绕过 pill 预清理直写 saveTags 后，不留「Tags 按钮在、面板空」残留） |
-| `src/filters.ts` | 🟡-2 exitCustomMode 删直调；🟡-4 computeTagCandidates 注释诚实化（独立第二次全遍历 ~2.3ms/464 条，合并 = 审查 A 案） |
-| `src/search.ts` / `src/transform.ts` | 🟡-2 clearSearch / transform 删直调与 import |
-| `package.json` | 4.3.4 → **4.3.5** |
+| `src/state.ts` | `filterState.lang: string` → **`langs: string[]`**、`type: TypeFilter` → **`types: TypeFilter[]`**（多选 OR；`[]` = 全部）；`hasActiveFilter()` 改 tags/langs/types/search 四维派生 |
+| `src/filters.ts` | **核心**：① `queryRepos()` type/lang 改 `.some()` OR 匹配（语言大小写不敏感、`LANG_NONE` 哨兵 = `!data.lang`）；② 候选计算（type/lang/None）= 结果集候选 ∪ **已选恒可见**；③ **控件区重构——容器只建一次 + 原位刷新**（`updateLocalFilterControls` 缺失才建；新增 `refreshTypeMenu`/`refreshLangMenu`/`refreshSortGroup` 原位重绘按钮文案/勾选态/候选列表；`buildMultiSelectItem` = menuitemcheckbox + **label 后置 ✓** + 未选 `visibility:hidden` 占位；Type/Language 点击不再 `hidePopover()`，All/All languages 清空本维度；按钮文案 0=`Type`、1=`Type: X`、N=`Type: N selected`；**Sort 保持单选、选择后收起、行为不变**）；④ `applyFilters(opts)` 统一漏斗——browse/筛选态都走 `renderBrowsePage(1)`，新增 `{ keepPage: true }`（unstar 翻卡用，不拉回第 1 页）；⑤ 信息条多值逗号显示 + 计数 = 查询全集；⑥ `initFiltersFromUrl` 多值解析（逗号分隔、`forks` 宽容、非法丢弃、**大小写归一**：`canonicalLangName()` 映射缓存规范 casing、哨兵合并先于 Set 去重——修 `?language=none,None` 要点三次/`JavaScript,javascript` 双变体/菜单重影） |
+| `src/pagination.ts` | 删 `hasActiveFilter()` 拦截门：筛选态翻页放行（保持筛选只换页）；直调 `renderBrowsePage` 不经 applyFilters、页码不回卷 |
+| `src/starCheck.ts` | unstar 翻卡重筛条件改四维判定；调用改 `applyFilters({ keepPage: true })`（结果集变、条件没变，不拉回第 1 页 = 审查 🟡-3） |
+| `src/transform.ts` | 无逻辑改动（buildLocalPager 注释与事实对齐） |
+| `src/filters.ts` renderBrowsePage | **底部本地分页器摘下插回**（审查 🟡-1：4.0.0 起 `innerHTML=''` 把它删掉、底部 pager 从未真正存在；顶部克隆在标题行幸存）——先 `remove()` 渲染完 `appendChild` 回去；返回查询总数；搜索高亮移入渲染循环（翻页新卡也带高亮） |
+| `src/constants.ts` | +`CHECK_SVG`（octicon check-16，菜单勾选） |
+| `src/styles/base.css` | 删 `.stars-tag-filtered` 死规则（缓存渲染下无引用）；+`.gsm-check-visual`（对齐 + `margin-left: var(--control-medium-gap)`） |
+| `package.json` / `DEVELOPER.md` | 4.3.5 → **4.4.0**；模块职责/状态约定/筛选联动/URL 解析/invariant（新增第 5 条：控件容器只建一次原位刷新）同步 |
 
-**4.3.5 真机验证**：① 七步回归（4.3.4 清单）全过；② 🟡-3 撤条：GM+镜像双清空 → 任一筛选变化 → 条消失；恢复 → 条自动回来（chips 正常）；③ pill 点击：筛选激活 + 面板候选收窄 + pill 选中态。**工装坑（防重蹈）**：页面上 `typeof GM_getValue === 'function'`（TM 把 GM 桥接进页面上下文）——注入实例走 **GM 分支而非 localStorage 回退**，且 `gmGet` 有迁移路径（GM=默认值而镜像有数据时自动迁回）——**清数据必须 GM_setValue 与 localStorage 镜像双清**，只清一边会被迁移自愈，三次误判「修复无效」皆源于此。
+**4.4.0 审查结论**（code-reviewer 子代理，报告 `.diag/review-4.4.0.md`）：0 🔴 / 3 🟡（**全部已修**：🟡-1 底部 pager 摘下插回、🟡-2 URL 大小写归一+哨兵合并先于去重、🟡-3 keepPage）/ 8 🟢（popover 保持打开机制成立、Tags invariant 未破、多选边界自洽、分页漏斗一致、性能与 4.3.5 同量级、监听器卫生、URL 签名、XSS 面全过）。
 
-### 审查结论（code-reviewer 子代理，报告 `.diag/review-4.3.4.md`）
-0 🔴 / 4 🟡（全部已修）/ 3 🟢（refreshTagPillStates 四路径冗余=双保险无害、快速双击丢第二击=旧代码等价、hasAnyTags 不校验 cache 成员=可辩护）。**循环导入安全**（tagFilter 段先于 filters 段、全函数声明零顶层执行，vite 顺序翻转也无 TDZ 风险）。**架构建议（未做，待定）**：A = 单遍查询产出全部 facet 候选（~100 行，根治重复遍历）；B = 响应式状态驱动单一 render 漏斗（~200 行跨 4 文件，根治「忘刷新」类机制缺口，需回归 R3 全清单）。
-
+### 上一轮（4.3.5，已提交）
+Tags 审查修复四件：空态 li 补 role=none、删 6 处 renderTagFilterBar 直调并私有化、原位分支补 hasAnyTags 撤条门、注释诚实化。真机已验证。工装坑（防重蹈）：清数据必须 GM_setValue 与 localStorage 镜像**双清**（gmGet 迁移路径会自愈单边清理）。
 ### 上一轮（4.3.4）
 
 ### 4.3.4 改了什么（已提交 117e90f）
@@ -202,7 +206,7 @@ dev 代码经动态 `import()` 运行在 **unsafeWindow 作用域**，该作用�
 
 ### 下一步
 
-1. **4.3.3 真机验证（清单 =「4.3.3 验证」+「4.3.2 验证」+「4.3.1/4.3.0/4.2.0/4.1.0 验证」叠加）**；通过后：审查报告余项续消化（`.diag/review-4.0.9.md`：冗余 3🟡+2🟢、结构 1🟡+3🟢、性能 3🟡+2🟢、安全 3🟢）按严重度处置，改完 `pnpm check` → bump + 双文档 → 提交；**`todo` 按第 5 条保持不入库**。后续阶段（P3 剩余、GraphQL 分页调研、周期自动同步、D7c 非个人页 `GET /users/{u}/starred`）见「未实现」。
+1. **4.4.0 真机验证（清单见「当前交接」末尾；重装 `dist/github-stars-grid.user.js`）**：多选 OR / 面板不收起 / 按钮与信息条文案 / 筛选态分页 / URL 多值 / Sort+Tags 回归。4.4.0 代码已随本 handoff 提交；真机发现问题 → 另开修复提交并更新验证清单。审查报告余项（`.diag/review-4.0.9.md`：冗余/结构/性能/安全 🟡🟢）与 4.3.5 架构建议（A 单遍 facet / B 响应式漏斗）仍待用户定夺；**`todo` 按第 5 条保持不入库**。后续阶段（P3 剩余、GraphQL 分页调研、周期自动同步、D7c 非个人页 `GET /users/{u}/starred`）见「未实现」。
 2. **快速构建阶段（2026-09-22 起，用户已定）**：不跑 `tests/smoke/`，不写测试 fixture/断言；改完只 `pnpm check`，由用户在真实页面判断是否成功。
 3. 若 GitHub 再改版：先跑 `tests/diag/selectors.js` 定位失配点，再改 `src/dom.ts` 的 helper（**只改 helper，不要在业务模块里写选择器**）。
 4. 数据同步后续阶段（**P4 主体已在 3.1.0 落地**，见 D6）：**P3** local-first 首屏（缓存快照先显 + 到货校正 + DOM 增量 patch）；P4 余项——ETag/GraphQL 分页调研、**周期自动同步**（当前 Sync 手动 + 消失 >12 自动，可加定时 idle 同步）。见「数据同步设计决策」。
