@@ -27,7 +27,7 @@
 
 ### 4.5.0 审查（code-reviewer 子代理，报告 `.diag/review-4.5.0.md`）
 **0 🔴 / 3 🟡 / 9 🟢**（真机只读探针 + Node 逻辑复刻 + 产物对照验证）。三条 🟡 已全部修复（4.5.0 修复段）：
-- 🟡-1 切换开关时已存在的配置面板不迁移落位（关态下 banner 仍留 Lists 槽位）→ 抽 `placeSetupBanner()` + 新增 `repositionSetupBanner()`，菜单切换经 `setHideListsRepositionHandler` 回调重挂；
+- 🟡-1 切换开关时已存在的配置面板不迁移落位（关态下 banner 仍留 Lists 槽位）→ 抽 `placeSetupBanner()` + 新增 `repositionSetupBanner()`，菜单切换经 `setHideListsRepositionHandler` 回调重挂；**后半段残留（用户追问暴露）**：`placeSetupBanner` 仍用 `replaceWith` 吃掉 blankslate / `#profile-lists-container` 节点且全仓无还原路径 → 开态挂面板 → 切关态后 Lists 槽位永久空白（0 list 用户点不到「Create your first list」）→ 改 `slotTarget.before(bar)` 插入并存（原生隐藏本就由 hideListsSection 标记 + 门控 CSS 负责，节点留着即可逆）；
 - 🟡-2 **vite.config.ts 的 grant 实际从未改动**（此前 `replace` 因锚点格式被拒，误判为已改；产物 grant 来自插件 autoGrant 推断）→ 真补 `GM_unregisterMenuCommand` 显式声明 + DEVELOPER.md 过期 grant 描述纠正；
 - 🟡-3 unregister+re-register 是 TM 历史缺陷面 → 改用官方 `options.id` 原地更新（`gmRegisterMenuCommand` 加 options 透传），id 不可得时回退旧路径，并给 `gmUnregisterMenuCommand` 补降级日志。
 🟢 9 项含：CSS 门控前缀后 `@media` 包裹完好、两腿互为冗余且双向收敛（真机实测）、默认开路径与 4.4.0 逐字一致、document-start 读值三路径均正确（无闪隐）、菜单幂等不重复、调用方兼容。ⓘ 非本轮引入：窄视口下 frame-render 分支的 `hideListsSection()` 无 `isDesktop()` 门（4.4.0 既有）、TM 菜单标签不跨标签页同步。
@@ -42,6 +42,7 @@
 ⑦ 4.4.0 全部行为不回归（多选筛选/分页/同步/搜索高亮）。
 ⑧ 面板存在时切换开关：面板**立即迁移**到新落位（关闭态 = 网格列顶 / 开启态 = Lists 槽位），不刷新页面（🟡-1 修复项）；
 ⑨ 菜单连点多次：菜单项恒为一个、标签「开/关」与 Lists 显隐同步（🟡-3 `options.id` 原地更新路径）。
+⑩ **节点可逆性（🟡-1 后半段）**：开态显示初始化面板 → 关态 → 槽位里 blankslate / list 内容应**原样复活**（不是空白）；再切开态面板回来仍只一份；
 
 ### 上一轮（4.4.0，已提交）
 Type/Language 多选筛选（OR）+ 筛选结果分页化；code-reviewer 审查 0🔴 / 3🟡 全部已修（底部 pager 摘下插回、URL 大小写归一+哨兵合并先于去重、keepPage），报告 `.diag/review-4.4.0.md`，详细改动表见 git 历史。

@@ -305,15 +305,19 @@ function showSetupBanner(issueDetail?: string): void {
   placeSetupBanner(bar, host);
 }
 
-/** 配置面板落位（4.5.0 分流）：开关开启（默认）时 Lists 本就被隐藏，占用其槽位（空态 blankslate /
- *  已建 list 容器，都不在则退回列首）；开关关闭时 Lists 原生内容可见，改挂网格列顶（prepend，
- *  不占用 Lists 位置，面板撤除后原生内容原地不动）。切换开关时由 repositionSetupBanner 重挂。 */
+/** 配置面板落位（4.5.0 分流）：开关开启（默认）时 Lists 本就被隐藏，面板插到其槽位节点**之前**
+ *  （空态 blankslate / 已建 list 容器；节点本身保留不销毁，隐藏交给 hideListsSection + 门控 CSS）；
+ *  开关关闭时 Lists 原生内容可见，面板改挂网格列顶（prepend，不占 Lists 位置，撤除后原生内容原样不动）。
+ *  切换开关时由 repositionSetupBanner 重挂。 */
 function placeSetupBanner(bar: HTMLElement, host: HTMLElement): void {
   if (isHideListsEnabled()) {
     const slot = document.querySelector('#user-profile-frame > div');
     const slotTarget =
       (slot && slot.querySelector(':scope > div.blankslate')) || (slot && slot.querySelector(':scope > #profile-lists-container'));
-    if (slotTarget && slotTarget !== bar) slotTarget.replaceWith(bar);
+    // 插入并存（方案 A），绝不 replaceWith：原生节点的隐藏由 hideListsSection 标记 +
+    // html.gsm-hide-lists 下的 CSS 负责，节点留着 → 关态撤门控即可原样复活（可逆）。
+    // 若用 replaceWith 吃掉节点，关态下 Lists 槽位将永久空白（无还原路径）。
+    if (slotTarget && slotTarget !== bar) slotTarget.before(bar);
     else host.prepend(bar);
   } else {
     host.prepend(bar);
