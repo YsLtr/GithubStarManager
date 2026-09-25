@@ -72,7 +72,7 @@ src/
   pagination.ts       本地分页拦截（只拦自造 data-gsm-page，零网络零 Turbo）
   langColors.ts       语言色引擎：linguist languages.yml 运行时拉取 + 行扫描提取 + GM 缓存 + 未命中补拉/回退重检 + 色点原地重涂
   starCheck.ts        PAT 读写/前缀校验/菜单、外部 unstar 宽限管线（applyExternalUnstar）
-  tokenConfig.ts      快捷 Token 配置（Template URL 预填 starring=write + expires_in=90、剪贴板粘贴、保存回调）与 401/403(非限速) 失效上报
+tokenConfig.ts      快捷 Token 配置（预填 **classic PAT** 深链 `scopes=repo`、剪贴板粘贴、保存回调）与 401/403(非限速) 失效上报
   fullSync.ts         API 主模式同步：scanStarred 单遍条件扫描、波次并发、整表 diff、star 时间回填、进页 probe、runFullSync / registerSyncMenu / mountSyncButton / hasApiData
   storage/
     repoCache.ts      仓库缓存 CRUD
@@ -196,7 +196,9 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
 
 ### `github_pat`
 
-字符串，`ghp_...`（classic）或 `github_pat_...`（fine-grained），空串 = 未配置。**不写 localStorage 镜像**（`gm.ts` 的 `SENSITIVE_KEYS`：lsWrite 跳过、gmGet 迁移时清历史镜像，XSS 防护）。仅用于 `Authorization: Bearer` 调 `api.github.com`；提示中只显示前 12 后 4 位掩码。
+字符串，classic token（`ghp_...` classic PAT 或 `gho_...` OAuth app 授权）或 `github_pat_...`（fine-grained），空串 = 未配置。**不写 localStorage 镜像**（`gm.ts` 的 `SENSITIVE_KEYS`：lsWrite 跳过、gmGet 迁移时清历史镜像，XSS 防护）。仅用于 `Authorization: Bearer` 调 `api.github.com`；提示中只显示前 12 后 4 位掩码。
+
+**写路径只支持 classic token**（`docs/adr/0004-write-requires-classic-pat.md`）：fine-grained PAT 对「不属于本人、也不属于本人所属组织」的公开仓库只有 read-only，写操作实测 `403 Resource not accessible by personal access token`；GitHub App token 被官方 OpenAPI 标 `enabledForGitHubApps: false`，根本不可用；OAuth app token（`gho_`）走 scope 体系，与 classic PAT 同构。**scope 取 `repo`**（`public_repo` 不覆盖私有仓库，会让私有仓库的 star 因权限不可见而被整表 diff 误判为外部取关）。读路径（`GET /user/starred`）不受此限，fine-grained token 同步正常——检测到 `github_pat_` 前缀时不拒绝配置，但保存与写失败两处都要提示缺陷，403 提示不得再让用户去检查 Starring 权限。此缺口由 GitHub 控制（roadmap#600 NOT_PLANNED / #601 OPEN），将来补齐可回头放宽。
 
 ### `stars_full_sync_meta`
 

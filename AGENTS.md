@@ -10,66 +10,19 @@
 
 版本 **4.8.1**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
 
-> 本次交接（2026-09-25 17:27 +0800）：**无功能改动待提交**。唯一未提交内容是本节新增的「文件选择器手势门槛」定案 + `DEVELOPER.md` §5 的实测记录 + `todo` 新增一行「同步操作与同步按钮完全联动」。4.8.1 已提交（`8304994`），待用户真机走 4.8.0 / 4.7.0 清单。
+> 交接时间：**2026-09-25 19:05 +0800**。
 
-4.8.0 = **时间字段语义修正 + 删冗余**，**尚未真机验证**：
+**仓库里有未实现的定案**：4.9.0 的设计已全部定案并写入 ADR，**代码尚未动**。动手前读这几份 ADR，不要重新发明：
 
-- 「Recently active」排序键 `updatedAt` 从 REST `updated_at`（元数据变更）改取 **`pushed_at`**（最后 push）——依据 GitHub 官方 OpenAPI `sort-starred` 原文（渲染页丢失该句），考证见 `docs/research-updated-vs-pushed-at.md`；
-- 删 `RepoData.updated`（缓存相对时间文本）：卡片右下角时间改为渲染时 `formatRelative(updatedAt)` 现算；
-- **删 `src/extract.ts` 整个模块**（详情页元数据提取）：它写的字段 API 全覆盖、时间字段是双语义脏写源（zai-org/ZCode 案例源头）；详情页分支只保留 `watchRepoStarState` 宽限期监听；
-- 存量迁移：`stars_full_sync_meta.dataRev`（`DATA_REV=2`）阀门强制**一次**无条件整表回补；`loadRepoCache()` 读取即清洗 `updated`/`langColor` 死字段；
-- DOM 兼容层同步删除：`dom.ts` 的 `readEmbeddedJson` / `getSidebarAbout` / `SidebarAboutPayload` / `getToggler` / `isStarredInToggler`（唯一消费者是 extract.ts）。
+- `docs/adr/0003-sync-report-and-restore.md` —— **变化简报 + 恢复**（通知栈样式与生命周期、简报口径、恢复必须打远端 PUT、失败分支只 `alert`、全局串行队列与 ≥1s 间隔、「撤销」vs「恢复」的用词分野、详情页不检测 star/unstar）。对应 `todo` 的「全量同步的变化提示」「快捷恢复 unstar」。
+- `docs/adr/0004-write-requires-classic-pat.md` —— **只支持 classic token**。fine-grained PAT 先天写不了他人公开仓库（`403 Resource not accessible by personal access token`），GitHub App token 更被官方 OpenAPI 标 `enabledForGitHubApps: false`；快速创建入口改为 **classic PAT 深链**，检测到 `github_pat_` 前缀时不拒绝但必须提示缺陷。
+- `docs/adr/0005-no-auto-sync-after-import.md` —— **导入后不自动同步**（推翻 `0001` 原段落，`0001` 已加指向说明）。
 
-4.7.0 = 导入导出（标签 / 备注 / 相关仓库元数据），**尚未真机验证**：
-- 纯逻辑 `src/storage/exportImport.ts`（不碰 DOM）+ 交互 `src/ui/exportImportMenu.ts`（TM 菜单「📤 导出数据」「📥 导入数据」）；
-- 导出走 `GM_download`（**4.7.0 新增 `@grant`**，TM 会提示权限变更），**刻意不做原生 `<a download>` 兜底**（那等于绕过 TM 的扩展名安全设置）；导入是**大窗导入**（4.8.1 修复）：TM 菜单点击弹出全屏遮罩大窗（中央拖放区 + 「选择文件」按钮，点遮罩空白/Esc/×关闭，无超时），用户在窗内真实点击选文件或把 JSON 拖进窗内（drop 不需要手势）才开始导入 —— 扩展 UI 的点击**无法**把 transient user activation 转发给页面（TM 维护者原话，tampermonkey#1827），直接在菜单回调里 `input.click()` 会静默失败；
-- 包格式与合并语义见 `docs/adr/0001-export-import-format.md`，术语见 `CONTEXT.md`；
-- **文件选择器的手势门槛已定案**（用户两轮追问后实测确证，完整实验数据见 `DEVELOPER.md` §5「为什么控制台能弹、脚本不能」）：DevTools 控制台能弹是因为 DevTools 走 CDP `Runtime.evaluate` **自带 `userGesture:true`**；页面脚本/userscript 的求值恒为 `userGesture:false`，`showPicker()` 报 `NotAllowedError`。判据是事件的 **`isTrusted`**——脚本造的任何事件（`btn.click()`、`dispatchEvent`、合成键盘）都是 `false`，真人点击/按键才是 `true`。**脚本不可能自己触发选择器**（自指悖论），唯一免手势路径是**拖拽 drop**（`DataTransfer` 直接给 `File`）。这也是 4.8.1 大窗设计的根据，**不要**再尝试「脚本代点选择文件」的改动。
-- 纯逻辑已有 51 项 node 断言：`pnpm test:exportimport`（**全绿**，覆盖导出清洗 / 校验拒绝路径 / 合并 / 幂等 / 用户隔离）。
+已先行落盘的两处：`CONTEXT.md` 新增「外部取关 / 恢复 / 变化简报 / classic token / fine-grained token」五个术语；`docs/adr/0004` 从 4.8.0 的版本改写为「只支持 classic token」。
 
-4.6.0 = 改名与存储身份切换（脚本名 → `GithubStarManager`、产物 `dist/github-star-manager.user.js`、镜像前缀 → `github-star-manager::`；`@namespace` 与 CSS 前缀 `gsm-` 不动）。**改名的代价**：TM 以 `@name` + `@namespace` 判定脚本身份，改名后是另一个脚本、GM 存储为空；镜像前缀同时更换 → 旧数据不自动迁移，按用户决定放弃（装回旧脚本可读旧 GM 存储）。见 `docs/adr/0002-rename-and-storage-identity.md`。
+4.9.0 的其余待实现点（ADR 未覆盖的实现选择）：同步有增删差异或可见元数据更新时 `applyFilters({ keepPage: true })` 重绘（自动来源需先判断「最近是否有用户交互」，有交互则改成可点击的「列表有 N 项变化」）；卡片星按钮纳入全局变异请求队列；队列中再次点击可撤销排队；TM 菜单「恢复 unstar」弹出可勾选的确认窗口（含每条剩余时长，24h 超期条目消失）。
 
-4.5.0「Hide Lists 开关」**已由用户真机验证通过**，其清单保留在下方仅作历史参考。
-
-### 4.8.0 待真机验证清单（重装 `dist/github-star-manager.user.js` 后逐条走）
-
-1. **首扫强制整表**：控制台出现 `缓存代次旧（updatedAt 语义=updated_at，升级回补）→ 无条件整表拉取一次`，同步完成后**不再**出现该行（dataRev 已写入）；
-2. **Recently active 排序变化**：按「Recently active」排序，`justjavac/ali-words` 这类代码停更但近期改过元数据的仓库应**沉底**（旧版会顶到最前，因为它 4 年没提交但 `updated_at` 是新的）；
-3. **卡片时间**：每张卡片右下角都有 `Updated X ago`（旧版有 2 条没有）；且 F5 后时间文本**随当前时间变**（现算而非冻结文本——如 3 小时前看是 `5 hours ago`，3 小时后刷新应变 `8 hours ago`）；
-4. **导出包**：`📤 导出数据` 打开文件确认 `repoCache` 条目里**没有 `updated` 和 `langColor` 字段**、`updatedAt` 的值与 GitHub 仓库页「最新提交时间」一致（而不是被标星刷新的元数据时间）；
-5. **详情页行为**：进入任意已 star 仓库详情页 → 控制台无报错；GM 存储中该仓库缓存**不变**（详情页不再写缓存）；点 star 按钮取消再恢复 → 宽限期流程正常（标签/备注恢复）；
-6. **4.7.0 导入导出不回归**：`pnpm test:exportimport` 51/51（本地已验）。
-7. **导入大窗**（4.8.1 修复「点击导入数据无法弹出文件选择器」）：TM 菜单「📥 导入数据」→ 全屏遮罩大窗弹出；拖 JSON 进窗（拖入时高亮、松手即开始导入）；点「选择文件」→ **文件选择器弹出**（4.7.0 静默失败，4.8.1 必弹）；点遮罩空白 / Esc / × 都能关窗且**无 15s 超时**。
-
-### 4.7.0 待真机验证清单（重装 `dist/github-star-manager.user.js` 后逐条走）
-
-0. **先确认 TM 接受新增 `@grant GM_download`**（装新版时 TM 会提示权限变更）；控制台有 `[github-star-manager] script loaded (document-start)`。
-1. **导出**：TM 菜单「📤 导出数据」→ 文件下载成功；文件名形如 `github-star-manager-<uid>-YYYY-MM-DD-HHmm.json`（本地时间）；打开确认**无 `github_pat`、无 `etags`**，`repoCache` 只含有标签或有备注的仓库。
-2. **导出清洗**：包内备注无 trim 后为空的项；非空备注文本未被 trim（前导空格保留）。
-3. **同账号往返**：加几个标签/改几条备注 → 导出 → 手动删掉这些标签/备注 → 导入 → `confirm` 摘要数量正确 → 数据恢复 + 结果提示 + **自动同步**。
-4. **校验失败**：随便找个 JSON / 把 `schemaVersion` 改成 2 → `alert` 报原因，**不弹 confirm**、数据零变化。
-5. **身份不符**：手改包内 `user.id` → 拒绝并提示双方 ID。
-6. **空备注不覆盖**：文件里某仓库备注为空白、本地该仓库备注有内容 → 导入后本地备注仍在。
-7. **非 Stars 页导入**（仓库详情页）：成功、**无导航**、无重渲染报错。
-8. **无 token 导入**：提示跳过自动同步，**不弹 Token 输入框**。
-9. **confirm 点取消** → 零写入（刷新后数据未变）。
-10. **刷新/新标签页**后导入的数据仍在（GM 存储）。
-11. **TM 白名单（重要前提）**：TM 的 `GM_download` 要求扩展名在白名单内，`.json` 是否在**默认**白名单未经确证 —— 若导出时「点了菜单却没文件」，检查 TM 设置（需 Advanced 模式）「下载」区把 `json` 加进去并确认下载功能已开启。**这类失败在脚本内不可观测**（TM 只走 `onerror`，`GM_download` 不抛错也不返回），所以**不会**弹「下载未能启动」；若你看到的是文件静默未出现，那就是它。这是 TM 侧限制，不是脚本缺陷。
-
-### 4.5.0 已验证清单（历史参考，重装 `dist/github-star-manager.user.js` 后逐条走）
-
-1. 默认（未动菜单）：行为与 4.4.0 完全一致 —— Lists 隐藏、banner 插在 Lists 槽位（**原生节点不销毁**）、网格正常。
-2. TM 菜单出现「🙈 隐藏 Lists 区块（开）」；点击后立即：Lists 原生内容显示（标题行 + 空态「Create your first list」或 list 内容）、菜单标签变「（关）」、控制台一行 Hide Lists 切换日志。
-3. 关闭状态下 F5 / `?tab=stars` 直载 / Turbo 进页：Lists 保持显示且**无闪隐**（若先显示再隐藏一瞬 = 门控前缀漏改，回报）。
-4. 关闭状态触发初始化面板（TM 菜单清空 token，或无缓存进页）：banner 挂在**网格列顶**、Lists 内容原地保留；保存并同步成功后 banner 消失、Lists 仍在原位。
-5. 关闭状态触发 Token 失效面板（401/403）：落位同 ④。
-6. 再点菜单切回「开」：Lists 立即重新隐藏、标签变「（开）」，刷新后仍隐藏。
-7. 4.4.0 行为不回归（Type/Language 多选筛选、筛选态分页、同步、搜索高亮）。
-8. 面板存在时切换开关：面板**立即迁移**到新落位（关 = 网格列顶 / 开 = Lists 槽位），不刷新页面。
-9. 菜单连点多次：菜单项恒为一个，标签「开/关」与 Lists 显隐同步（走 `options.id` 原地更新路径）。
-10. **节点可逆性**：开态显示初始化面板 → 关态 → 槽位里 blankslate / list 内容应**原样复活**（不是空白）；再切开态、面板回来仍只一份。
-
-> 若某条失败：先确认装的是新 dist（控制台有 `[github-star-manager] script loaded (document-start)`），再看 `DEVELOPER.md` §6「Hide Lists 开关」的两条腿（CSS 门控 + JS 标记）哪条没生效。
+**尚未提交**：`AGENTS.md` / `CONTEXT.md` / 三份新 ADR / `todo` 的本次改动（代码未动），见 git status。
 
 ---
 
@@ -77,13 +30,13 @@
 
 历史决策 D1（到货快照 diff）/ D2（双 404 逐条核对）/ D4（位移挂起）**已作废**——随 4.0.0 API 主模式与 4.0.10 死码清理整体删除，星状态真相改由整表 diff 权威判定。以下为现行决策。
 
-**D3 · Token 双格式（两种都要支持）**
+**D3 · Token（写路径只支持 classic token）**
 
-- classic `ghp_`：有效 token 即可读全部 `/user/starred*`；**涉及私有仓库须勾 `repo` scope** —— 无 scope 时「无权限的私有仓库 404」与「真 unstar 404」不可区分（已定案不做同源页面 fallback，抓页面太重），属已知局限。
-- fine-grained `github_pat_`：账号权限 **Account permissions → Starring → Write**（Read 够读列表，但卡片星星按钮要 PUT/DELETE，故用 Write），仓库范围 **All repositories**。
-- 配置入口：TM 菜单「⭐ 设置 GitHub Token」+ 横幅内联粘贴行 + 「快速获取 Token」预填深链（`expires_in=90`）。留空 = 清除 token 并立即重开配置面板。
-- 权限表来源：<https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens>（“User permissions for Starring” 段列出全部 5 个 `/user/starred*` 端点）
-
+- 写路径（卡片星按钮、恢复）**只按 classic PAT 设计**：fine-grained PAT 无法对「不属于本人、也不属于本人所属组织」的公开仓库加星/取消星（`403 Resource not accessible by personal access token`，官方原文「Only personal access tokens (classic) have write access for public repositories that are not owned by you…」），GitHub App token（`ghu_`/`ghs_`）被官方 OpenAPI 标 `enabledForGitHubApps: false`。OAuth app user token（`gho_`，或 `gh` CLI 的 token）走 **scope** 体系，与 classic PAT 同构，可用。
+- **scope 取 `repo`**（非 `public_repo`）：`public_repo` 不覆盖私有仓库，会让私有仓库的 star 不出现在 `GET /user/starred` 里而被整表 diff 误判为外部取关。用 `repo` 消除该误判，代价是权限更大——刻意选择。
+- **读路径不受限**：`GET /user/starred` 无 Additional permissions，fine-grained PAT 同步正常；脚本检测到 `github_pat_` 前缀时不拒绝配置，但在保存与写失败两处提示其缺陷，403 提示**不得**再让用户「检查 Starring 权限」。
+- 配置入口：TM 菜单「⭐ 设置 GitHub Token」+ 横幅内联粘贴行 + 快速创建预填深链（**classic PAT**，<https://github.com/settings/tokens/new?scopes=repo&description=GithubStarManager>）。留空 = 清除 token 并立即重开配置面板。
+- 权限事实来源：<https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens>、<https://docs.github.com/en/rest/activity/starring>、`docs/adr/0004-write-requires-classic-pat.md`（含 OAuth device flow 为何被否决）。
 **D5 · 搜索口径**
 
 - 自由文本只搜 **作者 / 仓库名 / 描述 / 标签 / 备注**；**语言不参与全文匹配**（否则 `ASC` 会子串命中 `JavaScript`），语言只走下拉筛选。
@@ -108,7 +61,7 @@
 - 导出包**只含本地权威数据 + 与之相关的派生数据**（有标签或有备注的仓库元数据）；**不含** `github_pat`、同步元数据（ETag 基线）、宽限期备份——理由见 `docs/adr/0001-export-import-format.md`。
 - 合并语义：标签并集（本地在前）、备注以文件为准但**空备注不覆盖**本地非空备注、仓库元数据只补空缺。判空统一为 **trim 后为空**（`saveNote` 同步收紧）。
 - 校验 `kind` + `schemaVersion` + `user.id` **三者齐备才放行**；`kind` 是协议身份、**永不随脚本改名变动**，文件名 slug 才随改名变。
-- 交互：破坏性确认用 `window.confirm`、失败用 `window.alert`（**失败不弹 confirm**）；导入不导航，仅在「Stars 页且网格已存在」时重绘；导入后走 `runFullSync('button')` 同路径，**无 token 则提示跳过、不弹 Token 输入框**。
+- 交互：破坏性确认用 `window.confirm`、失败用 `window.alert`（**失败不弹 confirm**）；导入不导航，仅在「Stars 页且网格已存在」时重绘；**导入后不自动同步**（见 `docs/adr/0005-no-auto-sync-after-import.md`：数据落盘即完成，远端不存在的条目会在下次同步走外部取关管线）。
 - 下载：**只用 `GM_download`（4.7.0 新增 `@grant`），不做原生兜底**——Blob + `<a download>` 能绕过 TM 的扩展名白名单，等于架空用户的安全设置，已明确否决。TM 侧「下载」未开或扩展名不在白名单时**不抛错、不返回、只走 `onerror`**（TM 文档：`GM_download` 返回 `{ abort }`，只有 `GM.download` 才是 promise），故这类失败在脚本内**不可观测**：`gmDownloadFile` 返回 true 也不代表文件已落地，只能由 alert 引导用户去 TM 设置（Advanced 模式）加 `json`。
 - 分层铁律：`storage/exportImport.ts` 是**纯逻辑**（不碰 DOM、不弹对话框、不触发同步），交互全在 `ui/exportImportMenu.ts`。
 
@@ -159,9 +112,10 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
 
 ## 下一步
 
-1. 用户真机验证 **4.8.0 清单**（时间语义）+ **4.7.0 清单**（导入导出）；发现问题 → 另开修复提交并更新本文件清单。
+1. **实现 4.9.0**（变化简报 + 恢复 + 只支持 classic token + 导入不自动同步）：设计见上文三份 ADR，代码未动。
 2. 后续阶段（详见 `todo` 与 `DEVELOPER.md` §13）：GraphQL 分页调研、周期自动同步、非本人 star 页 `GET /users/{u}/starred` 接入、分页按钮可跳页。
 3. 未消化的架构建议：单遍 facet 计算、响应式漏斗（见 `starmgr-arch-review-report.md`）。
+4. fine-grained PAT 写他人公开仓库的能力缺口由 GitHub 控制（roadmap#600 已 NOT_PLANNED、#601 仍 OPEN）——将来若补齐，可回头放宽 `docs/adr/0004-write-requires-classic-pat.md`。
 
 ## 快速构建约定
 
