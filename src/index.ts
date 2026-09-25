@@ -337,7 +337,7 @@ function repositionSetupBanner(): void {
 /** 面板主文案：默认 = 首次配置引导；issueDetail = Token 失效/权限不足等具体问题（4.0.2 面板化） */
 function bannerMessage(issueDetail?: string): string {
   if (issueDetail) return `🔑 ${issueDetail} —— 请用下方按钮重新配置 Token，保存后会自动全量同步恢复。`;
-  return '⭐ Stars Grid 4.0 需要一次性全量同步（GitHub API）：可一键预填权限创建 Token，或手动填写；保存后会自动开始全量同步。';
+  return '⭐ GithubStarManager 需要一次性全量同步（GitHub API）：可一键预填权限创建 Token，或手动填写；保存后会自动开始全量同步。';
 }
 
 function registerNavListeners(): void {

@@ -1,10 +1,12 @@
-# GitHub Stars Grid View — 开发者文档
+# GithubStarManager — 开发者文档
+
+> 领域术语见 `CONTEXT.md`；架构决策（ADR）见 `docs/adr/`。
 
 > 本文档描述**当前代码状态**。历史变更过程见 `git log`（提交信息写得较详细）；交接状态与待验证清单见 `AGENTS.md`。
 
 ## 1. 项目概述
 
-**GitHub Stars Grid View** 是一个 Tampermonkey 用户脚本，将 GitHub 个人主页的 Stars 标签页从默认列表视图改为卡片网格视图（并缩小左侧资料栏以最大化展示空间）。4.0.0 起为 **API 主模式**：配置 PAT 后，列表数据全部来自 GitHub API 全量缓存，渲染 / 分页 / 筛选 / 搜索 / 星星增删均在本地完成。
+**GithubStarManager**（4.6.0 前的旧名 `GitHub Stars Grid View`）是一个 Tampermonkey 用户脚本，将 GitHub 个人主页的 Stars 标签页从默认列表视图改为卡片网格视图（并缩小左侧资料栏以最大化展示空间）。4.0.0 起为 **API 主模式**：配置 PAT 后，列表数据全部来自 GitHub API 全量缓存，渲染 / 分页 / 筛选 / 搜索 / 星星增删均在本地完成。
 
 - **运行环境**：Tampermonkey / Violentmonkey 等用户脚本管理器
 - **匹配页面**：`https://github.com/*`（单条 @match 覆盖全站；运行时按 `?tab=stars` 与仓库详情页特征分流）
@@ -35,7 +37,7 @@ pnpm check          # typecheck + build
 http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js
 ```
 
-Tampermonkey 里会多出名为 `server:GitHub Stars Grid View` 的脚本（与正式版并列，靠前缀区分）。它只是 loader，实际代码通过 ESM 从 dev server 拉取，因此改代码即时生效。
+Tampermonkey 里会多出名为 `server:GithubStarManager` 的脚本（与正式版并列，靠前缀区分）。它只是 loader，实际代码通过 ESM 从 dev server 拉取，因此改代码即时生效。
 
 > dev 模式为了兼容各种运行时会把 `@grant` 放宽成 `GM.*` 全家桶，这是插件行为；正式 `build` 产物的 `@grant` = `vite.config.ts` 显式声明列表 ∪ 插件 autoGrant 对源码 GM_* 标识符的 AST 推断结果（跨源并集）。显式列表见 `vite.config.ts` 的 `grant`，**不要依赖推断**。
 
@@ -357,6 +359,9 @@ filterState.totalPages    // ceil(count / NATIVE_PAGE_SIZE)
 - **三栏响应式布局**：768–1199px 隐藏左右侧边栏只留主内容区；≥1200px 为左侧资料栏（180px）+ 中间卡片网格 + 右侧 Starred Topics（220px）。
 - **GM API 用法**：一律走 `src/gm.ts` 的 `gmGet / gmSet / gmRemove / gmAddStyle / gmRegisterMenuCommand / gmUnregisterMenuCommand / gmOpenInTab / gmFetchText`（**调用时**判定可用性，document-start 时晚到/缺席都安全，附 localStorage 兜底与迁移）；**禁止** `import { GM_* } from '$'`（bundle 顶部一次性捕获会在 document-start 固化成 undefined）。`@grant` 在 `vite.config.ts` **显式声明**，不要依赖插件自动推断。
 - **敏感键不入镜像**：新增敏感存储键必须同步加进 `gm.ts` 的 `SENSITIVE_KEYS`。
+- **改名类改动必须做模糊扫描**（4.6.0 教训）：机械替换只覆盖它认识的精确串（如 `github-stars-grid`）。用户可见文案与 URL 深链里常是**空格分词**的形态（`Stars Grid`、`?name=GithubStarsGrid`），精确串 grep 扫不到。改名后必须补一轮模糊扫描（`Stars Grid` / `StarsGrid` / `stars-grid` / 空格变体）并 grep 产物本身，而不只是 grep 源码。
+- **名字单源**：脚本名/产物名只写在 `vite.config.ts` 的 `SCRIPT_SLUG` / `SCRIPT_NAME`；需要给源码用时经 `define` 注入 `__SCRIPT_SLUG__`（`src/vite-env.d.ts` 声明）。
+- **改产物名/文案必须重打 dist 后再验证**：`dist/*.user.js` 是安装物；改源码不重打重装，真机看到的仍是旧文案（4.6.0 曾因此误判「已改名」）。
 
 ## 11. 测试
 

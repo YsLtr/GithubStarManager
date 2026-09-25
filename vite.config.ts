@@ -2,12 +2,15 @@ import { defineConfig } from 'vite';
 import monkey from 'vite-plugin-monkey';
 import pkg from './package.json' with { type: 'json' };
 
+/** 脚本名/产物名/包名的单一来源（4.6.0）：构建期注入 __SCRIPT_SLUG__，源码不重复写名字 */
+const SCRIPT_SLUG = 'github-star-manager';
+const SCRIPT_NAME = 'GithubStarManager';
 export default defineConfig({
   plugins: [
     monkey({
       entry: 'src/index.ts',
       userscript: {
-        name: 'GithubStarManager',
+        name: SCRIPT_NAME,
         namespace: 'https://github.com/YsLtr',
         version: pkg.version,
         description:
@@ -23,7 +26,7 @@ export default defineConfig({
         'run-at': 'document-start',
       },
       build: {
-        fileName: 'github-star-manager.user.js',
+        fileName: `${SCRIPT_SLUG}.user.js`,
       },
       server: {
         // dev 下代码跑在页面 realm，沙箱 GM_* 不可见（issue #35）；把已 grant 的 GM_* 复制到
@@ -33,6 +36,10 @@ export default defineConfig({
       },
     }),
   ],
+  // 构建期常量注入：源码里不重复写脚本名/产物名（改名只动上面的 SCRIPT_SLUG / SCRIPT_NAME）
+  define: {
+    __SCRIPT_SLUG__: JSON.stringify(SCRIPT_SLUG),
+  },
   // 固定 dev server 端口：dev 模式装进 Tampermonkey 的加载器把入口 URL 写死了，
   // 端口漂移（5173 被占 → 5199/5201）会让已装的 dev 脚本静默失效。
   server: {

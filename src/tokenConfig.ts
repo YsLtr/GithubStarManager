@@ -29,8 +29,8 @@ export function detectTokenKind(tok: string): TokenKind | null {
 /** 官方 Template URL：starring=write 覆盖读列表+加星/去星；none = 不过期（闲置 1 年会被 GitHub 自动回收） */
 export const TOKEN_TEMPLATE_URL =
   'https://github.com/settings/personal-access-tokens/new' +
-  '?name=GithubStarsGrid' +
-  '&description=Stars%20Grid%20userscript%20-%20only%20Account%20permission%3A%20Starring%20write' +
+  '?name=GithubStarManager' +
+  '&description=GithubStarManager%20userscript%20-%20only%20Account%20permission%3A%20Starring%20write' +
   '&expires_in=90' +
   '&starring=write';
 
