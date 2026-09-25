@@ -8,7 +8,7 @@ export const WIDE_BREAKPOINT = 1200;
 export const GRACE_PERIOD = 24 * 60 * 60 * 1000;
 
 /** 缓存数据代次：字段语义变更时 +1，旧代次缓存强制一次无条件整表回补（scanStarred 的升级回补阀门）。
- * 1 = 4.2.0 前无 Type 四标志；2 = 4.9.0 updatedAt 从 updated_at 改为 pushed_at + 删 updated/langColor 死字段。 */
+ * 1 = 4.2.0 前无 Type 四标志；2 = 4.8.0 updatedAt 从 updated_at 改为 pushed_at + 删 updated/langColor 死字段。 */
 export const DATA_REV = 2;
 
 /** 每页卡片数（与 GitHub 原生分页一致；4.0.0 本地切页用） */

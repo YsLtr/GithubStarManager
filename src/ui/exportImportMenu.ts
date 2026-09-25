@@ -128,23 +128,162 @@ function importFromFile(file: File): void {
   reader.readAsText(file);
 }
 
-/** 选择文件：注入隐藏 <input type="file">（用户脚本无法直接唤起文件对话框） */
+/** 唤起导入大窗：全屏遮罩 + 中央拖放区。
+ * 两条实测可行路径合一（Chrome 安全模型只认「页面上下文内的真实用户输入」）：
+ * - 拖拽：drop 事件不需要 user activation，DataTransfer 直接给 File；
+ * - 点击中央大按钮：页面内真实点击 = transient user activation，能唤起 <input type="file">。
+ * **不能**在 TM 菜单回调里直接 input.click()——TM 维护者原话「extensions can't forward the
+ * user gesture from the popup menu to the scripts callback」（tampermonkey#1827，NOT_PLANNED），
+ * Chrome 静默拒绝（控制台都无报错，4.7.0 的实现即因此从未工作过）。
+ * 模拟点击（isTrusted=false）、label 转发、prompt 蹭激活、showOpenFilePicker 均已实测排除。
+ * 关闭：点遮罩空白 / Esc / 右上角 ×；**无超时**（导入是主动操作，用户可能正忙着找文件）。
+ * 样式全内联：不依赖 Stars 视图才注入的样式表，任意 github.com 页面可用。 */
+let importDialogKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+
 function pickFile(): void {
+  closeImportDialog();
+
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = 'application/json,.json';
   input.style.display = 'none';
-  const cleanup = (): void => input.remove();
   input.addEventListener('change', () => {
     const file = input.files && input.files[0];
-    cleanup();
-    if (!file) return;
-    importFromFile(file);
+    closeImportDialog();
+    if (file) importFromFile(file);
   });
-  // 用户直接关掉文件对话框时不会触发 change：用窗口重新获得焦点兜底回收节点
-  window.addEventListener('focus', () => window.setTimeout(cleanup, 1000), { once: true });
-  document.body.appendChild(input);
-  input.click();
+
+  /* ---- 遮罩层 ---- */
+  const overlay = document.createElement('div');
+  overlay.className = 'gsm-import-overlay';
+  Object.assign(overlay.style, {
+    position: 'fixed',
+    inset: '0',
+    zIndex: '9999',
+    background: 'rgba(0,0,0,0.55)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as Partial<CSSStyleDeclaration>);
+
+  /* ---- 中央拖放区 ---- */
+  const box = document.createElement('div');
+  box.className = 'gsm-import-box';
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-label', '导入 GithubStarManager 数据');
+  Object.assign(box.style, {
+    position: 'relative',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '14px',
+    width: 'min(480px, 86vw)',
+    padding: '40px 28px',
+    background: 'var(--color-canvas-default, #fff)',
+    border: '2px dashed var(--color-border-default, #d0d7de)',
+    borderRadius: '12px',
+    boxShadow: '0 8px 40px rgba(0,0,0,0.35)',
+    fontFamily: 'inherit',
+    textAlign: 'center',
+    transition: 'border-color 0.15s, background-color 0.15s',
+  } as Partial<CSSStyleDeclaration>);
+
+  const title = document.createElement('div');
+  title.textContent = '📥 导入数据';
+  Object.assign(title.style, {
+    fontSize: '20px',
+    fontWeight: '600',
+    color: 'var(--color-fg-default, #1f2328)',
+  } as Partial<CSSStyleDeclaration>);
+
+  const hint = document.createElement('div');
+  hint.className = 'gsm-import-hint';
+  hint.textContent = '把导出的 JSON 文件拖到这里，或点击下方按钮选择文件';
+  Object.assign(hint.style, {
+    fontSize: '14px',
+    color: 'var(--color-fg-muted, #656d76)',
+  } as Partial<CSSStyleDeclaration>);
+
+  const pick = document.createElement('button');
+  pick.type = 'button';
+  pick.textContent = '选择文件';
+  Object.assign(pick.style, {
+    cursor: 'pointer',
+    fontSize: '15px',
+    padding: '8px 22px',
+    borderRadius: '6px',
+    border: '1px solid var(--color-border-default, #d0d7de)',
+    background: 'var(--color-btn-bg, #f6f8fa)',
+    color: 'var(--color-btn-text, #1f2328)',
+  } as Partial<CSSStyleDeclaration>);
+  // 页面内真实点击 = transient user activation，这里 click() 才能唤起文件选择器
+  pick.addEventListener('click', () => input.click());
+
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.textContent = '×';
+  close.setAttribute('aria-label', '关闭');
+  Object.assign(close.style, {
+    position: 'absolute',
+    top: '10px',
+    right: '12px',
+    border: 'none',
+    background: 'transparent',
+    cursor: 'pointer',
+    fontSize: '20px',
+    lineHeight: '1',
+    color: 'var(--color-fg-muted, #656d76)',
+  } as Partial<CSSStyleDeclaration>);
+  close.addEventListener('click', () => closeImportDialog());
+
+  box.append(title, hint, pick, close, input);
+  overlay.appendChild(box);
+
+  /* ---- 拖拽：drop 不需要 user activation，DataTransfer 直接给 File ---- */
+  let dragDepth = 0;
+  const highlight = (on: boolean): void => {
+    box.style.borderColor = on ? 'var(--color-accent-emphasis, #0969da)' : 'var(--color-border-default, #d0d7de)';
+    box.style.backgroundColor = on ? 'var(--color-accent-subtle, #ddf4ff)' : 'var(--color-canvas-default, #fff)';
+    hint.textContent = on ? '松手开始导入' : '把导出的 JSON 文件拖到这里，或点击下方按钮选择文件';
+  };
+  overlay.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    dragDepth += 1;
+    highlight(true);
+  });
+  overlay.addEventListener('dragover', (e) => {
+    e.preventDefault(); // 必须 preventDefault，否则浏览器直接导航打开该文件
+  });
+  overlay.addEventListener('dragleave', () => {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) highlight(false);
+  });
+  overlay.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const file = e.dataTransfer?.files?.[0];
+    closeImportDialog();
+    if (file) importFromFile(file);
+  });
+
+  /* ---- 关闭：点遮罩空白（点击目标不是 box 本体/其子元素时）---- */
+  overlay.addEventListener('mousedown', (e) => {
+    if (e.target === overlay) closeImportDialog();
+  });
+
+  document.body.appendChild(overlay);
+
+  importDialogKeyHandler = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape') closeImportDialog();
+  };
+  window.addEventListener('keydown', importDialogKeyHandler);
+}
+
+function closeImportDialog(): void {
+  if (importDialogKeyHandler) {
+    window.removeEventListener('keydown', importDialogKeyHandler);
+    importDialogKeyHandler = null;
+  }
+  document.querySelector('.gsm-import-overlay')?.remove();
 }
 
 /* ---------------- 菜单注册 ---------------- */
@@ -164,7 +303,8 @@ export function runImportSync(sync: () => Promise<unknown>): void {
   });
 }
 
-/** TM 菜单注册（任意匹配页可用；菜单回调无用户激活，故不依赖 window.open 之类的手势要求） */
+/** TM 菜单注册。导入入口是大窗（全屏遮罩 + 拖放区）：菜单点击只开窗（扩展 UI 无手势可转发，
+ * tampermonkey#1827），窗内真实点击选文件或拖拽落 File 才开始导入。 */
 export function registerExportImportMenu(): void {
   gmRegisterMenuCommand('📤 导出数据（标签/备注）', () => {
     doExport();

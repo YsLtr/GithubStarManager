@@ -33,7 +33,7 @@ export type QuerySkip = 'lang' | 'type';
 /**
  * 按 filterState.sort/direction 就地排序。
  * 规则（§4.3）：缺失值恒沉底、不随方向翻转；平局按仓库名决胜；全确定性。
- * `created` = starredAt（Recently starred）、`updated` = updatedAt=pushed_at（Recently active，4.9.0 修正：与 GitHub 原生同义）、
+ * `created` = starredAt（Recently starred）、`updated` = updatedAt=pushed_at（Recently active，4.8.0 修正：与 GitHub 原生同义）、
  * `stars`/`forks` = 计数值（Most stars / Most Forks，后者为本地扩展）。
  */
 function sortResults(results: FilteredRepo[]): void {

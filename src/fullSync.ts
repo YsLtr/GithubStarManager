@@ -85,7 +85,7 @@ function parseItem(raw: unknown): RemoteStar | null {
   if (typeof repo.language === 'string' && repo.language) meta.lang = repo.language;
   if (typeof repo.stargazers_count === 'number') meta.stars = repo.stargazers_count;
   if (typeof repo.forks_count === 'number') meta.forks = repo.forks_count;
-  // 4.9.0：取 pushed_at（最后 push 到任一分支）而非 updated_at（仓库对象元数据变更）。
+  // 4.8.0：取 pushed_at（最后 push 到任一分支）而非 updated_at（仓库对象元数据变更）。
   // 「Recently active」必须按 pushed_at 排：GitHub 官方 OpenAPI sort-starred 原文
   // 「`updated` means when the repository was last pushed to」；用 updated_at 会把
   // 「改过描述/被标星但代码停更」的仓库顶到最前。pushed_at 可为 null（空仓库）→ 留空沉底。
@@ -95,7 +95,7 @@ function parseItem(raw: unknown): RemoteStar | null {
   if (typeof repo.fork === 'boolean') meta.fork = repo.fork;
   if (typeof repo.is_template === 'boolean') meta.isTemplate = repo.is_template;
   if ('mirror_url' in repo) meta.mirror = repo.mirror_url != null;
-  // 展示文本不再落盘（4.9.0 删 updated 字段）：卡片渲染时由 formatRelative(updatedAt) 现算
+  // 展示文本不再落盘（4.8.0 删 updated 字段）：卡片渲染时由 formatRelative(updatedAt) 现算
 
   return {
     repoId: String(repo.id),
@@ -386,7 +386,7 @@ async function scanStarred(tok: string, meta: FullSyncMeta): Promise<ScanOutcome
     !!meta.lastFullSyncAt &&
     Date.now() - meta.lastFullSyncAt <= FULL_SYNC_TTL_MS &&
     !!baseline && baseline.length > 0 && baseline.every((e) => !!e);
-  // 升级回补阀门（4.9.0）：字段语义变更（updatedAt: updated_at → pushed_at）后，
+  // 升级回补阀门（4.8.0）：字段语义变更（updatedAt: updated_at → pushed_at）后，
   // 存量值是旧语义而切片条目 304 时跳过刷新 → 必须整表回补一次换血。dataRev 在整表
   // 重建时写入（outMeta），之后此阀门恒不触发，与 Type 标志阀门同一模式。
   if (meta.dataRev !== DATA_REV) {

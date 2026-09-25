@@ -7,7 +7,7 @@ export interface RepoData {
   forks?: number;
   /** star 时间（ISO，P4 全量同步回填；Sort「Recently starred」排序依据） */
   starredAt?: string;
-  /** ISO 时间戳（= REST `pushed_at`，最后 push 到任一分支；4.9.0 前误用 `updated_at`）
+  /** ISO 时间戳（= REST `pushed_at`，最后 push 到任一分支；4.8.0 前误用 `updated_at`）
    * 「Recently active」排序依据 + 卡片相对时间现算来源。语义考证见 docs/research-updated-vs-pushed-at.md：
    * GitHub 官方 OpenAPI sort-starred 定义「`updated` means when the repository was last pushed to」。 */
   updatedAt?: string;
@@ -67,7 +67,7 @@ export interface FullSyncMeta {
   lastFullSyncAt?: number;
   /** 上次整表的 star 总数（本地分页总页数 = ceil(count/30)） */
   count?: number;
-  /** 缓存数据代次（4.9.0）：!== DATA_REV 时强制一次无条件整表，用于字段语义变更后的存量回补。
-   * 4.9.0 = updatedAt 从 updated_at 改为 pushed_at；整表重建（outMeta）时会写入当前代次。 */
+  /** 缓存数据代次（4.8.0）：!== DATA_REV 时强制一次无条件整表，用于字段语义变更后的存量回补。
+   * 4.8.0 = updatedAt 从 updated_at 改为 pushed_at；整表重建（outMeta）时会写入当前代次。 */
   dataRev?: number;
 }

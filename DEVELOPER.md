@@ -97,7 +97,7 @@ tests/smoke/
   fixture-detail.html     仿仓库详情页（宽限期流程：预置缓存 + unstar/re-star）
   assert-transform.js     转换/标签/备注/筛选栏断言
   assert-search.js        搜索断言
-  assert-detail.js        详情页宽限期断言（4.9.0 起不再断言缓存提取）
+  assert-detail.js        详情页宽限期断言（4.8.0 起不再断言缓存提取）
 tests/exportImport/
   prepare.cjs             把被测模块编译成 node 可 require 的 .cjs（产物在 .build/，已 gitignore）
   run.cjs                 导入导出纯逻辑断言：导出清洗 / 校验拒绝路径 / 合并语义 / 幂等 / 用户隔离
@@ -114,7 +114,7 @@ scripts/
 GitHub API (PAT)                                GitHub DOM（无缓存 / 详情页）
     │                                                │
     ├─ scheduleProbeSync() 进页 idle 自动（冷却 60s + 有 PAT → 统一 runFullSync('auto')）
-    │        │                                      ├─ 详情页 ─► watchRepoStarState（4.9.0 起仅监听 unstar 宽限期，不再写缓存）
+    │        │                                      ├─ 详情页 ─► watchRepoStarState（4.8.0 起仅监听 unstar 宽限期，不再写缓存）
     │        └─ scanStarred() 单遍条件扫描          └─ 无缓存首访 ─► 原生页 + .gsm-setup-banner
     │             │                                   （保存成功 savedHandler 自动 runFullSync → transformAndReveal）
     │             ├─ 新增/恢复 ─► saveRepoData / markRepoStarred
@@ -209,7 +209,7 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
   "tailEtag": "\"...\"",    // 越界空页 ETag（条件探尾：304=仍空免额度）
   "lastFullSyncAt": 1780000000000,
   "count": 464,             // star 总数（本地分页总页数 = ceil(count / 30)）
-  "dataRev": 2              // 缓存数据代次（4.9.0）：≠ DATA_REV 时 scanStarred 强制一次整表回补（字段语义变更的存量迁移阀门）
+  "dataRev": 2              // 缓存数据代次（4.8.0）：≠ DATA_REV 时 scanStarred 强制一次整表回补（字段语义变更的存量迁移阀门）
 }
 ```
 
@@ -262,15 +262,19 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 **不含**：`github_pat`（敏感）、`stars_full_sync_meta`（ETag 基线与 token 身份 + 远端瞬时状态绑定，跨设备导入会让「全 304 = 无变化」误判为「缓存即现值」）、`stars_pending_delete`（临时状态）。
 合并语义与拒绝路径见 `docs/adr/0001-export-import-format.md`。
 
-导入导出**不新增 `@grant`**（`GM_download` 除外，4.7.0 新增）：导出**只用 `GM_download`（Blob 直传），刻意不做原生 `<a download>` 兜底**——原生下载能绕过 TM 的扩展名白名单，等于架空用户的安全设置。TM 侧需开启下载功能且扩展名在白名单，否则**不抛错、只走 `onerror` 回 `not_whitelisted`**（`gmDownloadFile` 观测不到，见 §6）；导入走隐藏 `<input type="file">` + `FileReader`。
+导入导出**不新增 `@grant`**（`GM_download` 除外，4.7.0 新增）：导出**只用 `GM_download`（Blob 直传），刻意不做原生 `<a download>` 兜底**——原生下载能绕过 TM 的扩展名白名单，等于架空用户的安全设置。TM 侧需开启下载功能且扩展名在白名单，否则**不抛错、只走 `onerror` 回 `not_whitelisted`**（`gmDownloadFile` 观测不到，见 §6）。
 
-### 详情页（4.9.0：只监听，不写缓存）
+导入是**大窗**（4.8.1）：TM 菜单点击 → 全屏遮罩 + 中央拖放大窗（样式全内联，不依赖 Stars 视图的样式表，任意页可用；点遮罩空白 / Esc / × 关闭，**无超时**——用户可能正忙着找文件）→ 窗内**真实点击**「选择文件」（页面级 transient user activation → 唤起 `<input type="file">`）或**拖拽** JSON 进窗（drop 事件不需要 activation，`DataTransfer` 直接给 `File`）→ `FileReader` 读取。拖入时整窗高亮（边框/背景变色 + 提示文案切换「松手开始导入」）。
+
+**不能**在 TM 菜单回调里直接 `input.click()`：扩展 UI 的手势无法转发给页面（TM 维护者 derjanb 原话，[tampermonkey#1827](https://github.com/Tampermonkey/tampermonkey/issues/1827)，NOT_PLANNED），Chrome **静默拒绝**（实测连控制台都无报错）——4.7.0 的实现即因此从未工作过。已实测排除的旁路：合成事件（isTrusted=false）、label 原生转发（两种关联方式）、`requestIdleCallback` 延迟、prompt 蹭激活（`prompt/confirm/alert` 不在 activation-gated 名单所以能弹，但不赠送激活态）、`window.open`（自身 gated 且消耗激活）、`GM_openInTab`（新页无激活态、@match 外脚本不跑）、`showOpenFilePicker`（github.com 下 API 未暴露）。弹文件选择器的唯一通行证 = **页面上下文内的真实用户输入**（点击/键盘/拖拽）。
+
+### 详情页（4.8.0：只监听，不写缓存）
 
 仓库详情页分支只做两件事：`cleanupExpiredUnstarred()`（宽限期到期清扫）+ `watchRepoStarState()`（点 star 按钮 → `markRepoStarred` / `markRepoUnstarred` 宽限管线）。
 
-4.9.0 删除了「详情页提取元数据写缓存」（原 extract.ts）：它写的字段（name/desc/stars/forks）API 全覆盖，而它独有的时间字段是脏数据源——DOM 第一个 `<relative-time>` 与 API 语义不一致（曾互相覆写 `updatedAt`），缓存的相对时间文本（`updated`）永不刷新。**详情页访问不再提前刷新缓存**，元数据一律等同步。
+4.8.0 删除了「详情页提取元数据写缓存」（原 extract.ts）：它写的字段（name/desc/stars/forks）API 全覆盖，而它独有的时间字段是脏数据源——DOM 第一个 `<relative-time>` 与 API 语义不一致（曾互相覆写 `updatedAt`），缓存的相对时间文本（`updated`）永不刷新。**详情页访问不再提前刷新缓存**，元数据一律等同步。
 
-### `updatedAt` 语义 = `pushed_at`（4.9.0 修正）
+### `updatedAt` 语义 = `pushed_at`（4.8.0 修正）
 
 「Recently active」排序键 `updatedAt` 现取 REST `pushed_at`（最后 push 到任一分支），此前误用 `updated_at`（仓库对象元数据变更，改描述/被标星都会动它，与代码活跃度无关）。依据：GitHub 官方 OpenAPI `sort-starred` 参数原文「`updated` means when the repository was last pushed to」（渲染页丢失该句）；考证记录见 `docs/research-updated-vs-pushed-at.md`。
 
@@ -356,7 +360,7 @@ filterState.totalPages    // ceil(count / NATIVE_PAGE_SIZE)
 
 ### 添加新的卡片字段
 
-1. `fullSync.ts` 的 `parseItem`：从 API repo 对象回填（唯一写入口；DOM 提取已于 4.9.0 删除）
+1. `fullSync.ts` 的 `parseItem`：从 API repo 对象回填（唯一写入口；DOM 提取已于 4.8.0 删除）
 2. `types.ts`：在 `RepoData` 上补字段
 3. `ui/cards.ts` 的 `buildCardFromCache()`：渲染缓存卡片
 4. `fullSync.ts` 的 `parseItem`：从 API 条目回填（若远端有该字段）

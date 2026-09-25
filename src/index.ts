@@ -485,7 +485,7 @@ function init(): void {
   const repoIdMeta = getRepoIdMeta();
   const isRepoDetailPage = !isStarsPage() && !!repoIdMeta;
   // 仓库详情页：监听 unstar（宽限期恢复）+ 提前返回。
-  // 4.9.0 起不再从详情页提取缓存数据（extract.ts 已删）：它写的字段 API 全覆盖，
+  // 4.8.0 起不再从详情页提取缓存数据（extract.ts 已删）：它写的字段 API 全覆盖，
   // 且 DOM 时间字段与 API 语义不一致，曾是回写脏态的源头（zai-org/ZCode 案例）。
   if (isRepoDetailPage) {
     cleanupExpiredUnstarred();

@@ -6,7 +6,7 @@ export function getRepoIdMeta(): HTMLMetaElement | null {
   return document.querySelector('meta[name="octolytics-dimension-repository_id"]');
 }
 
-/* 4.9.0：isStarredInToggler / getToggler（旧版详情页 star toggler 探测）已随 extract.ts 一并删除，
+/* 4.8.0：isStarredInToggler / getToggler（旧版详情页 star toggler 探测）已随 extract.ts 一并删除，
  * 唯一消费者是详情页缓存提取。 */
 
 /* ================================================================
@@ -152,7 +152,7 @@ export function hideListsSection(): void {
 }
 
 /* ================================================================
- * 仓库详情页（4.9.0 起只监听 star 状态）
+ * 仓库详情页（4.8.0 起只监听 star 状态）
  *
  * 内嵌 JSON 提取（readEmbeddedJson / getSidebarAbout / SidebarAboutPayload）已随
  * extract.ts 删除——它服务详情页缓存提取，现无消费者。

@@ -8,8 +8,8 @@ function isPlausibleLangName(lang: string): boolean {
   return /^[A-Za-z0-9+#'.\-_ ]{1,40}$/.test(lang);
 }
 
-/** 4.9.0 起已死、读取时一并剔掉的历史字段（曾经有写入点、后被整体废弃，存量数据自愈清洗）：
- * - updated：缓存的相对时间展示文本（原详情页提取写入，4.9.0 起渲染时现算）
+/** 4.8.0 起已死、读取时一并剔掉的历史字段（曾经有写入点、后被整体废弃，存量数据自愈清洗）：
+ * - updated：缓存的相对时间展示文本（原详情页提取写入，4.8.0 起渲染时现算）
  * - langColor：per-repo 语言色（4.3.0 语言色运行时化后废除，渲染走 stars_lang_colors 全局映射） */
 const DEAD_REPO_FIELDS = ['updated', 'langColor'] as const;
 
