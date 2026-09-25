@@ -266,7 +266,11 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 
 导入是**大窗**（4.8.1）：TM 菜单点击 → 全屏遮罩 + 中央拖放大窗（样式全内联，不依赖 Stars 视图的样式表，任意页可用；点遮罩空白 / Esc / × 关闭，**无超时**——用户可能正忙着找文件）→ 窗内**真实点击**「选择文件」（页面级 transient user activation → 唤起 `<input type="file">`）或**拖拽** JSON 进窗（drop 事件不需要 activation，`DataTransfer` 直接给 `File`）→ `FileReader` 读取。拖入时整窗高亮（边框/背景变色 + 提示文案切换「松手开始导入」）。
 
-**不能**在 TM 菜单回调里直接 `input.click()`：扩展 UI 的手势无法转发给页面（TM 维护者 derjanb 原话，[tampermonkey#1827](https://github.com/Tampermonkey/tampermonkey/issues/1827)，NOT_PLANNED），Chrome **静默拒绝**（实测连控制台都无报错）——4.7.0 的实现即因此从未工作过。已实测排除的旁路：合成事件（isTrusted=false）、label 原生转发（两种关联方式）、`requestIdleCallback` 延迟、prompt 蹭激活（`prompt/confirm/alert` 不在 activation-gated 名单所以能弹，但不赠送激活态）、`window.open`（自身 gated 且消耗激活）、`GM_openInTab`（新页无激活态、@match 外脚本不跑）、`showOpenFilePicker`（github.com 下 API 未暴露）。弹文件选择器的唯一通行证 = **页面上下文内的真实用户输入**（点击/键盘/拖拽）。
+**不能**在 TM 菜单回调里直接 `input.click()`：扩展 UI 的手势无法转发给页面（TM 维护者 derjanb 原话，[tampermonkey#1827](https://github.com/Tampermonkey/tampermonkey/issues/1827)，NOT_PLANNED），Chrome **静默拒绝**（实测连控制台都无报错）——4.7.0 的实现即因此从未工作过。
+
+**为什么控制台能弹、脚本不能**（用户问过，已实测）：DevTools 控制台手动回车执行时，DevTools 走的是 CDP `Runtime.evaluate` 并**自带 `userGesture:true`**，于是浏览器把这次求值当作「用户手势」；普通页面脚本/userscript 注入的求值是 `userGesture:false`，页面内 `navigator.userActivation.isActive` 为 `false`。实测对照（新标签页、瞬时激活已过期、`Page.setInterceptFileChooserDialog` 拦截避免真弹）：同一个 `input.showPicker()` 调用，`userGesture:false` → `NotAllowedError: HTMLInputElement::showPicker() requires a user gesture`；`userGesture:true` → 成功打开（被拦截）。**结论：能让选择器打开的从来不是「控制台」这个界面，而是 DevTools 附带的 userGesture 标志；页面脚本无从获得该标志。**
+
+已实测排除的旁路：合成事件（isTrusted=false）、label 原生转发（两种关联方式）、`requestIdleCallback` 延迟、prompt 蹭激活（`prompt/confirm/alert` 不在 activation-gated 名单所以能弹，但不赠送激活态）、`window.open`（自身 gated 且消耗激活）、`GM_openInTab`（新页无激活态、@match 外脚本不跑）、`showOpenFilePicker`（github.com 下 API 未暴露）。弹文件选择器的唯一通行证 = **页面上下文内的真实用户输入**（点击/键盘/拖拽）。
 
 ### 详情页（4.8.0：只监听，不写缓存）
 

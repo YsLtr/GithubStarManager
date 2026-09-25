@@ -10,6 +10,8 @@
 
 版本 **4.8.1**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
 
+> 本次交接（2026-09-25 17:27 +0800）：**无功能改动待提交**。唯一未提交内容是本节新增的「文件选择器手势门槛」定案 + `DEVELOPER.md` §5 的实测记录 + `todo` 新增一行「同步操作与同步按钮完全联动」。4.8.1 已提交（`8304994`），待用户真机走 4.8.0 / 4.7.0 清单。
+
 4.8.0 = **时间字段语义修正 + 删冗余**，**尚未真机验证**：
 
 - 「Recently active」排序键 `updatedAt` 从 REST `updated_at`（元数据变更）改取 **`pushed_at`**（最后 push）——依据 GitHub 官方 OpenAPI `sort-starred` 原文（渲染页丢失该句），考证见 `docs/research-updated-vs-pushed-at.md`；
@@ -22,6 +24,7 @@
 - 纯逻辑 `src/storage/exportImport.ts`（不碰 DOM）+ 交互 `src/ui/exportImportMenu.ts`（TM 菜单「📤 导出数据」「📥 导入数据」）；
 - 导出走 `GM_download`（**4.7.0 新增 `@grant`**，TM 会提示权限变更），**刻意不做原生 `<a download>` 兜底**（那等于绕过 TM 的扩展名安全设置）；导入是**大窗导入**（4.8.1 修复）：TM 菜单点击弹出全屏遮罩大窗（中央拖放区 + 「选择文件」按钮，点遮罩空白/Esc/×关闭，无超时），用户在窗内真实点击选文件或把 JSON 拖进窗内（drop 不需要手势）才开始导入 —— 扩展 UI 的点击**无法**把 transient user activation 转发给页面（TM 维护者原话，tampermonkey#1827），直接在菜单回调里 `input.click()` 会静默失败；
 - 包格式与合并语义见 `docs/adr/0001-export-import-format.md`，术语见 `CONTEXT.md`；
+- **文件选择器的手势门槛已定案**（用户两轮追问后实测确证，完整实验数据见 `DEVELOPER.md` §5「为什么控制台能弹、脚本不能」）：DevTools 控制台能弹是因为 DevTools 走 CDP `Runtime.evaluate` **自带 `userGesture:true`**；页面脚本/userscript 的求值恒为 `userGesture:false`，`showPicker()` 报 `NotAllowedError`。判据是事件的 **`isTrusted`**——脚本造的任何事件（`btn.click()`、`dispatchEvent`、合成键盘）都是 `false`，真人点击/按键才是 `true`。**脚本不可能自己触发选择器**（自指悖论），唯一免手势路径是**拖拽 drop**（`DataTransfer` 直接给 `File`）。这也是 4.8.1 大窗设计的根据，**不要**再尝试「脚本代点选择文件」的改动。
 - 纯逻辑已有 51 项 node 断言：`pnpm test:exportimport`（**全绿**，覆盖导出清洗 / 校验拒绝路径 / 合并 / 幂等 / 用户隔离）。
 
 4.6.0 = 改名与存储身份切换（脚本名 → `GithubStarManager`、产物 `dist/github-star-manager.user.js`、镜像前缀 → `github-star-manager::`；`@namespace` 与 CSS 前缀 `gsm-` 不动）。**改名的代价**：TM 以 `@name` + `@namespace` 判定脚本身份，改名后是另一个脚本、GM 存储为空；镜像前缀同时更换 → 旧数据不自动迁移，按用户决定放弃（装回旧脚本可读旧 GM 存储）。见 `docs/adr/0002-rename-and-storage-identity.md`。
