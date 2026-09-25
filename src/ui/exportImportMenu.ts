@@ -43,7 +43,7 @@ function doExport(): void {
   const blob = new Blob([JSON.stringify(pkg, null, 2)], { type: 'application/json' });
   const ok = gmDownloadFile(blob, filename);
   if (!ok) {
-    window.alert('下载未能启动。若使用 Tampermonkey，请在设置（需 Advanced 模式）的「下载」区把 json 加入允许的扩展名，或改用浏览器原生下载。');
+    window.alert('下载未能启动：本脚本依赖 Tampermonkey 的 GM_download。请在 TM 设置（需 Advanced 模式）的「下载」区把 json 加入允许的扩展名，并确认下载功能已开启。');
     return;
   }
   console.log(

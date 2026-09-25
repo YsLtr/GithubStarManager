@@ -13,7 +13,7 @@
 4.7.0 = **导入导出（标签 / 备注 / 相关仓库元数据）**，**尚未真机验证**：
 
 - 纯逻辑 `src/storage/exportImport.ts`（不碰 DOM）+ 交互 `src/ui/exportImportMenu.ts`（TM 菜单「📤 导出数据」「📥 导入数据」）；
-- 导出走 `GM_download`（**4.7.0 新增 `@grant`**，TM 会提示权限变更）并带原生 `<a download>` 兜底；导入走隐藏 `<input type="file">` + `FileReader`；
+- 导出走 `GM_download`（**4.7.0 新增 `@grant`**，TM 会提示权限变更），**刻意不做原生 `<a download>` 兜底**（那等于绕过 TM 的扩展名安全设置）；导入走隐藏 `<input type="file">` + `FileReader`；
 - 包格式与合并语义见 `docs/adr/0001-export-import-format.md`，术语见 `CONTEXT.md`；
 - 纯逻辑已有 45 项 node 断言：`pnpm test:exportimport`（**全绿**，覆盖导出清洗 / 校验拒绝路径 / 合并 / 幂等 / 用户隔离）。
 
@@ -34,7 +34,7 @@
 8. **无 token 导入**：提示跳过自动同步，**不弹 Token 输入框**。
 9. **confirm 点取消** → 零写入（刷新后数据未变）。
 10. **刷新/新标签页**后导入的数据仍在（GM 存储）。
-11. **TM 白名单**：若导出报「下载未能启动」，检查 TM 设置（需 Advanced 模式）「下载」区的扩展名白名单是否含 `json`，加入后重试（这是 TM 侧限制，不是脚本缺陷）。
+11. **TM 白名单（重要前提）**：TM 的 `GM_download` 要求扩展名在白名单内，`.json` 是否在**默认**白名单未经确证 —— 若导出时「点了菜单却没文件」，检查 TM 设置（需 Advanced 模式）「下载」区把 `json` 加进去并确认下载功能已开启。**这类失败在脚本内不可观测**（TM 只走 `onerror`，`GM_download` 不抛错也不返回），所以**不会**弹「下载未能启动」；若你看到的是文件静默未出现，那就是它。这是 TM 侧限制，不是脚本缺陷。
 
 ### 4.5.0 已验证清单（历史参考，重装 `dist/github-star-manager.user.js` 后逐条走）
 
@@ -89,7 +89,7 @@
 - 合并语义：标签并集（本地在前）、备注以文件为准但**空备注不覆盖**本地非空备注、仓库元数据只补空缺。判空统一为 **trim 后为空**（`saveNote` 同步收紧）。
 - 校验 `kind` + `schemaVersion` + `user.id` **三者齐备才放行**；`kind` 是协议身份、**永不随脚本改名变动**，文件名 slug 才随改名变。
 - 交互：破坏性确认用 `window.confirm`、失败用 `window.alert`（**失败不弹 confirm**）；导入不导航，仅在「Stars 页且网格已存在」时重绘；导入后走 `runFullSync('button')` 同路径，**无 token 则提示跳过、不弹 Token 输入框**。
-- 下载：`GM_download`（4.7.0 新增 `@grant`）+ 原生 `<a download>` 兜底。TM 侧「下载」功能未开或扩展名不在白名单时**不抛错、只走 `onerror`**，故必须把失败当失败处理（弹提示引导去 TM 设置加白名单）。
+- 下载：**只用 `GM_download`（4.7.0 新增 `@grant`），不做原生兜底**——Blob + `<a download>` 能绕过 TM 的扩展名白名单，等于架空用户的安全设置，已明确否决。TM 侧「下载」未开或扩展名不在白名单时**不抛错、不返回、只走 `onerror`**（TM 文档：`GM_download` 返回 `{ abort }`，只有 `GM.download` 才是 promise），故这类失败在脚本内**不可观测**：`gmDownloadFile` 返回 true 也不代表文件已落地，只能由 alert 引导用户去 TM 设置（Advanced 模式）加 `json`。
 - 分层铁律：`storage/exportImport.ts` 是**纯逻辑**（不碰 DOM、不弹对话框、不触发同步），交互全在 `ui/exportImportMenu.ts`。
 
 ---

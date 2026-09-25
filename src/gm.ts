@@ -207,41 +207,23 @@ export function gmFetchText(url: string): Promise<string> {
   });
 }
 
-/** 触发文件下载（调用时判定）。
- *  优先 GM_download：可由 TM 弹出「另存为」并由扩展接管保存（页面 CSP 影响不到）。
- *  TM 缺失（dev/非 TM 环境）或 GM_download 抛错时回退原生 Blob + <a download>。
- *  注意：TM 侧「下载」功能未开或扩展名不在白名单时**不会抛错**，只走 onerror，
- *  因此必须把 error 原因回传调用方，不能只判同步异常。
- *  @returns 已成功交给下载器 = true；同步抛错且回退也失败 = false */
+/** 触发文件下载（调用时判定）：**只用 GM_download，不做原生兜底**。
+ *  - 返回 true = 已交给 TM 下载器；false = GM_download 不存在或同步抛错（调用方须提示）。
+ *  - TM 侧「下载」未开 / 扩展名不在白名单 / 缺 downloads 权限时**不抛错、不返回**，只走 onerror
+ *    回调（TM 文档：GM_download 返回 { abort }，只有 GM.download 才是 promise）。
+ *    故这类失败在此**不可观测**，只能由调用方的 alert 引导用户去 TM 设置加白名单。
+ *  - 刻意不写 Blob + <a download> 兜底：那等于绕过 TM 的扩展名安全设置（用户已明确否决）。
+ *  文档：https://www.tampermonkey.net/documentation.php?q=api:GM_download */
 export function gmDownloadFile(data: Blob, filename: string): boolean {
-  if (typeof GM_download === 'function') {
-    try {
-      GM_download({ url: data, name: filename });
-      return true;
-    } catch (e) {
-      console.error('[github-star-manager] GM_download 失败，回退原生下载', e);
-    }
+  if (typeof GM_download !== 'function') {
+    console.error('[github-star-manager] GM_download 不可用（非 Tampermonkey 环境？），无法导出');
+    return false;
   }
-  return nativeDownload(data, filename);
-}
-
-/** 原生下载兜底：Blob + <a download> 点击。github.com 的 CSP 无 sandbox 指令，Chrome 下不被拦 */
-function nativeDownload(data: Blob, filename: string): boolean {
-  const url = URL.createObjectURL(data);
   try {
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    GM_download({ url: data, name: filename });
     return true;
   } catch (e) {
-    console.error('[github-star-manager] 原生下载失败', e);
+    console.error('[github-star-manager] GM_download 调用失败', e);
     return false;
-  } finally {
-    // 延迟撤销：立即 revoke 会让部分浏览器拿到空文件
-    window.setTimeout(() => URL.revokeObjectURL(url), 10000);
   }
 }

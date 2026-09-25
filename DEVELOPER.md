@@ -263,7 +263,7 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 **不含**：`github_pat`（敏感）、`stars_full_sync_meta`（ETag 基线与 token 身份 + 远端瞬时状态绑定，跨设备导入会让「全 304 = 无变化」误判为「缓存即现值」）、`stars_pending_delete`（临时状态）。
 合并语义与拒绝路径见 `docs/adr/0001-export-import-format.md`。
 
-导入导出**不新增 `@grant`**（`GM_download` 除外，4.7.0 新增）：导出走 `GM_download`（Blob 直传，TM 侧需开启下载功能且扩展名在白名单，否则 `onerror` 回 `not_whitelisted`）并带原生 `<a download>` 兜底；导入走隐藏 `<input type="file">` + `FileReader`。
+导入导出**不新增 `@grant`**（`GM_download` 除外，4.7.0 新增）：导出**只用 `GM_download`（Blob 直传），刻意不做原生 `<a download>` 兜底**——原生下载能绕过 TM 的扩展名白名单，等于架空用户的安全设置。TM 侧需开启下载功能且扩展名在白名单，否则**不抛错、只走 `onerror` 回 `not_whitelisted`**（`gmDownloadFile` 观测不到，见 §6）；导入走隐藏 `<input type="file">` + `FileReader`。
 
 ### 详情页数据缓存
 
