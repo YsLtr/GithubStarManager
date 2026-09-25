@@ -1,6 +1,6 @@
 // 校验构建产物中的 CSS 与源 CSS 是否等价（只允许压缩/等价重写带来的差异）
 const fs = require('fs');
-const dist = fs.readFileSync('dist/github-stars-grid.user.js', 'utf8');
+const dist = fs.readFileSync('dist/github-star-manager.user.js', 'utf8');
 
 function grab(name) {
   const i = dist.indexOf('var ' + name + ' = "');

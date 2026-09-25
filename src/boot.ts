@@ -49,7 +49,7 @@ export function installBootHide(): void {
   root.appendChild(style);
   root.classList.add(HIDE_CLASS);
   hideInstalledAt = performance.now();
-  console.log('[github-stars-grid] 防闪烁隐藏已挂载');
+  console.log('[github-star-manager] 防闪烁隐藏已挂载');
 
   // 兜底：无论后续发生什么，最多隐藏 FAILSAFE_MS
   window.setTimeout(() => revealBootHide('4s 兜底'), FAILSAFE_MS);
@@ -60,7 +60,7 @@ export function revealBootHide(reason = '未注明原因'): void {
   const root = document.documentElement;
   if (!root || !root.classList.contains(HIDE_CLASS)) return;
   const elapsed = hideInstalledAt ? Math.round(performance.now() - hideInstalledAt) : 0;
-  console.log(`[github-stars-grid] 防闪烁解除: ${reason} (${elapsed}ms)`);
+  console.log(`[github-star-manager] 防闪烁解除: ${reason} (${elapsed}ms)`);
   root.classList.remove(HIDE_CLASS);
   document.getElementById(HIDE_STYLE_ID)?.remove();
 }

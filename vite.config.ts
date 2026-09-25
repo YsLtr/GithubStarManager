@@ -7,7 +7,7 @@ export default defineConfig({
     monkey({
       entry: 'src/index.ts',
       userscript: {
-        name: 'GitHub Stars Grid View',
+        name: 'GithubStarManager',
         namespace: 'https://github.com/YsLtr',
         version: pkg.version,
         description:
@@ -23,7 +23,7 @@ export default defineConfig({
         'run-at': 'document-start',
       },
       build: {
-        fileName: 'github-stars-grid.user.js',
+        fileName: 'github-star-manager.user.js',
       },
       server: {
         // dev 下代码跑在页面 realm，沙箱 GM_* 不可见（issue #35）；把已 grant 的 GM_* 复制到

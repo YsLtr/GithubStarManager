@@ -8,10 +8,14 @@
 
 ## 当前状态
 
-版本 **4.5.0**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
-4.5.0「Hide Lists 开关」代码已提交（`c9e2fa7` + 审查修复 `d6ea772` + 落位改插入并存 `55c81f7` + 文档统一 `9d3e6c9`），**尚未在真机重装验证**。
+版本 **4.6.0**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
+4.6.0 = **改名与存储身份切换**（脚本名 `GitHub Stars Grid View` → `GithubStarManager`、产物 `dist/github-star-manager.user.js`、`package.json.name` → `github-star-manager`、localStorage 镜像前缀 → `github-star-manager::`；`@namespace` 与 CSS 类名前缀 `gsm-` **不动**）。
 
-### 4.5.0 待真机验证清单（重装 `dist/github-stars-grid.user.js` 后逐条走）
+**改名的代价（已在设计阶段定案，见 `docs/adr/0002-rename-and-storage-identity.md`）**：TM 以 `@name` + `@namespace` 判定脚本身份，改名后是**另一个脚本**、GM 存储为空；旧数据经 localStorage 镜像才会自动回流，而 `LS_PREFIX` 已同时更换，所以**旧数据不再自动迁移，按用户决定放弃**（若日后需要找回，装回旧脚本即可读旧 GM 存储）。
+
+4.5.0「Hide Lists 开关」**已由用户真机验证通过**，其 10 条清单保留在下方仅作历史参考。
+
+### 4.5.0 已验证清单（历史参考，重装 `dist/github-star-manager.user.js` 后逐条走）
 
 1. 默认（未动菜单）：行为与 4.4.0 完全一致 —— Lists 隐藏、banner 插在 Lists 槽位（**原生节点不销毁**）、网格正常。
 2. TM 菜单出现「🙈 隐藏 Lists 区块（开）」；点击后立即：Lists 原生内容显示（标题行 + 空态「Create your first list」或 list 内容）、菜单标签变「（关）」、控制台一行 Hide Lists 切换日志。
@@ -24,7 +28,7 @@
 9. 菜单连点多次：菜单项恒为一个，标签「开/关」与 Lists 显隐同步（走 `options.id` 原地更新路径）。
 10. **节点可逆性**：开态显示初始化面板 → 关态 → 槽位里 blankslate / list 内容应**原样复活**（不是空白）；再切开态、面板回来仍只一份。
 
-> 若某条失败：先确认装的是新 dist（控制台有 `[github-stars-grid] script loaded (document-start)`），再看 `DEVELOPER.md` §6「Hide Lists 开关」的两条腿（CSS 门控 + JS 标记）哪条没生效。
+> 若某条失败：先确认装的是新 dist（控制台有 `[github-star-manager] script loaded (document-start)`），再看 `DEVELOPER.md` §6「Hide Lists 开关」的两条腿（CSS 门控 + JS 标记）哪条没生效。
 
 ---
 
@@ -119,7 +123,7 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
 
 ```bash
 pnpm check     # tsc --noEmit + build（改完必跑）
-pnpm build     # → dist/github-stars-grid.user.js
+pnpm build     # → dist/github-star-manager.user.js
 pnpm dev       # HMR，需先解决上面 CSP 那条；入口 http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js
 pnpm build && node scripts/verify-css.cjs   # 产物 CSS 与源 CSS 等价性
 ```

@@ -384,11 +384,11 @@ async function scanStarred(tok: string, meta: FullSyncMeta): Promise<ScanOutcome
     !!baseline && baseline.length > 0 && baseline.every((e) => !!e);
   // 升级回补阀门（4.2.0）：缓存缺 Type 四标志 → 无条件整表回补一次（parseItem 会给全部条目写满标志，之后回归条件扫描）
   if (!typeFlagsComplete(loadRepoCache())) {
-    console.log('[github-stars-grid] 缓存缺 Type 标志（升级回补）→ 无条件整表拉取一次');
+    console.log('[github-star-manager] 缓存缺 Type 标志（升级回补）→ 无条件整表拉取一次');
     return fullPullOutcome(tok);
   }
   if (!baselineOk) {
-    console.log('[github-stars-grid] 无逐页基线/超 48h TTL → 无条件整表拉取（重建基线）');
+    console.log('[github-star-manager] 无逐页基线/超 48h TTL → 无条件整表拉取（重建基线）');
     return fullPullOutcome(tok);
   }
 
@@ -447,20 +447,20 @@ async function scanStarred(tok: string, meta: FullSyncMeta): Promise<ScanOutcome
         let overlap = 0;
         for (const it of arr) if (expectedIds.has(it.repoId)) overlap += 1;
         if (overlap / Math.max(expectedIds.size, arr.length) < 0.5) {
-          console.log(`[github-stars-grid] 切片阀门：第 ${p} 页正文与本地切片重叠过低（${overlap}/${Math.max(expectedIds.size, arr.length)}）→ 排序模型失真`);
+          console.log(`[github-star-manager] 切片阀门：第 ${p} 页正文与本地切片重叠过低（${overlap}/${Math.max(expectedIds.size, arr.length)}）→ 排序模型失真`);
           usable = false;
           break;
         }
       }
     }
     if (!usable) {
-      console.log('[github-stars-grid] 本地切片不可用（缓存缺 star 时间/覆盖不足/模型失真）→ 回落无条件整表');
+      console.log('[github-star-manager] 本地切片不可用（缓存缺 star 时间/覆盖不足/模型失真）→ 回落无条件整表');
       return fullPullOutcome(tok);
     }
     slices = built;
   }
   if ((parsedBodies.get(baselinePages + 1)?.length ?? 0) >= PAGE_SIZE) {
-    console.log('[github-stars-grid] 尾页满页（增长可能超一页）→ 回落无条件整表');
+    console.log('[github-star-manager] 尾页满页（增长可能超一页）→ 回落无条件整表');
     return fullPullOutcome(tok);
   }
 
@@ -525,7 +525,7 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
     tok = getGitHubPat();
   }
   if (!tok) {
-    console.log('[github-stars-grid] P4 同步：未配置 token，已取消（TM 菜单 →「⭐ 设置 GitHub Token」）');
+    console.log('[github-star-manager] P4 同步：未配置 token，已取消（TM 菜单 →「⭐ 设置 GitHub Token」）');
     return null;
   }
 
@@ -536,7 +536,7 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
     const storedMeta = gmGet<FullSyncMeta>(STORAGE_KEYS.fullSyncMeta, {});
     const scan = await scanStarred(tok, storedMeta);
     if (scan.kind === 'unchanged') {
-      console.log(`[github-stars-grid] ETag 304：${(storedMeta.etags ?? []).length} 页全部无变化（免额度），跳过整表比对`);
+      console.log(`[github-star-manager] ETag 304：${(storedMeta.etags ?? []).length} 页全部无变化（免额度），跳过整表比对`);
       // 修 304/200 交替：校验值发出去的就是服务端验证过的值，绝不从 304 响应头回读覆盖；
       const healedEt = storedMeta.etags?.map(normEtag);
       gmSet(STORAGE_KEYS.fullSyncMeta, {
@@ -548,7 +548,7 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
       return { pages: 0, total: storedMeta.count ?? 0, added: 0, restored: 0, unstarred: 0, backfilled: 0 };
     }
     console.log(
-      `[github-stars-grid] ★ P4 扫描：${scan.pages} 页（正文 ${scan.bodyPages} + 本地切片 ${scan.slicePages}，` +
+      `[github-star-manager] ★ P4 扫描：${scan.pages} 页（正文 ${scan.bodyPages} + 本地切片 ${scan.slicePages}，` +
         `${scan.hybrid ? '切片混合模式：local-only 嫌疑逐条核对' : '全正文权威模式'}）→ 三向比对…`
     );
     const remoteMap = new Map(scan.items.map((it) => [it.repoId, it]));
@@ -562,11 +562,11 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
       if (scan.hybrid) {
         const gone = await checkStarredGone(tok, cacheBefore[repoId].name || '');
         if (gone === false) {
-          console.log(`[github-stars-grid] 嫌疑核对：${cacheBefore[repoId].name || repoId} 仍 star（切片平局误报），保留`);
+          console.log(`[github-star-manager] 嫌疑核对：${cacheBefore[repoId].name || repoId} 仍 star（切片平局误报），保留`);
           continue;
         }
         if (gone === null) {
-          console.log(`[github-stars-grid] 嫌疑核对不可判定（网络/异常状态），本轮不动：${cacheBefore[repoId].name || repoId}`);
+          console.log(`[github-star-manager] 嫌疑核对不可判定（网络/异常状态），本轮不动：${cacheBefore[repoId].name || repoId}`);
           continue;
         }
       }
@@ -629,7 +629,7 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
       backfilled,
     };
     console.log(
-      `[github-stars-grid] ★ P4 全量同步完成：${summary.total} 个 star / ${scan.pages} 页` +
+      `[github-star-manager] ★ P4 全量同步完成：${summary.total} 个 star / ${scan.pages} 页` +
         `（正文 ${scan.bodyPages} + 切片 ${scan.slicePages}）— 新增 ${added}、恢复 ${restored}、外部 unstar ${unstarred}、` +
         `回填 star 时间 ${backfilled}、元数据刷新 ${refreshed}`
     );
@@ -639,11 +639,11 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
     if (scan.nextTailEtag) outMeta.tailEtag = scan.nextTailEtag; // 尾页越界 etag（缺省=清空：尾页转正或整表兜底后新越界页待首探）
     gmSet(STORAGE_KEYS.fullSyncMeta, outMeta);
     const noEtag = scan.etags.filter((e) => !e).length;
-    console.log(`[github-stars-grid] ETag 基线：${scan.etags.length} 页已保存${noEtag ? `（${noEtag} 页响应缺 ETag 头，下次扫描直接整表）` : '（下次扫描逐页 304 免额度）'}`);
+    console.log(`[github-star-manager] ETag 基线：${scan.etags.length} 页已保存${noEtag ? `（${noEtag} 页响应缺 ETag 头，下次扫描直接整表）` : '（下次扫描逐页 304 免额度）'}`);
     return summary;
   } catch (err) {
     console.error(
-      '[github-stars-grid] ★ P4 全量同步失败（未改动任何数据）：',
+      '[github-star-manager] ★ P4 全量同步失败（未改动任何数据）：',
       err instanceof Error ? err.message : err
     );
     return null;

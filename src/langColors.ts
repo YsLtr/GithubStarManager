@@ -88,11 +88,11 @@ export function fetchLangColors(): Promise<void> {
       }
       pendingMisses.clear();
       nextFetchAt = 0; // 成功后允许下一次「未命中再获取」
-      console.log(`[github-stars-grid] 语言色已更新：${size} 语言（当前回退 ${fallbackLangs.size}）`);
+      console.log(`[github-star-manager] 语言色已更新：${size} 语言（当前回退 ${fallbackLangs.size}）`);
       recolorDots();
     })
     .catch((e) => {
-      console.warn('[github-stars-grid] 语言色获取失败，沿用现有数据', e);
+      console.warn('[github-star-manager] 语言色获取失败，沿用现有数据', e);
     })
     .finally(() => {
       inflight = null;

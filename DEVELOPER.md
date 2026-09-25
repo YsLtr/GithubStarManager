@@ -9,7 +9,7 @@
 - **运行环境**：Tampermonkey / Violentmonkey 等用户脚本管理器
 - **匹配页面**：`https://github.com/*`（单条 @match 覆盖全站；运行时按 `?tab=stars` 与仓库详情页特征分流）
 - **生效条件**：仅桌面端（视口宽度 ≥ 768px）
-- **产物**：单个 `dist/github-stars-grid.user.js`（无运行时依赖）
+- **产物**：单个 `dist/github-star-manager.user.js`（无运行时依赖）
 
 ## 2. 技术栈与命令
 
@@ -22,7 +22,7 @@
 ```bash
 pnpm install        # 安装依赖
 pnpm dev            # 开发服务器：改动走 HMR，无需手动往 Tampermonkey 里粘贴
-pnpm build          # 产出 dist/github-stars-grid.user.js
+pnpm build          # 产出 dist/github-star-manager.user.js
 pnpm typecheck      # tsc --noEmit
 pnpm check          # typecheck + build
 ```
@@ -50,7 +50,7 @@ GitHub 的 CSP 是 `script-src github.githubassets.com 'nonce-…'`，白名单�
 
 另有第三个坑：dev 代码经动态 `import()` 跑在 `unsafeWindow` 作用域，该作用域**没有 GM_api**（[vite-plugin-monkey#35](https://github.com/lisonge/vite-plugin-monkey/issues/35)）。已用 `vite.config.ts` 的 `server.mountGmApi: true` 解决（仅 dev 生效，产物不变）。
 
-不想折腾扩展时，退路是 `pnpm build` 后把 `dist/github-stars-grid.user.js` 重新装进 Tampermonkey —— 构建只要 ~100ms，代价是没有 HMR。
+不想折腾扩展时，退路是 `pnpm build` 后把 `dist/github-star-manager.user.js` 重新装进 Tampermonkey —— 构建只要 ~100ms，代价是没有 HMR。
 
 ## 3. 目录结构
 
@@ -370,7 +370,7 @@ pnpm build && node scripts/verify-css.cjs
 
 ### 浏览器冒烟测试
 
-`tests/smoke/fixture.html` 是仿 GitHub Stars 页面的最小 DOM，内置 GM API stub（内存 store）并加载 `dist/github-stars-grid.user.js`；`fixture-detail.html` 同理仿详情页。断言脚本用 `agent-browser-cli` 注入执行：
+`tests/smoke/fixture.html` 是仿 GitHub Stars 页面的最小 DOM，内置 GM API stub（内存 store）并加载 `dist/github-star-manager.user.js`；`fixture-detail.html` 同理仿详情页。断言脚本用 `agent-browser-cli` 注入执行：
 
 ```bash
 pnpm build
@@ -388,7 +388,7 @@ agent-browser-cli exec --tab <id> --file tests/smoke/assert-search.js
 1. 改 `package.json` 的 `version`（`vite.config.ts` 直接读取它写入脚本头）。
 2. `pnpm check`。
 3. 跑第 11 节的两项验证。
-4. 用 `dist/github-stars-grid.user.js` 覆盖安装，或作为 release 附件发布。
+4. 用 `dist/github-star-manager.user.js` 覆盖安装，或作为 release 附件发布。
 
 ## 13. 待办
 

@@ -52,7 +52,7 @@ export function promptForToken(notify = true): void {
   const tok = input.trim();
   if (!tok) {
     gmSet(STORAGE_KEYS.githubPat, '');
-    console.log('[github-stars-grid] token 已清除，外部 unstar 核对与 P4 同步暂停');
+    console.log('[github-star-manager] token 已清除，外部 unstar 核对与 P4 同步暂停');
     notifyTokenIssue('Token 已清除'); // 重开初始化面板（4.0.3：留空清除后不再静默消失）
     return;
   }
@@ -62,7 +62,7 @@ export function promptForToken(notify = true): void {
     return;
   }
   gmSet(STORAGE_KEYS.githubPat, tok);
-  console.log(`[github-stars-grid] token 已保存（${kind}），外部 unstar 核对与 P4 同步生效`);
+  console.log(`[github-star-manager] token 已保存（${kind}），外部 unstar 核对与 P4 同步生效`);
   if (notify) notifyTokenSaved(); // 保存成功 → 撤配置横幅 + 自动全量同步（index.ts 注册的 handler）
 }
 
@@ -107,7 +107,7 @@ function confirmExternalUnstar(repoId: string, path: string): boolean {
   if (getNote(repoId)) saveNote(repoId, '');
   if (!existed) {
     console.log(
-      `[github-stars-grid] ★ 核对确认外部 unstar: ${path}（标签/备注已备份入 24h 宽限期区，` +
+      `[github-star-manager] ★ 核对确认外部 unstar: ${path}（标签/备注已备份入 24h 宽限期区，` +
         '期间在详情页重新 star 可恢复）'
     );
   }

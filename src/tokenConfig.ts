@@ -69,7 +69,7 @@ export async function pasteFromClipboard(input: HTMLInputElement): Promise<void>
   } catch {
     input.focus();
     input.select();
-    console.warn('[github-stars-grid] 剪贴板读取被拒，请手动 Ctrl+V 粘贴 token');
+    console.warn('[github-star-manager] 剪贴板读取被拒，请手动 Ctrl+V 粘贴 token');
   }
 }
 
@@ -83,6 +83,6 @@ export function setTokenIssueHandler(fn: IssueHandler | null): void {
 
 /** 401 / 403(非限速) 统一入口：上报初始化面板；面板未挂载（非 stars 页/dev）则仅日志兜底 */
 export function notifyTokenIssue(detail: string): void {
-  console.error(`[github-stars-grid] Token 问题：${detail}`);
+  console.error(`[github-star-manager] Token 问题：${detail}`);
   if (issueHandler) issueHandler(detail);
 }

@@ -28,7 +28,7 @@ declare const GM_xmlHttpRequest: ((details: {
   ontimeout?: () => void;
 }) => unknown) | undefined;
 
-const LS_PREFIX = 'github-stars-grid::';
+const LS_PREFIX = 'github-star-manager::';
 /** 敏感键：只存 GM、绝不进 localStorage 镜像（PAT 已是强制 API 的硬门槛，泄露面必须收紧） */
 const SENSITIVE_KEYS = new Set<string>(['github_pat']);
 function lsRead(key: string): unknown {
@@ -53,7 +53,7 @@ function lsWrite(key: string, value: unknown): void {
   try {
     localStorage.setItem(LS_PREFIX + key, JSON.stringify(value));
   } catch (e) {
-    console.error('[github-stars-grid] localStorage 写入失败', e);
+    console.error('[github-star-manager] localStorage 写入失败', e);
   }
 }
 
@@ -91,7 +91,7 @@ export function gmSet(key: string, value: unknown): void {
     try {
       GM_setValue(key, value);
     } catch (e) {
-      console.error('[github-stars-grid] GM_setValue 失败,仅写 localStorage', e);
+      console.error('[github-star-manager] GM_setValue 失败,仅写 localStorage', e);
     }
   }
   // 始终镜像到 localStorage:GM 缺席的会话也能读到最新数据
@@ -104,7 +104,7 @@ export function gmRemove(key: string): void {
     try {
       GM_deleteValue(key);
     } catch (e) {
-      console.error('[github-stars-grid] GM_deleteValue 失败', e);
+      console.error('[github-star-manager] GM_deleteValue 失败', e);
     }
   }
   try {
@@ -133,10 +133,10 @@ export function gmRegisterMenuCommand(name: string, fn: () => void, options?: { 
     try {
       return GM_registerMenuCommand(name, fn, options);
     } catch (e) {
-      console.error('[github-stars-grid] GM_registerMenuCommand 失败', e);
+      console.error('[github-star-manager] GM_registerMenuCommand 失败', e);
     }
   } else {
-    console.info('[github-stars-grid] GM_registerMenuCommand 不可用（非 TM 环境），脚本菜单项（Token 设置 / 立即同步 / 隐藏 Lists）均不显示');
+    console.info('[github-star-manager] GM_registerMenuCommand 不可用（非 TM 环境），脚本菜单项（Token 设置 / 立即同步 / 隐藏 Lists）均不显示');
   }
   return undefined;
 }
@@ -144,13 +144,13 @@ export function gmRegisterMenuCommand(name: string, fn: () => void, options?: { 
 /** 移除菜单命令（4.5.0：与 gmRegisterMenuCommand 返回的 id 配对；仅作 options.id 更新不可用时的回退） */
 export function gmUnregisterMenuCommand(id: unknown): void {
   if (typeof GM_unregisterMenuCommand !== 'function') {
-    console.info('[github-stars-grid] GM_unregisterMenuCommand 不可用（非 TM 环境或旧版 TM），跳过菜单项移除');
+    console.info('[github-star-manager] GM_unregisterMenuCommand 不可用（非 TM 环境或旧版 TM），跳过菜单项移除');
     return;
   }
   try {
     GM_unregisterMenuCommand(id);
   } catch (e) {
-    console.error('[github-stars-grid] GM_unregisterMenuCommand 失败', e);
+    console.error('[github-star-manager] GM_unregisterMenuCommand 失败', e);
   }
 }
 
@@ -162,7 +162,7 @@ export function gmOpenInTab(url: string): void {
       GM_openInTab(url, { active: true });
       return;
     } catch (e) {
-      console.error('[github-stars-grid] GM_openInTab 失败，回退 window.open', e);
+      console.error('[github-star-manager] GM_openInTab 失败，回退 window.open', e);
     }
   }
   window.open(url, '_blank', 'noopener');

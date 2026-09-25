@@ -201,7 +201,7 @@ function transformAndReveal(animate: boolean, retries = 12): void {
     initFiltersFromUrl();
     done = transformStarsList();
   } catch (err) {
-    console.error('[github-stars-grid] transformStarsList 执行失败', err);
+    console.error('[github-star-manager] transformStarsList 执行失败', err);
   }
   if (done) {
     starsNavPending = false;
@@ -216,12 +216,12 @@ function transformAndReveal(animate: boolean, retries = 12): void {
     return;
   }
   if (retries > 0) {
-    if (retries === 12) console.log('[github-stars-grid] 转换目标未就绪，150ms 后重试');
+    if (retries === 12) console.log('[github-star-manager] 转换目标未就绪，150ms 后重试');
     window.setTimeout(() => transformAndReveal(animate, retries - 1), 150);
     return;
   }
   // 重试耗尽：解除隐藏 + 撤样式，恢复原生页面（诊断日志要能一眼看出失配）
-  console.error('[github-stars-grid] 转换重试耗尽，已恢复原生页面（选择器可能再次失配）');
+  console.error('[github-star-manager] 转换重试耗尽，已恢复原生页面（选择器可能再次失配）');
   revealTurboHide();
   deactivateStars();
   revealBootHide('转换失败/重试耗尽');
@@ -287,7 +287,7 @@ function showSetupBanner(issueDetail?: string): void {
       tokMsg.textContent = '前缀不对：预期 github_pat_（fine-grained）或 ghp_（classic）';
       return;
     }
-    console.log(`[github-stars-grid] Token 已保存（${kind}），自动触发全量同步`);
+    console.log(`[github-star-manager] Token 已保存（${kind}），自动触发全量同步`);
     bar.remove();
     notifyTokenSaved();
   });
@@ -503,7 +503,7 @@ function whenReady(fn: () => void): void {
 
 // document-start 启动顺序：先同步藏页面（防闪烁），DOM 就绪后再跑主逻辑
 // 加载标记：F12 控制台能看到这行 = 脚本已执行；看不到 = TM 没注入（启用状态/@match/未安装）
-console.log('[github-stars-grid] script loaded (document-start)');
+console.log('[github-star-manager] script loaded (document-start)');
 // Lists 隐藏门控（4.5.0）：document-start 即按开关决定 CSS 规则是否生效，关闭时不留闪隐窗口
 applyHideListsGate();
 installBootHide();
@@ -513,7 +513,7 @@ whenReady(() => {
   try {
     init();
   } catch (err) {
-    console.error('[github-stars-grid] init 失败，解除防闪烁隐藏', err);
+    console.error('[github-star-manager] init 失败，解除防闪烁隐藏', err);
     revealTurboHide();
     deactivateStars();
     revealBootHide('init 异常');

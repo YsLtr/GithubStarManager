@@ -47,7 +47,7 @@ export function registerHideListsMenu(): void {
     gmSet(STORAGE_KEYS.hideLists, !isHideListsEnabled());
     applyHideListsGate();
     hideListsSection();
-    console.log(`[github-stars-grid] Hide Lists 切换为 ${isHideListsEnabled() ? '开（隐藏）' : '关（显示）'}`);
+    console.log(`[github-star-manager] Hide Lists 切换为 ${isHideListsEnabled() ? '开（隐藏）' : '关（显示）'}`);
     repositionHandler?.(); // 已存在的配置面板按新落位重挂（🟡-1）
     refresh();
   };
