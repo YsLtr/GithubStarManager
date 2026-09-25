@@ -27,6 +27,18 @@ declare const GM_xmlHttpRequest: ((details: {
   onerror?: () => void;
   ontimeout?: () => void;
 }) => unknown) | undefined;
+/** GM_download（调用时判定）：TM 侧要求下载功能开启且文件扩展名在白名单内，
+ *  失败原因经 onerror 的 download.error 回传（not_enabled/not_whitelisted/not_permitted/not_succeeded）。
+ *  文档：https://www.tampermonkey.net/documentation.php?q=api:GM_download */
+declare const GM_download:
+  | ((details: {
+      url: string | Blob | File;
+      name: string;
+      saveAs?: boolean;
+      onload?: () => void;
+      onerror?: (err: { error?: string; details?: string }) => void;
+    }) => unknown)
+  | undefined;
 
 const LS_PREFIX = 'github-star-manager::';
 /** 敏感键：只存 GM、绝不进 localStorage 镜像（PAT 已是强制 API 的硬门槛，泄露面必须收紧） */
@@ -193,4 +205,43 @@ export function gmFetchText(url: string): Promise<string> {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.text();
   });
+}
+
+/** 触发文件下载（调用时判定）。
+ *  优先 GM_download：可由 TM 弹出「另存为」并由扩展接管保存（页面 CSP 影响不到）。
+ *  TM 缺失（dev/非 TM 环境）或 GM_download 抛错时回退原生 Blob + <a download>。
+ *  注意：TM 侧「下载」功能未开或扩展名不在白名单时**不会抛错**，只走 onerror，
+ *  因此必须把 error 原因回传调用方，不能只判同步异常。
+ *  @returns 已成功交给下载器 = true；同步抛错且回退也失败 = false */
+export function gmDownloadFile(data: Blob, filename: string): boolean {
+  if (typeof GM_download === 'function') {
+    try {
+      GM_download({ url: data, name: filename });
+      return true;
+    } catch (e) {
+      console.error('[github-star-manager] GM_download 失败，回退原生下载', e);
+    }
+  }
+  return nativeDownload(data, filename);
+}
+
+/** 原生下载兜底：Blob + <a download> 点击。github.com 的 CSP 无 sandbox 指令，Chrome 下不被拦 */
+function nativeDownload(data: Blob, filename: string): boolean {
+  const url = URL.createObjectURL(data);
+  try {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    return true;
+  } catch (e) {
+    console.error('[github-star-manager] 原生下载失败', e);
+    return false;
+  } finally {
+    // 延迟撤销：立即 revoke 会让部分浏览器拿到空文件
+    window.setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
 }

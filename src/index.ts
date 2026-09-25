@@ -6,7 +6,7 @@ import wideCss from './styles/wide.css?inline';
 import { installBootHide, isStarsPage, revealBootHide, revealTurboHide } from './boot';
 import { applyHideListsGate, getRepoIdMeta, getStarButton, getStarsMainColumn, hideListsSection, isHideListsEnabled, isStarButtonActive } from './dom';
 import { extractAndCacheRepoFromDetailPage } from './extract';
-import { exitCustomMode, initFiltersFromUrl } from './filters';
+import { applyFilters, exitCustomMode, initFiltersFromUrl } from './filters';
 import { hasApiData, registerSyncMenu, runFullSync, scheduleProbeSync } from './fullSync';
 import { interceptPagination } from './pagination';
 import { registerTokenMenu } from './starCheck';
@@ -22,6 +22,7 @@ import { cleanupExpiredUnstarred, markRepoStarred, markRepoUnstarred } from './s
 import { registerHideListsMenu, setHideListsRepositionHandler } from './ui/hideListsMenu';
 import { migrateTagsIfNeeded } from './storage/tags';
 import { transformStarsList } from './transform';
+import { registerExportImportMenu, runImportSync, setAfterImportHandler } from './ui/exportImportMenu';
 import { isDesktop } from './utils';
 
 /* ============================================================
@@ -461,6 +462,13 @@ function init(): void {
   registerSyncMenu();
   // Hide Lists 开关（4.5.0）：任意匹配页可切换，默认开 = 隐藏 Lists 区块
   registerHideListsMenu();
+  // 导入 / 导出（4.7.0）：任意匹配页可用（TM 菜单），数据落盘后不导航
+  registerExportImportMenu();
+  // 导入完成后的收尾：仅在「Stars 页且网格已存在」时按当前筛选重绘，然后走同步同一路径
+  setAfterImportHandler(() => {
+    if (isStarsPage() && document.querySelector('.stars-grid-container')) applyFilters({ keepPage: true });
+    runImportSync(() => runFullSync('button'));
+  });
   // 开关切换后重挂已存在的配置面板（🟡-1：关态下面板须挂网格列顶，不占 Lists 槽位）
   setHideListsRepositionHandler(() => repositionSetupBanner());
 

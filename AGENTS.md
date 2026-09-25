@@ -8,12 +8,33 @@
 
 ## 当前状态
 
-版本 **4.6.0**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
-4.6.0 = **改名与存储身份切换**（脚本名 `GitHub Stars Grid View` → `GithubStarManager`、产物 `dist/github-star-manager.user.js`、`package.json.name` → `github-star-manager`、localStorage 镜像前缀 → `github-star-manager::`；`@namespace` 与 CSS 类名前缀 `gsm-` **不动**）。
+版本 **4.7.0**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
 
-**改名的代价（已在设计阶段定案，见 `docs/adr/0002-rename-and-storage-identity.md`）**：TM 以 `@name` + `@namespace` 判定脚本身份，改名后是**另一个脚本**、GM 存储为空；旧数据经 localStorage 镜像才会自动回流，而 `LS_PREFIX` 已同时更换，所以**旧数据不再自动迁移，按用户决定放弃**（若日后需要找回，装回旧脚本即可读旧 GM 存储）。
+4.7.0 = **导入导出（标签 / 备注 / 相关仓库元数据）**，**尚未真机验证**：
 
-4.5.0「Hide Lists 开关」**已由用户真机验证通过**，其 10 条清单保留在下方仅作历史参考。
+- 纯逻辑 `src/storage/exportImport.ts`（不碰 DOM）+ 交互 `src/ui/exportImportMenu.ts`（TM 菜单「📤 导出数据」「📥 导入数据」）；
+- 导出走 `GM_download`（**4.7.0 新增 `@grant`**，TM 会提示权限变更）并带原生 `<a download>` 兜底；导入走隐藏 `<input type="file">` + `FileReader`；
+- 包格式与合并语义见 `docs/adr/0001-export-import-format.md`，术语见 `CONTEXT.md`；
+- 纯逻辑已有 45 项 node 断言：`pnpm test:exportimport`（**全绿**，覆盖导出清洗 / 校验拒绝路径 / 合并 / 幂等 / 用户隔离）。
+
+4.6.0 = 改名与存储身份切换（脚本名 → `GithubStarManager`、产物 `dist/github-star-manager.user.js`、镜像前缀 → `github-star-manager::`；`@namespace` 与 CSS 前缀 `gsm-` 不动）。**改名的代价**：TM 以 `@name` + `@namespace` 判定脚本身份，改名后是另一个脚本、GM 存储为空；镜像前缀同时更换 → 旧数据不自动迁移，按用户决定放弃（装回旧脚本可读旧 GM 存储）。见 `docs/adr/0002-rename-and-storage-identity.md`。
+
+4.5.0「Hide Lists 开关」**已由用户真机验证通过**，其清单保留在下方仅作历史参考。
+
+### 4.7.0 待真机验证清单（重装 `dist/github-star-manager.user.js` 后逐条走）
+
+0. **先确认 TM 接受新增 `@grant GM_download`**（装新版时 TM 会提示权限变更）；控制台有 `[github-star-manager] script loaded (document-start)`。
+1. **导出**：TM 菜单「📤 导出数据」→ 文件下载成功；文件名形如 `github-star-manager-<uid>-YYYY-MM-DD-HHmm.json`（本地时间）；打开确认**无 `github_pat`、无 `etags`**，`repoCache` 只含有标签或有备注的仓库。
+2. **导出清洗**：包内备注无 trim 后为空的项；非空备注文本未被 trim（前导空格保留）。
+3. **同账号往返**：加几个标签/改几条备注 → 导出 → 手动删掉这些标签/备注 → 导入 → `confirm` 摘要数量正确 → 数据恢复 + 结果提示 + **自动同步**。
+4. **校验失败**：随便找个 JSON / 把 `schemaVersion` 改成 2 → `alert` 报原因，**不弹 confirm**、数据零变化。
+5. **身份不符**：手改包内 `user.id` → 拒绝并提示双方 ID。
+6. **空备注不覆盖**：文件里某仓库备注为空白、本地该仓库备注有内容 → 导入后本地备注仍在。
+7. **非 Stars 页导入**（仓库详情页）：成功、**无导航**、无重渲染报错。
+8. **无 token 导入**：提示跳过自动同步，**不弹 Token 输入框**。
+9. **confirm 点取消** → 零写入（刷新后数据未变）。
+10. **刷新/新标签页**后导入的数据仍在（GM 存储）。
+11. **TM 白名单**：若导出报「下载未能启动」，检查 TM 设置（需 Advanced 模式）「下载」区的扩展名白名单是否含 `json`，加入后重试（这是 TM 侧限制，不是脚本缺陷）。
 
 ### 4.5.0 已验证清单（历史参考，重装 `dist/github-star-manager.user.js` 后逐条走）
 
@@ -62,6 +83,15 @@
 - GitHub **没有**创建个人 PAT 的 API，快捷获取永久只能靠预填 URL 深链（来源：<https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens>）。
 - 预填参数表（Pre-filling fine-grained PAT details using URL parameters）同上一链接；组织级端点 `/orgs/{org}/personal-access-tokens` 是审批/撤销管理，**非创建**。
 
+**D9 · 导入导出（4.7.0）**
+
+- 导出包**只含本地权威数据 + 与之相关的派生数据**（有标签或有备注的仓库元数据）；**不含** `github_pat`、同步元数据（ETag 基线）、宽限期备份——理由见 `docs/adr/0001-export-import-format.md`。
+- 合并语义：标签并集（本地在前）、备注以文件为准但**空备注不覆盖**本地非空备注、仓库元数据只补空缺。判空统一为 **trim 后为空**（`saveNote` 同步收紧）。
+- 校验 `kind` + `schemaVersion` + `user.id` **三者齐备才放行**；`kind` 是协议身份、**永不随脚本改名变动**，文件名 slug 才随改名变。
+- 交互：破坏性确认用 `window.confirm`、失败用 `window.alert`（**失败不弹 confirm**）；导入不导航，仅在「Stars 页且网格已存在」时重绘；导入后走 `runFullSync('button')` 同路径，**无 token 则提示跳过、不弹 Token 输入框**。
+- 下载：`GM_download`（4.7.0 新增 `@grant`）+ 原生 `<a download>` 兜底。TM 侧「下载」功能未开或扩展名不在白名单时**不抛错、只走 `onerror`**，故必须把失败当失败处理（弹提示引导去 TM 设置加白名单）。
+- 分层铁律：`storage/exportImport.ts` 是**纯逻辑**（不碰 DOM、不弹对话框、不触发同步），交互全在 `ui/exportImportMenu.ts`。
+
 ---
 
 ## dev 模式必须知道的三件事
@@ -109,8 +139,8 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
 
 ## 下一步
 
-1. 用户真机验证上面的 10 条清单；发现问题 → 另开修复提交并更新本文件清单。
-2. 后续阶段（详见 `todo` 与 `DEVELOPER.md` §13）：GraphQL 分页调研、周期自动同步、非本人 star 页 `GET /users/{u}/starred` 接入、导入导出、分页按钮可跳页。
+1. 用户真机验证上面的 **4.7.0 清单**（导入导出）；发现问题 → 另开修复提交并更新本文件清单。
+2. 后续阶段（详见 `todo` 与 `DEVELOPER.md` §13）：GraphQL 分页调研、周期自动同步、非本人 star 页 `GET /users/{u}/starred` 接入、分页按钮可跳页。
 3. 未消化的架构建议：单遍 facet 计算、响应式漏斗（见 `starmgr-arch-review-report.md`）。
 
 ## 快速构建约定
@@ -126,6 +156,7 @@ pnpm check     # tsc --noEmit + build（改完必跑）
 pnpm build     # → dist/github-star-manager.user.js
 pnpm dev       # HMR，需先解决上面 CSP 那条；入口 http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js
 pnpm build && node scripts/verify-css.cjs   # 产物 CSS 与源 CSS 等价性
+pnpm test:exportimport   # 导入导出纯逻辑 45 项断言（无需浏览器）
 ```
 
 ---

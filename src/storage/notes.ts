@@ -13,11 +13,12 @@ export function loadAllNotes(): NoteMap {
   return gmGet<NoteMap>(notesKey(getStarsUserId()), {});
 }
 
-/** 覆盖写入单个仓库的备注；空文本等价于删除 */
+/** 覆盖写入单个仓库的备注；**trim 后为空**等价于删除（只输入空格/换行 = 清空，4.7.0 与导入导出的判空判据统一）。
+ *  注：只影响写入，存量空白备注不做批量清洗（无渲染危害，不值得为显示瑕疵做全体用户写操作）。 */
 export function saveNote(repoId: string, text: string): void {
   const key = notesKey(getStarsUserId());
   const all = gmGet<NoteMap>(key, {});
-  if (!text) {
+  if (!text.trim()) {
     delete all[repoId];
   } else {
     all[repoId] = text;

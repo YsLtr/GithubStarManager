@@ -78,13 +78,15 @@ src/
   storage/
     repoCache.ts      仓库缓存 CRUD
     tags.ts           标签存储 + 用户 ID 解析 + 备注键规则 + 迁移
-    notes.ts          备注存储
+    notes.ts          备注存储（saveNote 判空 = trim 后为空）
     pendingDelete.ts  待删除区（unstar 宽限期，含标签/备注备份）
+    exportImport.ts   导入导出**纯逻辑**（4.7.0）：buildExportPackage / validateExportPackage / applyImportPackage；不碰 DOM、不弹对话框
   ui/
     cards.ts          卡片构建 + API 星星按钮（PUT/DELETE Bearer PAT）
     tagFilter.ts      标签 pill、筛选栏（原位重绘 = 共现收窄，勾选不关 popover）、pill 选中态同步、refreshTagFilterBar（候选刷新唯一入口）
     hideListsMenu.ts  TM 菜单「🙈 隐藏 Lists 区块」开关（持久键 stars_hide_lists + 标签刷新 + 门控即时生效）
     notes.ts          备注渲染与编辑
+    exportImportMenu.ts  TM 菜单「📤 导出 / 📥 导入」交互层（隐藏 file input、confirm/alert、下载触发、结果提示）
   styles/
     base.css          ≥768px 布局与组件样式（第 4 节 Lists 隐藏规则带 html.gsm-hide-lists 门控前缀）
     wide.css          ≥1200px 三栏布局
@@ -97,11 +99,15 @@ tests/smoke/
   assert-transform.js     转换/标签/备注/筛选栏断言
   assert-search.js        搜索断言
   assert-detail.js        详情页提取断言
+tests/exportImport/
+  prepare.cjs             把被测模块编译成 node 可 require 的 .cjs（产物在 .build/，已 gitignore）
+  run.cjs                 导入导出纯逻辑断言：导出清洗 / 校验拒绝路径 / 合并语义 / 幂等 / 用户隔离
 scripts/
   verify-css.cjs      校验构建产物中的 CSS 与源 CSS 等价
 ```
 
 > 循环依赖：`filters.ts ⟷ ui/tagFilter.ts`，以及 `filters.ts → ui/cards.ts → starCheck.ts → filters.ts`（三跳）。这些路径上所有导出都是函数声明，靠提升解析，不会在模块初始化阶段取值，因此安全；新增模块时不要把这类互相引用的值用在模块顶层。
+
 
 ## 4. 数据流
 
@@ -236,6 +242,29 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 
 存储键包含用户 ID，同一浏览器下不同 GitHub 账号的标签 / 备注互不干扰。
 
+### 导入导出（4.7.0，**不新增存储键**）
+
+导入导出只读写既有键（`stars_tags_<uid>` / `stars_notes_<uid>` / `stars_repo_cache`），因此没有新的 `STORAGE_KEYS` 条目。导出包是**一次性文件**，不落盘到 GM 存储。
+
+```jsonc
+{
+  "kind": "github-star-manager-export",     // 协议身份，永不随脚本改名变动
+  "schemaVersion": 1,                       // 字段增删才 +1
+  "exportedAt": "2026-09-25T02:30:00.000Z", // ISO 8601 UTC（文件名给人看，此字段给程序看）
+  "user": { "id": "12345" },               // 自声明归属；repoId 键不含命名空间，故导入侧必须显式校验
+  "data": {
+    "tags": { "<repoId>": ["tag"] },
+    "notes": { "<repoId>": "文本" },         // 已剔除 trim 后为空的项；非空文本不 trim
+    "repoCache": { "<repoId>": { "name": "..." } } // 只含有标签或有备注的仓库
+  }
+}
+```
+
+**不含**：`github_pat`（敏感）、`stars_full_sync_meta`（ETag 基线与 token 身份 + 远端瞬时状态绑定，跨设备导入会让「全 304 = 无变化」误判为「缓存即现值」）、`stars_pending_delete`（临时状态）。
+合并语义与拒绝路径见 `docs/adr/0001-export-import-format.md`。
+
+导入导出**不新增 `@grant`**（`GM_download` 除外，4.7.0 新增）：导出走 `GM_download`（Blob 直传，TM 侧需开启下载功能且扩展名在白名单，否则 `onerror` 回 `not_whitelisted`）并带原生 `<a download>` 兜底；导入走隐藏 `<input type="file">` + `FileReader`。
+
 ### 详情页数据缓存
 
 用户访问仓库详情页时提取元数据写入缓存，使从未在 Stars 页浏览过的仓库也能在跨页筛选时显示完整卡片。星态未知（embedded JSON 缺 star 字段 / 找不到 toggler）时 **fail-closed 不写缓存**；解析失败不覆盖已有好数据。
@@ -365,6 +394,23 @@ filterState.totalPages    // ceil(count / NATIVE_PAGE_SIZE)
 
 ## 11. 测试
 
+### 导入导出纯逻辑（4.7.0）
+
+合并语义与校验拒绝路径直接决定数据安全，因此用无浏览器的 node 断言覆盖（不需要 GitHub 页面）：
+
+```bash
+pnpm test:exportimport   # = prepare.cjs（编译被测模块 → tests/exportImport/.build/）+ run.cjs（45 项断言）
+```
+
+覆盖范围（改动 `storage/exportImport.ts` 或 `storage/notes.ts` 的判空逻辑后必跑）：
+
+- 导出**不含** `github_pat` / 同步元数据（ETag）/ 宽限期备份；`repoCache` 只含有标签或有备注的仓库；空白备注不进包、非空备注不被 trim；
+- 校验：`kind` / `schemaVersion` / `user.id` 缺失或不匹配 / 结构不合法 全部拒绝（不部分解析、不写键）；
+- 合并：标签并集且本地在前、备注导入优先但空值不覆盖、仓库元数据只补空缺；
+- 幂等：同一包连导两次，第二轮 `tagsAdded/notesApplied/repoCacheAdded` 全为 0；
+- `saveNote` 判空 = trim 后为空；存储按用户 ID 隔离。
+
+
 ### 构建产物 CSS 等价性
 
 ```bash
@@ -397,4 +443,4 @@ agent-browser-cli exec --tab <id> --file tests/smoke/assert-search.js
 
 ## 13. 待办
 
-见仓库根目录 `todo`。其中「导入导出功能」在缓存架构下需要新增 storage 模块 + UI 入口。
+见仓库根目录 `todo`。

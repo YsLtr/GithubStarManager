@@ -8,3 +8,6 @@ dist/
 .claude/settings.local.json
 .playwright-cli/
 .diag/
+# 导入导出测试的编译产物
+tests/exportImport/.build/
+tests/exportImport/.tmp/

@@ -1,0 +1,175 @@
+/**
+ * TM 菜单「导入 / 导出」入口（4.7.0）。
+ *
+ * 分层：本文件只管**交互**（TM 菜单、隐藏 file input、confirm / alert、下载触发、结果提示），
+ * 数据的构造/校验/合并全在 storage/exportImport.ts 的纯逻辑层。
+ *
+ * 关键取舍（docs/adr/0001-export-import-format.md「交互与流程」）：
+ * - 校验失败 → alert 报原因且**不弹 confirm**（不存在可执行的操作，同一种对话框会让用户以为「点确定就能强行导入」）；
+ * - 破坏性确认 → `window.confirm`（脚本只跑在 github.com，不引入页面内确认条）；
+ * - 导入后不导航、不重渲染；**仅**在「Stars 页且网格已存在」时按当前筛选重绘（由 index.ts 的回调完成）；
+ * - 导入完成后直接走标题行 Sync 的同一路径 `runFullSync('button')`；**无 token 时提示并跳过、不弹 Token 输入框**。
+ */
+import { buildExportFilename } from '../constants';
+import { gmDownloadFile, gmRegisterMenuCommand } from '../gm';
+import { getGitHubPat } from '../starCheck';
+import {
+  applyImportPackage,
+  buildExportPackage,
+  validateExportPackage,
+  type ExportPackage,
+  type ImportReport,
+} from '../storage/exportImport';
+
+/** 导入完成后的收尾动作（index.ts 注入：重渲染 + 触发同步）。放在注入里避免菜单↔fullSync 循环导入 */
+export type AfterImportHandler = (report: ImportReport) => void;
+let afterImport: AfterImportHandler | null = null;
+
+/** index.ts 注册：导入落盘成功后的收尾（重渲染 + 同步 + 结果提示） */
+export function setAfterImportHandler(fn: AfterImportHandler | null): void {
+  afterImport = fn;
+}
+
+/* ---------------- 导出 ---------------- */
+
+function doExport(): void {
+  const pkg = buildExportPackage(); // userId 缺失时返回 null（未登录 / 取不到 ID）
+  if (!pkg) {
+    window.alert('导出失败：取不到当前 GitHub 用户 ID（未登录？）。');
+    return;
+  }
+
+  const filename = buildExportFilename(pkg.user.id);
+  const blob = new Blob([JSON.stringify(pkg, null, 2)], { type: 'application/json' });
+  const ok = gmDownloadFile(blob, filename);
+  if (!ok) {
+    window.alert('下载未能启动。若使用 Tampermonkey，请在设置（需 Advanced 模式）的「下载」区把 json 加入允许的扩展名，或改用浏览器原生下载。');
+    return;
+  }
+  console.log(
+    `[github-star-manager] 已导出：${filename}（标签仓库 ${Object.keys(pkg.data.tags).length}、` +
+      `备注 ${Object.keys(pkg.data.notes).length}、仓库元数据 ${Object.keys(pkg.data.repoCache).length}）`
+  );
+}
+
+/* ---------------- 导入 ---------------- */
+
+/** 结果摘要文案（导入完成的 alert 与 console 共用） */
+function reportText(r: ImportReport): string {
+  const parts = [
+    `标签：新增 ${r.tagsAdded} 条关联（当前共 ${r.tagRepos} 个仓库带标签）`,
+    `备注：写入 ${r.notesApplied} 条`,
+  ];
+  if (r.notesOverwritten > 0) parts.push(`其中覆盖本地原有备注 ${r.notesOverwritten} 条`);
+  if (r.notesSkippedEmpty > 0) parts.push(`跳过空备注 ${r.notesSkippedEmpty} 条`);
+  if (r.repoCacheAdded > 0) parts.push(`补入仓库元数据 ${r.repoCacheAdded} 条`);
+  return parts.join('；');
+}
+
+/** 导入前的摘要：让用户在 confirm 里看到「将发生什么」，而不是抽象的「确定导入？」 */
+function confirmText(pkg: ExportPackage, currentId: string): string {
+  const tagCount = Object.keys(pkg.data.tags).length;
+  const noteCount = Object.keys(pkg.data.notes).length;
+  const cacheCount = Object.keys(pkg.data.repoCache).length;
+  const when = new Date(pkg.exportedAt).toLocaleString();
+  return (
+    `将从导出包导入到当前账号（${currentId}）：\n\n` +
+    `导出时间：${when}\n` +
+    `带标签的仓库：${tagCount}\n` +
+    `备注：${noteCount}\n` +
+    `仓库元数据：${cacheCount}\n\n` +
+    `合并方式：标签取并集；备注以文件为准（文件里的空备注不会覆盖你本地已有的备注）。\n` +
+    `注意：导入会覆盖你本地与文件同名的备注，且不会自动备份，请确认已保存好当前数据。\n\n` +
+    `确定导入吗？`
+  );
+}
+
+/** 导入主流程：读文件 → 解析 → 校验 → confirm → 应用 → 收尾（同步/提示） */
+function importFromFile(file: File): void {
+  const reader = new FileReader();
+  reader.onerror = () => {
+    window.alert('读取文件失败，请重试。');
+  };
+  reader.onload = () => {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(String(reader.result));
+    } catch {
+      window.alert('文件不是合法的 JSON，已取消导入。');
+      return;
+    }
+
+    const result = validateExportPackage(raw);
+    if (!result.ok) {
+      // 校验失败：alert 报原因，且**不弹 confirm**（此时不存在可执行的操作）
+      window.alert(`导入已取消：${result.reason}`);
+      return;
+    }
+
+    const pkg = result.pkg;
+    if (!window.confirm(confirmText(pkg, pkg.user.id))) {
+      console.log('[github-star-manager] 导入已取消（用户取消确认）');
+      return;
+    }
+
+    let report: ImportReport;
+    try {
+      report = applyImportPackage(pkg);
+    } catch (e) {
+      console.error('[github-star-manager] 导入写入失败：', e);
+      window.alert(`导入写入失败：${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+
+    console.log(`[github-star-manager] 导入完成：${reportText(report)}`);
+    window.alert(`导入完成。\n\n${reportText(report)}\n\n接下来会自动同步一次以刷新仓库数据。`);
+    afterImport?.(report);
+  };
+  reader.readAsText(file);
+}
+
+/** 选择文件：注入隐藏 <input type="file">（用户脚本无法直接唤起文件对话框） */
+function pickFile(): void {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json,.json';
+  input.style.display = 'none';
+  const cleanup = (): void => input.remove();
+  input.addEventListener('change', () => {
+    const file = input.files && input.files[0];
+    cleanup();
+    if (!file) return;
+    importFromFile(file);
+  });
+  // 用户直接关掉文件对话框时不会触发 change：用窗口重新获得焦点兜底回收节点
+  window.addEventListener('focus', () => window.setTimeout(cleanup, 1000), { once: true });
+  document.body.appendChild(input);
+  input.click();
+}
+
+/* ---------------- 菜单注册 ---------------- */
+
+/** 导入后触发同步：与标题行 Sync 同一路径；无 token 时提示并跳过（不弹 Token 输入框） */
+export function runImportSync(sync: () => Promise<unknown>): void {
+  if (!getGitHubPat()) {
+    window.alert('导入已完成，但未配置 GitHub Token，已跳过自动同步。配置 Token 后可在 TM 菜单点「🔄 立即全量同步」。');
+    return;
+  }
+  void sync().then((sum) => {
+    if (!sum) {
+      // 401/403 已由 fullSync 的 reportAuthIssue → notifyTokenIssue 把**具体原因**写进配置面板；
+      // 这里只记日志，不再上报，避免用笼统文案覆盖那条更准确的提示。
+      console.warn('[github-star-manager] 导入后的自动同步未成功，数据已导入但仓库元数据可能未刷新');
+    }
+  });
+}
+
+/** TM 菜单注册（任意匹配页可用；菜单回调无用户激活，故不依赖 window.open 之类的手势要求） */
+export function registerExportImportMenu(): void {
+  gmRegisterMenuCommand('📤 导出数据（标签/备注）', () => {
+    doExport();
+  });
+  gmRegisterMenuCommand('📥 导入数据（标签/备注）', () => {
+    pickFile();
+  });
+}

@@ -50,6 +50,24 @@ export const STORAGE_KEYS = {
 /** 4.0.10 起只清不写的历史键（3.0.9–4.0.9 的到货快照/裁决/位移管线已删）：init 一次性删除 GM + localStorage 镜像 */
 export const LEGACY_STORAGE_KEYS = ['stars_page_snapshots', 'stars_star_verdicts', 'stars_shift_pending'] as const;
 
+/* ---------------- 导出包（4.7.0 导入导出） ---------------- */
+
+/** 导出包协议身份：**永不随脚本改名变动**（改名只影响文件名 slug）。校验「这是不是本项目的文件」靠它 */
+export const EXPORT_KIND = 'github-star-manager-export';
+/** 导出包结构版本：字段增删才 +1；旧包必须能被新脚本识别并明确拒绝，而不是部分解析 */
+export const EXPORT_SCHEMA_VERSION = 1;
+
+/** 本地时区的 `YYYY-MM-DD-HHmm`（文件名用；Windows 禁用字符 `:` 已避开） */
+function localStamp(d: Date): string {
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+}
+
+/** 导出文件名：`<脚本 slug>-<用户 id>-<本地时间>.json`。文件名给人看，包内 exportedAt 给程序看（ISO 8601 UTC） */
+export function buildExportFilename(userId: string): string {
+  return `${__SCRIPT_SLUG__}-${userId}-${localStamp(new Date())}.json`;
+}
+
 export const STAR_FILL_SVG = '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" class="octicon octicon-star-fill"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"></path></svg>';
 export const STAR_EMPTY_SVG = '<svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" class="octicon octicon-star"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Zm0 2.445L6.615 5.5a.75.75 0 0 1-.564.41l-3.097.45 2.24 2.184a.75.75 0 0 1 .216.664l-.528 3.084 2.769-1.456a.75.75 0 0 1 .698 0l2.77 1.456-.53-3.084a.75.75 0 0 1 .216-.664l2.24-2.183-3.096-.45a.75.75 0 0 1-.564-.41L8 2.694Z"></path></svg>';
 
