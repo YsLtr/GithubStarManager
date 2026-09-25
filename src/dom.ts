@@ -6,16 +6,8 @@ export function getRepoIdMeta(): HTMLMetaElement | null {
   return document.querySelector('meta[name="octolytics-dimension-repository_id"]');
 }
 
-/** 从 star/unstar toggler 容器判断仓库是否已 star */
-export function isStarredInToggler(root: Element): boolean {
-  const starredDiv = root.querySelector('.starred');
-  return !!starredDiv && getComputedStyle(starredDiv).display !== 'none';
-}
-
-/** 仓库卡片（列表项）的 star toggler 容器 */
-export function getToggler(root: ParentNode): Element | null {
-  return root.querySelector('.js-toggler-container.starring-container');
-}
+/* 4.9.0：isStarredInToggler / getToggler（旧版详情页 star toggler 探测）已随 extract.ts 一并删除，
+ * 唯一消费者是详情页缓存提取。 */
 
 /* ================================================================
  * Stars 页：仓库条目与筛选行
@@ -160,43 +152,11 @@ export function hideListsSection(): void {
 }
 
 /* ================================================================
- * 仓库详情页：新版是 React 应用，数据在内嵌 JSON 里
+ * 仓库详情页（4.9.0 起只监听 star 状态）
  *
- * 侧栏类名形如 `SidebarAbout-module__socialStat__nnJPx`，哈希后缀每次部署
- * 都会变，不能作为锚点；内嵌 JSON 是稳定得多的数据源。
+ * 内嵌 JSON 提取（readEmbeddedJson / getSidebarAbout / SidebarAboutPayload）已随
+ * extract.ts 删除——它服务详情页缓存提取，现无消费者。
  * ================================================================ */
-
-/** 读取页面内嵌 JSON（React 页面的数据源） */
-export function readEmbeddedJson<T>(target: string): T | null {
-  const scripts = document.querySelectorAll<HTMLScriptElement>('script[type="application/json"]');
-  for (const s of Array.from(scripts)) {
-    if ((s.getAttribute('data-target') || '') !== target) continue;
-    try {
-      return JSON.parse(s.textContent || '') as T;
-    } catch {
-      // 结构异常，继续找下一个同名脚本
-    }
-  }
-  return null;
-}
-
-/** 详情页 About 侧栏的内嵌数据 */
-export interface SidebarAboutPayload {
-  description?: string;
-  stargazerCount?: number;
-  watcherCount?: number;
-  forksCount?: number;
-  ownerLogin?: string;
-  repoName?: string;
-  topics?: Array<{ name: string }>;
-  repo?: { license?: { spdxId?: string } | null; isArchived?: boolean } | null;
-  star?: { viewerHasStarred?: boolean } | null;
-}
-
-export function getSidebarAbout(): SidebarAboutPayload | null {
-  const data = readEmbeddedJson<{ payload?: { sidebarAbout?: SidebarAboutPayload } }>('react-app.embeddedData');
-  return (data && data.payload && data.payload.sidebarAbout) || null;
-}
 
 /**
  * 详情页的 star 按钮（新版 React 组件）。

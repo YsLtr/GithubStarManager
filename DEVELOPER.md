@@ -66,7 +66,6 @@ src/
   gm.ts               GM API 兼容层（调用时判定；localStorage 兜底与迁移；PAT 不写镜像）
   boot.ts             document-start 防闪烁隐藏生命周期（FOUC）
   dom.ts              DOM 查询工具 + Hide Lists 开关引擎（isHideListsEnabled / applyHideListsGate / hideListsSection / clearListsHiddenMarks）
-  extract.ts          仓库详情页数据提取 → 写缓存
   transform.ts        列表 → 卡片网格转换（藏原生列表与分页器、挂顶部分页器与 Sync 按钮、Starred Topics 迁右栏）
   filters.ts          筛选引擎：queryRepos 统一查询管线、4 排序键×双向、facet 候选收窄、renderBrowsePage 本地分页、applyFilters、exitCustomMode、initFiltersFromUrl
   search.ts           搜索表单拦截（纯本地）
@@ -95,10 +94,10 @@ legacy/
   github-stars-grid.v2.6.user.js   迁移前的单文件版本（冻结，仅供对照/回滚）
 tests/smoke/
   fixture.html            仿 GitHub Stars 页面的最小 DOM + GM API stub + 加载构建产物
-  fixture-detail.html     仿仓库详情页（React 内嵌 JSON 形态）
+  fixture-detail.html     仿仓库详情页（宽限期流程：预置缓存 + unstar/re-star）
   assert-transform.js     转换/标签/备注/筛选栏断言
   assert-search.js        搜索断言
-  assert-detail.js        详情页提取断言
+  assert-detail.js        详情页宽限期断言（4.9.0 起不再断言缓存提取）
 tests/exportImport/
   prepare.cjs             把被测模块编译成 node 可 require 的 .cjs（产物在 .build/，已 gitignore）
   run.cjs                 导入导出纯逻辑断言：导出清洗 / 校验拒绝路径 / 合并语义 / 幂等 / 用户隔离
@@ -115,7 +114,7 @@ scripts/
 GitHub API (PAT)                                GitHub DOM（无缓存 / 详情页）
     │                                                │
     ├─ scheduleProbeSync() 进页 idle 自动（冷却 60s + 有 PAT → 统一 runFullSync('auto')）
-    │        │                                      ├─ 详情页 ─► extractAndCacheRepoFromDetailPage()
+    │        │                                      ├─ 详情页 ─► watchRepoStarState（4.9.0 起仅监听 unstar 宽限期，不再写缓存）
     │        └─ scanStarred() 单遍条件扫描          └─ 无缓存首访 ─► 原生页 + .gsm-setup-banner
     │             │                                   （保存成功 savedHandler 自动 runFullSync → transformAndReveal）
     │             ├─ 新增/恢复 ─► saveRepoData / markRepoStarred
@@ -155,8 +154,7 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
     "lang": "TypeScript",              // 主语言
     "stars": 1234,
     "forks": 56,
-    "updated": "Updated 3 days ago",   // 展示用相对时间文本
-    "updatedAt": "2026-09-01T00:00:00Z",
+    "updatedAt": "2026-09-01T00:00:00Z",   // = REST pushed_at（最后 push；「Recently active」排序依据，卡片相对时间现算源）
     "starredAt": "2026-08-01T00:00:00Z", // star 时间（同步回填；「Recently starred」排序依据）
     "private": false, "fork": false, "isTemplate": false, "mirror": false, // Type 筛选四标志
     "ts": 1708000000000                // 缓存写入时间
@@ -210,7 +208,8 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
   "etags": ["...", "..."],  // 逐页 ETag 基线（全部 304 才算无变化；含空值则下次整表重建）
   "tailEtag": "\"...\"",    // 越界空页 ETag（条件探尾：304=仍空免额度）
   "lastFullSyncAt": 1780000000000,
-  "count": 464              // star 总数（本地分页总页数 = ceil(count / 30)）
+  "count": 464,             // star 总数（本地分页总页数 = ceil(count / 30)）
+  "dataRev": 2              // 缓存数据代次（4.9.0）：≠ DATA_REV 时 scanStarred 强制一次整表回补（字段语义变更的存量迁移阀门）
 }
 ```
 
@@ -265,9 +264,19 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 
 导入导出**不新增 `@grant`**（`GM_download` 除外，4.7.0 新增）：导出**只用 `GM_download`（Blob 直传），刻意不做原生 `<a download>` 兜底**——原生下载能绕过 TM 的扩展名白名单，等于架空用户的安全设置。TM 侧需开启下载功能且扩展名在白名单，否则**不抛错、只走 `onerror` 回 `not_whitelisted`**（`gmDownloadFile` 观测不到，见 §6）；导入走隐藏 `<input type="file">` + `FileReader`。
 
-### 详情页数据缓存
+### 详情页（4.9.0：只监听，不写缓存）
 
-用户访问仓库详情页时提取元数据写入缓存，使从未在 Stars 页浏览过的仓库也能在跨页筛选时显示完整卡片。星态未知（embedded JSON 缺 star 字段 / 找不到 toggler）时 **fail-closed 不写缓存**；解析失败不覆盖已有好数据。
+仓库详情页分支只做两件事：`cleanupExpiredUnstarred()`（宽限期到期清扫）+ `watchRepoStarState()`（点 star 按钮 → `markRepoStarred` / `markRepoUnstarred` 宽限管线）。
+
+4.9.0 删除了「详情页提取元数据写缓存」（原 extract.ts）：它写的字段（name/desc/stars/forks）API 全覆盖，而它独有的时间字段是脏数据源——DOM 第一个 `<relative-time>` 与 API 语义不一致（曾互相覆写 `updatedAt`），缓存的相对时间文本（`updated`）永不刷新。**详情页访问不再提前刷新缓存**，元数据一律等同步。
+
+### `updatedAt` 语义 = `pushed_at`（4.9.0 修正）
+
+「Recently active」排序键 `updatedAt` 现取 REST `pushed_at`（最后 push 到任一分支），此前误用 `updated_at`（仓库对象元数据变更，改描述/被标星都会动它，与代码活跃度无关）。依据：GitHub 官方 OpenAPI `sort-starred` 参数原文「`updated` means when the repository was last pushed to」（渲染页丢失该句）；考证记录见 `docs/research-updated-vs-pushed-at.md`。
+
+卡片右下角的 `Updated X ago` 不再落盘（`updated` 字段已删），渲染时由 `formatRelative(updatedAt)` 现算——相对时间随渲染刷新，且不再有「2 条缺文本」的空窗。
+
+存量数据靠 `stars_full_sync_meta.dataRev`（`constants.ts DATA_REV`）迁移：代次不匹配 → `scanStarred` 强制一次无条件整表回补（与 4.2.0 Type 标志回补同一阀门模式），整表重建时写入当前代次。`loadRepoCache()` 读取即清洗 `updated` / `langColor` 两个死字段。
 
 ### 同步与进页自动探测
 
@@ -347,7 +356,7 @@ filterState.totalPages    // ceil(count / NATIVE_PAGE_SIZE)
 
 ### 添加新的卡片字段
 
-1. `extract.ts`：从详情页提取新字段并加入 `saveRepoData` 调用
+1. `fullSync.ts` 的 `parseItem`：从 API repo 对象回填（唯一写入口；DOM 提取已于 4.9.0 删除）
 2. `types.ts`：在 `RepoData` 上补字段
 3. `ui/cards.ts` 的 `buildCardFromCache()`：渲染缓存卡片
 4. `fullSync.ts` 的 `parseItem`：从 API 条目回填（若远端有该字段）
@@ -399,7 +408,7 @@ filterState.totalPages    // ceil(count / NATIVE_PAGE_SIZE)
 合并语义与校验拒绝路径直接决定数据安全，因此用无浏览器的 node 断言覆盖（不需要 GitHub 页面）：
 
 ```bash
-pnpm test:exportimport   # = prepare.cjs（编译被测模块 → tests/exportImport/.build/）+ run.cjs（45 项断言）
+pnpm test:exportimport   # = prepare.cjs（编译被测模块 → tests/exportImport/.build/）+ run.cjs（51 项断言）
 ```
 
 覆盖范围（改动 `storage/exportImport.ts` 或 `storage/notes.ts` 的判空逻辑后必跑）：
@@ -409,6 +418,7 @@ pnpm test:exportimport   # = prepare.cjs（编译被测模块 → tests/exportIm
 - 合并：标签并集且本地在前、备注导入优先但空值不覆盖、仓库元数据只补空缺；
 - 幂等：同一包连导两次，第二轮 `tagsAdded/notesApplied/repoCacheAdded` 全为 0；
 - `saveNote` 判空 = trim 后为空；存储按用户 ID 隔离。
+- `loadRepoCache` 读取即清洗：`updated` / `langColor` 死字段与脏 `lang` 一次性剔除并持久化（4.8.0）。
 
 
 ### 构建产物 CSS 等价性

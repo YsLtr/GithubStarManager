@@ -7,6 +7,10 @@ export const WIDE_BREAKPOINT = 1200;
 /** unstar 后数据的宽限期：24 小时 */
 export const GRACE_PERIOD = 24 * 60 * 60 * 1000;
 
+/** 缓存数据代次：字段语义变更时 +1，旧代次缓存强制一次无条件整表回补（scanStarred 的升级回补阀门）。
+ * 1 = 4.2.0 前无 Type 四标志；2 = 4.9.0 updatedAt 从 updated_at 改为 pushed_at + 删 updated/langColor 死字段。 */
+export const DATA_REV = 2;
+
 /** 每页卡片数（与 GitHub 原生分页一致；4.0.0 本地切页用） */
 export const NATIVE_PAGE_SIZE = 30;
 
@@ -54,7 +58,9 @@ export const LEGACY_STORAGE_KEYS = ['stars_page_snapshots', 'stars_star_verdicts
 
 /** 导出包协议身份：**永不随脚本改名变动**（改名只影响文件名 slug）。校验「这是不是本项目的文件」靠它 */
 export const EXPORT_KIND = 'github-star-manager-export';
-/** 导出包结构版本：字段增删才 +1；旧包必须能被新脚本识别并明确拒绝，而不是部分解析 */
+/** 导出包结构版本：**兼容性破坏**才 +1（字段增删若旧包仍可完整解析则不升版，未知字段导入侧会被
+ * loadRepoCache 死字段清洗剔除）；升版 = 新脚本明确拒绝旧包而不是部分解析。4.8.0 删除 updated/langColor
+ * 死字段属非破坏变更：旧包可完整解析，故保持 1。 */
 export const EXPORT_SCHEMA_VERSION = 1;
 
 /** 本地时区的 `YYYY-MM-DD-HHmm`（文件名用；Windows 禁用字符 `:` 已避开） */

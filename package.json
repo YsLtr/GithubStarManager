@@ -1,7 +1,7 @@
 {
   "name": "github-star-manager",
   "private": true,
-  "version": "4.7.0",
+  "version": "4.8.0",
   "type": "module",
   "description": "GitHub Stars 页面卡片网格视图油猴脚本",
   "scripts": {

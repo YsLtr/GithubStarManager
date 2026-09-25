@@ -44,7 +44,7 @@
       stars123: e123.stars,
       forks123: e123.forks,
       updatedAt123: e123.updatedAt,
-      updatedIsRelative: /^Updated .+ ago$/.test(e123.updated || ''),
+      updatedFieldGone: !('updated' in e123), // 4.9.0：updated 字段已删，卡片相对时间由渲染现算
       name456: e456.name,
       lang456: e456.lang,
       stars456: e456.stars,

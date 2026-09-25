@@ -8,18 +8,34 @@
 
 ## 当前状态
 
-版本 **4.7.0**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
+版本 **4.8.0**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
 
-4.7.0 = **导入导出（标签 / 备注 / 相关仓库元数据）**，**尚未真机验证**：
+4.8.0 = **时间字段语义修正 + 删冗余**，**尚未真机验证**：
 
+- 「Recently active」排序键 `updatedAt` 从 REST `updated_at`（元数据变更）改取 **`pushed_at`**（最后 push）——依据 GitHub 官方 OpenAPI `sort-starred` 原文（渲染页丢失该句），考证见 `docs/research-updated-vs-pushed-at.md`；
+- 删 `RepoData.updated`（缓存相对时间文本）：卡片右下角时间改为渲染时 `formatRelative(updatedAt)` 现算；
+- **删 `src/extract.ts` 整个模块**（详情页元数据提取）：它写的字段 API 全覆盖、时间字段是双语义脏写源（zai-org/ZCode 案例源头）；详情页分支只保留 `watchRepoStarState` 宽限期监听；
+- 存量迁移：`stars_full_sync_meta.dataRev`（`DATA_REV=2`）阀门强制**一次**无条件整表回补；`loadRepoCache()` 读取即清洗 `updated`/`langColor` 死字段；
+- DOM 兼容层同步删除：`dom.ts` 的 `readEmbeddedJson` / `getSidebarAbout` / `SidebarAboutPayload` / `getToggler` / `isStarredInToggler`（唯一消费者是 extract.ts）。
+
+4.7.0 = 导入导出（标签 / 备注 / 相关仓库元数据），**尚未真机验证**：
 - 纯逻辑 `src/storage/exportImport.ts`（不碰 DOM）+ 交互 `src/ui/exportImportMenu.ts`（TM 菜单「📤 导出数据」「📥 导入数据」）；
 - 导出走 `GM_download`（**4.7.0 新增 `@grant`**，TM 会提示权限变更），**刻意不做原生 `<a download>` 兜底**（那等于绕过 TM 的扩展名安全设置）；导入走隐藏 `<input type="file">` + `FileReader`；
 - 包格式与合并语义见 `docs/adr/0001-export-import-format.md`，术语见 `CONTEXT.md`；
-- 纯逻辑已有 45 项 node 断言：`pnpm test:exportimport`（**全绿**，覆盖导出清洗 / 校验拒绝路径 / 合并 / 幂等 / 用户隔离）。
+- 纯逻辑已有 51 项 node 断言：`pnpm test:exportimport`（**全绿**，覆盖导出清洗 / 校验拒绝路径 / 合并 / 幂等 / 用户隔离）。
 
 4.6.0 = 改名与存储身份切换（脚本名 → `GithubStarManager`、产物 `dist/github-star-manager.user.js`、镜像前缀 → `github-star-manager::`；`@namespace` 与 CSS 前缀 `gsm-` 不动）。**改名的代价**：TM 以 `@name` + `@namespace` 判定脚本身份，改名后是另一个脚本、GM 存储为空；镜像前缀同时更换 → 旧数据不自动迁移，按用户决定放弃（装回旧脚本可读旧 GM 存储）。见 `docs/adr/0002-rename-and-storage-identity.md`。
 
 4.5.0「Hide Lists 开关」**已由用户真机验证通过**，其清单保留在下方仅作历史参考。
+
+### 4.8.0 待真机验证清单（重装 `dist/github-star-manager.user.js` 后逐条走）
+
+1. **首扫强制整表**：控制台出现 `缓存代次旧（updatedAt 语义=updated_at，升级回补）→ 无条件整表拉取一次`，同步完成后**不再**出现该行（dataRev 已写入）；
+2. **Recently active 排序变化**：按「Recently active」排序，`justjavac/ali-words` 这类代码停更但近期改过元数据的仓库应**沉底**（旧版会顶到最前，因为它 4 年没提交但 `updated_at` 是新的）；
+3. **卡片时间**：每张卡片右下角都有 `Updated X ago`（旧版有 2 条没有）；且 F5 后时间文本**随当前时间变**（现算而非冻结文本——如 3 小时前看是 `5 hours ago`，3 小时后刷新应变 `8 hours ago`）；
+4. **导出包**：`📤 导出数据` 打开文件确认 `repoCache` 条目里**没有 `updated` 和 `langColor` 字段**、`updatedAt` 的值与 GitHub 仓库页「最新提交时间」一致（而不是被标星刷新的元数据时间）；
+5. **详情页行为**：进入任意已 star 仓库详情页 → 控制台无报错；GM 存储中该仓库缓存**不变**（详情页不再写缓存）；点 star 按钮取消再恢复 → 宽限期流程正常（标签/备注恢复）；
+6. **4.7.0 导入导出不回归**：`pnpm test:exportimport` 51/51（本地已验）。
 
 ### 4.7.0 待真机验证清单（重装 `dist/github-star-manager.user.js` 后逐条走）
 
@@ -123,7 +139,7 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
 | stars 列表项 | `col-12…py-4.border-bottom` | `…tmp-py-4.border-bottom.color-border-muted` |
 | repoId | `data-toggle-for` / `details-user-list-<id>` | `user-list-menu[data-repository-id]` |
 | 原生筛选栏 | `.TableObject.border-bottom` + `mt-5` | flex 行 + `tmp-mt-5`，锚点 `#stars-language-filter-menu-button` |
-| 详情页 | `.BorderGrid` / `#repo-stars-counter-star` / `.starred form[action$="/unstar"]` | React + CSS-module；数据在 `script[data-target="react-app.embeddedData"]` → `payload.sidebarAbout`；star 按钮 `button[data-testid="star-button"]`，状态在 `aria-label` |
+| 详情页 | `.BorderGrid` / `#repo-stars-counter-star` / `.starred form[action$="/unstar"]` | React + CSS-module；star 按钮 `button[data-testid="star-button"]`，状态在 `aria-label`（4.8.0 起详情页**只读 star 状态**，不再提取元数据——原内嵌 JSON 提取已随 extract.ts 删除） |
 | 搜索框 | `input[name=q]`、`form[action$="tab=stars"]` | **未变**，原拦截逻辑仍有效 |
 | Lists 标题行 | `.my-3…` + 内联隐藏即可 | `tmp-my-3…`，且 `.d-flex` 的 `!important` 压过内联 `display:none`，必须 `element.style.setProperty('display','none','important')` |
 
@@ -139,7 +155,7 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
 
 ## 下一步
 
-1. 用户真机验证上面的 **4.7.0 清单**（导入导出）；发现问题 → 另开修复提交并更新本文件清单。
+1. 用户真机验证 **4.8.0 清单**（时间语义）+ **4.7.0 清单**（导入导出）；发现问题 → 另开修复提交并更新本文件清单。
 2. 后续阶段（详见 `todo` 与 `DEVELOPER.md` §13）：GraphQL 分页调研、周期自动同步、非本人 star 页 `GET /users/{u}/starred` 接入、分页按钮可跳页。
 3. 未消化的架构建议：单遍 facet 计算、响应式漏斗（见 `starmgr-arch-review-report.md`）。
 
@@ -156,7 +172,7 @@ pnpm check     # tsc --noEmit + build（改完必跑）
 pnpm build     # → dist/github-star-manager.user.js
 pnpm dev       # HMR，需先解决上面 CSP 那条；入口 http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js
 pnpm build && node scripts/verify-css.cjs   # 产物 CSS 与源 CSS 等价性
-pnpm test:exportimport   # 导入导出纯逻辑 45 项断言（无需浏览器）
+pnpm test:exportimport   # 导入导出纯逻辑 51 项断言（无需浏览器）
 ```
 
 ---

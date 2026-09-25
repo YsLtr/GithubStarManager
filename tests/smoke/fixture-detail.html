@@ -8,7 +8,10 @@
 <meta name="octolytics-dimension-repository_nwo" content="alpha/one">
 <script>
   window.__gmStore = {
-    stars_repo_cache: {},
+    // 4.9.0 起详情页不再写缓存（extract.ts 已删），宽限期流程需要预置条目（模拟同步产物）
+    stars_repo_cache: {
+      '123': { name: 'alpha/one', desc: '第一个仓库的描述', stars: 29208, forks: 1024, updatedAt: '2026-09-20T13:25:54Z' }
+    },
     stars_pending_delete: {},
     'stars_tags_999': { '123': ['ai', 'tool'] },
     'stars_notes_999': { '123': '这是备注' }

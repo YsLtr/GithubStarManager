@@ -6,7 +6,7 @@
 //   （官方默认序 sort=created&direction=desc 已显式钉死；请求 URL 带参数会换 ETag 表示，升级后首扫全 200 重建基线属预期）。
 //
 // 权威边界（AGENTS「数据同步设计决策」）：
-// - 远端权威 = 星标成员关系、star 时间、仓库元数据（desc/lang/stars/forks/updatedAt）；
+// - 远端权威 = 星标成员关系、star 时间、仓库元数据（desc/lang/stars/forks/updatedAt=pushed_at）；
 // - 本地权威 = 标签与备注（本模块绝不触碰 tags/notes 的写接口）。
 //
 // 差异三向：
@@ -28,7 +28,7 @@
 // 已知局限：classic token 无 repo scope 时私有仓库的 star 不在列表里 → 会被误判
 // unstar（与 P2.5 核对的 404 歧义同源）；fine-grained 选 All repositories 无此问题。
 
-import { STORAGE_KEYS, SYNC_SVG } from './constants';
+import { DATA_REV, STORAGE_KEYS, SYNC_SVG } from './constants';
 import { gmGet, gmRegisterMenuCommand, gmSet } from './gm';
 import { applyExternalUnstar, getGitHubPat, promptForToken } from './starCheck';
 import { notifyTokenIssue } from './tokenConfig';
@@ -85,13 +85,17 @@ function parseItem(raw: unknown): RemoteStar | null {
   if (typeof repo.language === 'string' && repo.language) meta.lang = repo.language;
   if (typeof repo.stargazers_count === 'number') meta.stars = repo.stargazers_count;
   if (typeof repo.forks_count === 'number') meta.forks = repo.forks_count;
-  if (typeof repo.updated_at === 'string') meta.updatedAt = repo.updated_at;
+  // 4.9.0：取 pushed_at（最后 push 到任一分支）而非 updated_at（仓库对象元数据变更）。
+  // 「Recently active」必须按 pushed_at 排：GitHub 官方 OpenAPI sort-starred 原文
+  // 「`updated` means when the repository was last pushed to」；用 updated_at 会把
+  // 「改过描述/被标星但代码停更」的仓库顶到最前。pushed_at 可为 null（空仓库）→ 留空沉底。
+  if (typeof repo.pushed_at === 'string') meta.updatedAt = repo.pushed_at;
   // Type 筛选四标志（4.2.0）：REST repo 对象恒有 private/fork/is_template/mirror_url，逐项校验后写入
   if (typeof repo.private === 'boolean') meta.private = repo.private;
   if (typeof repo.fork === 'boolean') meta.fork = repo.fork;
   if (typeof repo.is_template === 'boolean') meta.isTemplate = repo.is_template;
   if ('mirror_url' in repo) meta.mirror = repo.mirror_url != null;
-  // 展示文本 updated（"Updated 3 days ago"）API 还原不出来 → 省略该键，合并时保留旧值
+  // 展示文本不再落盘（4.9.0 删 updated 字段）：卡片渲染时由 formatRelative(updatedAt) 现算
 
   return {
     repoId: String(repo.id),
@@ -382,6 +386,13 @@ async function scanStarred(tok: string, meta: FullSyncMeta): Promise<ScanOutcome
     !!meta.lastFullSyncAt &&
     Date.now() - meta.lastFullSyncAt <= FULL_SYNC_TTL_MS &&
     !!baseline && baseline.length > 0 && baseline.every((e) => !!e);
+  // 升级回补阀门（4.9.0）：字段语义变更（updatedAt: updated_at → pushed_at）后，
+  // 存量值是旧语义而切片条目 304 时跳过刷新 → 必须整表回补一次换血。dataRev 在整表
+  // 重建时写入（outMeta），之后此阀门恒不触发，与 Type 标志阀门同一模式。
+  if (meta.dataRev !== DATA_REV) {
+    console.log('[github-star-manager] 缓存代次旧（updatedAt 语义=updated_at，升级回补）→ 无条件整表拉取一次');
+    return fullPullOutcome(tok);
+  }
   // 升级回补阀门（4.2.0）：缓存缺 Type 四标志 → 无条件整表回补一次（parseItem 会给全部条目写满标志，之后回归条件扫描）
   if (!typeFlagsComplete(loadRepoCache())) {
     console.log('[github-star-manager] 缓存缺 Type 标志（升级回补）→ 无条件整表拉取一次');
@@ -635,7 +646,7 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
     );
     document.querySelector('.gsm-setup-banner')?.remove(); // 同步成功即撤配置横幅（缓存已就绪）
     // 写元数据：逐页 ETag 基线（304 页沿用旧校验值、正文页用响应值，剥 W/ 规范形）+ 首页 etag（兼容旧字段）+ lastFullSyncAt + 总数
-    const outMeta: FullSyncMeta = { etag: scan.etag, etags: scan.etags, lastFullSyncAt: Date.now(), count: scan.items.length };
+    const outMeta: FullSyncMeta = { etag: scan.etag, etags: scan.etags, lastFullSyncAt: Date.now(), count: scan.items.length, dataRev: DATA_REV };
     if (scan.nextTailEtag) outMeta.tailEtag = scan.nextTailEtag; // 尾页越界 etag（缺省=清空：尾页转正或整表兜底后新越界页待首探）
     gmSet(STORAGE_KEYS.fullSyncMeta, outMeta);
     const noEtag = scan.etags.filter((e) => !e).length;

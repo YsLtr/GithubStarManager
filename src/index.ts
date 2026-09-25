@@ -5,7 +5,6 @@ import persistentCss from './styles/persistent.css?inline';
 import wideCss from './styles/wide.css?inline';
 import { installBootHide, isStarsPage, revealBootHide, revealTurboHide } from './boot';
 import { applyHideListsGate, getRepoIdMeta, getStarButton, getStarsMainColumn, hideListsSection, isHideListsEnabled, isStarButtonActive } from './dom';
-import { extractAndCacheRepoFromDetailPage } from './extract';
 import { applyFilters, exitCustomMode, initFiltersFromUrl } from './filters';
 import { hasApiData, registerSyncMenu, runFullSync, scheduleProbeSync } from './fullSync';
 import { interceptPagination } from './pagination';
@@ -485,10 +484,11 @@ function init(): void {
 
   const repoIdMeta = getRepoIdMeta();
   const isRepoDetailPage = !isStarsPage() && !!repoIdMeta;
-  // 仓库详情页：缓存数据 + 监听 unstar + 提前返回
+  // 仓库详情页：监听 unstar（宽限期恢复）+ 提前返回。
+  // 4.9.0 起不再从详情页提取缓存数据（extract.ts 已删）：它写的字段 API 全覆盖，
+  // 且 DOM 时间字段与 API 语义不一致，曾是回写脏态的源头（zai-org/ZCode 案例）。
   if (isRepoDetailPage) {
     cleanupExpiredUnstarred();
-    extractAndCacheRepoFromDetailPage();
     watchRepoStarState(repoIdMeta.getAttribute('content') || '');
     return;
   }

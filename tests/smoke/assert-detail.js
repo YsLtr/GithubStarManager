@@ -13,8 +13,9 @@
       .some((s) => (s.textContent || '').includes('.stars-grid-card'));
     out.gridShouldBeAbsent = document.querySelectorAll('.stars-grid-container').length;
 
-    // 1. 内嵌 JSON 提取
-    out.cached = store.stars_repo_cache['123'] || null;
+    // 1.（4.9.0 起详情页不再提取缓存：extract.ts 已删，写的字段 API 全覆盖）
+    //    此处仅确认不写缓存
+    out.cached_shouldBeNull = store.stars_repo_cache['123'] || null;
 
     // 2. 点 star 按钮（aria-label 从 Unstar 翻到 Star）→ 应移入待删除区并备份标签/备注
     btn().setAttribute('aria-label', 'Star alpha/one');

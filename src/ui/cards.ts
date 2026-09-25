@@ -3,7 +3,7 @@ import { getLangColor } from '../langColors';
 import { markRepoStarred, markRepoUnstarred } from '../storage/pendingDelete';
 import { getGitHubPat } from '../starCheck';
 import { notifyTokenIssue } from '../tokenConfig';
-import { escapeHtml } from '../utils';
+import { escapeHtml, formatRelative } from '../utils';
 import type { RepoData } from '../types';
 
 
@@ -60,7 +60,10 @@ export function buildCardFromCache(repoId: string, data: RepoData): HTMLDivEleme
   }
 
   if (mainParts) cardHTML += `<span class="stars-meta-main">${mainParts}</span>`;
-  if (data.updated) cardHTML += `<span class="stars-meta-updated">${escapeHtml(data.updated)}</span>`;
+  // 4.9.0：updated（缓存的相对时间文本）字段已删——展示文本一律从 updatedAt 现算，
+  // 老数据在等待全量回补期间可能暂无 updatedAt，此时不显示（与旧版缺 updated 的表现一致）
+  const updatedText = data.updatedAt ? 'Updated ' + formatRelative(data.updatedAt) : '';
+  if (updatedText) cardHTML += `<span class="stars-meta-updated">${escapeHtml(updatedText)}</span>`;
 
   cardHTML += '</div>';
 
