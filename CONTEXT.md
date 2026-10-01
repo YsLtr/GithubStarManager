@@ -47,9 +47,19 @@ _Avoid_: 同步通知、diff 报告
 ### 凭证
 
 **classic token**:
-用 scope 体系授权的用户凭证（`ghp_` 前缀的 classic PAT，或 `gho_` 前缀的 OAuth app 授权）——脚本写星标的唯一可用凭证类型，脚本统称它 classic token。
+用 scope 体系授权的用户凭证（`ghp_` 前缀的 classic PAT，或 `gho_` 前缀的 OAuth app 授权）——脚本 **REST 写通道**的唯一可用凭证类型（另一条写通道是网页写路径，不需要 token）。
 _Avoid_: 老式 token、旧版 token、经典 token
 
 **fine-grained token**:
 用细粒度权限体系授权的凭证（`github_pat_` 前缀）。它能读 star 列表，但**先天无法**改星标——对不属于本人的公开仓库只被授予 read-only，且此缺口 GitHub 已宣布不计划补齐。
 _Avoid_: 细粒度令牌、新版 token
+
+### 写路径
+
+**写通道**:
+脚本改变星标状态的两条通道：**REST**（`PUT`/`DELETE /user/starred/{o}/{r}`，需 classic token）与**网页写路径**（需登录会话）。脚本**静默分派**——调用方与用户都不感知走了哪条。
+_Avoid_: 写模式、写方式、写接口
+
+**网页写路径**:
+GitHub 网页自己用的 star/unstar 内部端点（`POST /{owner}/{repo}/star`），用浏览器登录会话认证，**与 token 类型无关**。它是无 classic token 或 REST 被拒时的回落通道，也是 fine-grained 用户获得写能力的唯一现实手段。无契约、无 `x-ratelimit-*`，属玻璃地板。
+_Avoid_: 网页 API、内部接口、cookie 方案

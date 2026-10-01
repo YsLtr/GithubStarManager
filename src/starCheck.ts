@@ -15,8 +15,8 @@
 //   "User permissions for Starring" 列出全部 5 个 /user/starred* 端点）。
 //
 import { applyFilters } from './filters';
-import { STAR_EMPTY_SVG, STORAGE_KEYS } from './constants';
-import { gmGet, gmRegisterMenuCommand, gmSet } from './gm';
+import { STAR_EMPTY_SVG, STAR_FILL_SVG, STORAGE_KEYS } from './constants';
+import { gmRegisterMenuCommand, gmSet } from './gm';
 import { filterState } from './state';
 import { getNote, saveNote } from './storage/notes';
 import { loadPendingDelete, savePendingDelete } from './storage/pendingDelete';
@@ -26,12 +26,18 @@ import { renderNotes } from './ui/notes';
 import { renderTags } from './ui/tagFilter';
 import type { PendingDeleteMap, RepoCache } from './types';
 
-import { detectTokenKind, notifyTokenIssue, notifyTokenSaved, openTokenCreator } from './tokenConfig';
+import {
+  detectTokenKind,
+  getToken,
+  notifyTokenIssue,
+  notifyTokenSaved,
+  openClassicTokenCreator,
+  openTokenCreator,
+} from './tokenConfig';
 /* ---------------- token ---------------- */
 
-export function getGitHubPat(): string {
-  return gmGet<string>(STORAGE_KEYS.githubPat, '') || '';
-}
+/** 已保存的 PAT；'' = 未配置。实现在 tokenConfig（该模块只依赖 constants/gm，不参与导入环）。 */
+export const getGitHubPat = getToken;
 
 
 /** TM 菜单入口：输入/清除 PAT。任意 github.com 页面可设（init 无条件注册）。 */
@@ -40,10 +46,11 @@ export function promptForToken(notify = true): void {
   const cur = getGitHubPat();
   const masked = cur ? `${cur.slice(0, 12)}…${cur.slice(-4)}` : '未设置';
   const input = window.prompt(
-    'GitHub PAT，用于全量同步 star 列表与外部 star 变化核对。\n' +
-      '· classic：ghp_ 前缀；核对/同步私有仓库需勾选 repo scope（仅公开仓库可不勾）\n' +
-      '· fine-grained：github_pat_ 前缀；账号权限 Account permissions → Starring → Write（读列表 Read 也行，但本脚本加星/去星按钮要 Write），\n' +
-      '  仓库范围选 All repositories\n' +
+    'GitHub PAT，用于全量同步 star 列表、以及加星/取消星。\n' +
+      '· classic：ghp_ 前缀（OAuth 的 gho_ 也行）——读列表与写星标都能用，推荐。\n' +
+      '  核对/同步私有仓库需勾 repo scope；只关心公开仓库可不勾。\n' +
+      '· fine-grained：github_pat_ 前缀——读列表够用，但 GitHub 不允许它改别人的公开仓库星标。\n' +
+      '  仓库范围建议选 All repositories（否则私有仓库的 star 会被漏读而误判为已取关）。\n' +
       '（留空 = 删除当前 token 并重新打开配置面板；保存后立即生效）\n\n' +
       `当前：${masked}`,
     ''
@@ -58,7 +65,7 @@ export function promptForToken(notify = true): void {
   }
   const kind = detectTokenKind(tok);
   if (!kind) {
-    window.alert('无法识别的 token 前缀：预期 ghp_（classic）或 github_pat_（fine-grained）。未保存。');
+    window.alert('无法识别的 token 前缀：预期 ghp_ / gho_（classic）或 github_pat_（fine-grained）。未保存。');
     return;
   }
   gmSet(STORAGE_KEYS.githubPat, tok);
@@ -71,7 +78,10 @@ export function registerTokenMenu(): void {
   gmRegisterMenuCommand('⭐ 设置 GitHub Token', () => {
     promptForToken();
   });
-  gmRegisterMenuCommand('🔑 快捷创建 GitHub Token（预填最小权限）', () => {
+  gmRegisterMenuCommand('🔑 快捷创建 Token：classic（推荐，可写星标）', () => {
+    openClassicTokenCreator();
+  });
+  gmRegisterMenuCommand('🔑 快捷创建 Token：fine-grained（只能读）', () => {
     openTokenCreator();
   });
 }
@@ -111,21 +121,27 @@ function confirmExternalUnstar(repoId: string, path: string): boolean {
         '期间在详情页重新 star 可恢复）'
     );
   }
-  updateGridCard(repoId);
+  syncCardAfterStarChange(repoId, false);
   return !existed;
 }
 
-/** 视图同步：卡片原地翻成未 star 态并刷新标签/备注（与手动点星星按钮的表现一致） */
-function updateGridCard(repoId: string): void {
+/**
+ * 视图同步：把某个仓库的卡片星标态改成 `isStarred` 并刷新其标签/备注（与手动点星星按钮的表现一致）。
+ * 恢复（up）与外部取关（down）共用；`updateGridCard` 是它的 down 特例。
+ */
+export function syncCardAfterStarChange(repoId: string, isStarred: boolean): void {
   const card = document.querySelector<HTMLElement>(`.stars-grid-card[data-repo-id="${repoId}"]`);
   if (!card) return;
 
   const btn = card.querySelector<HTMLButtonElement>('.stars-star-btn');
-  if (btn && btn.classList.contains('starred')) {
-    btn.classList.remove('starred');
-    btn.classList.add('unstarred');
-    btn.innerHTML = STAR_EMPTY_SVG;
-    btn.title = 'Star';
+  if (btn) {
+    const currentlyStarred = btn.classList.contains('starred');
+    if (currentlyStarred !== isStarred) {
+      btn.classList.toggle('starred', isStarred);
+      btn.classList.toggle('unstarred', !isStarred);
+      btn.innerHTML = isStarred ? STAR_FILL_SVG : STAR_EMPTY_SVG;
+      btn.title = isStarred ? 'Unstar' : 'Star';
+    }
   }
 
   const tagsEl = card.querySelector<HTMLElement>('.stars-card-tags');
@@ -133,7 +149,7 @@ function updateGridCard(repoId: string): void {
   const notesEl = card.querySelector<HTMLElement>('.stars-card-notes');
   if (notesEl) renderNotes(notesEl);
 
-  // 有筛选激活（tags/langs/types/search 任一）时：仓库已从缓存移除，重算筛选结果；
+  // 有筛选激活（tags/langs/types/search 任一）时：仓库的成员关系变了，重算筛选结果；
   // 无筛选（browse 态）不动。keepPage: 结果集变但条件没变，不把用户拉回第 1 页（🟡-3）
   if (filterState.tags.length > 0 || filterState.langs.length > 0 || filterState.types.length > 0 || filterState.searchQuery) applyFilters({ keepPage: true });
 }

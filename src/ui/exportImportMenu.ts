@@ -12,7 +12,6 @@
  */
 import { buildExportFilename } from '../constants';
 import { gmDownloadFile, gmRegisterMenuCommand } from '../gm';
-import { getGitHubPat } from '../starCheck';
 import {
   applyImportPackage,
   buildExportPackage,
@@ -122,7 +121,7 @@ function importFromFile(file: File): void {
     }
 
     console.log(`[github-star-manager] 导入完成：${reportText(report)}`);
-    window.alert(`导入完成。\n\n${reportText(report)}\n\n接下来会自动同步一次以刷新仓库数据。`);
+    window.alert(`导入完成。\n\n${reportText(report)}\n\n如需刷新仓库元数据，请点标题行 Sync 或 TM 菜单「🔄 立即全量同步」。`);
     afterImport?.(report);
   };
   reader.readAsText(file);
@@ -288,20 +287,10 @@ function closeImportDialog(): void {
 
 /* ---------------- 菜单注册 ---------------- */
 
-/** 导入后触发同步：与标题行 Sync 同一路径；无 token 时提示并跳过（不弹 Token 输入框） */
-export function runImportSync(sync: () => Promise<unknown>): void {
-  if (!getGitHubPat()) {
-    window.alert('导入已完成，但未配置 GitHub Token，已跳过自动同步。配置 Token 后可在 TM 菜单点「🔄 立即全量同步」。');
-    return;
-  }
-  void sync().then((sum) => {
-    if (!sum) {
-      // 401/403 已由 fullSync 的 reportAuthIssue → notifyTokenIssue 把**具体原因**写进配置面板；
-      // 这里只记日志，不再上报，避免用笼统文案覆盖那条更准确的提示。
-      console.warn('[github-star-manager] 导入后的自动同步未成功，数据已导入但仓库元数据可能未刷新');
-    }
-  });
-}
+/* 4.9.0：`runImportSync()` 已删除 —— 导入完成后**不再自动同步**（ADR 0005：导入是数据搬运，
+ * 落盘即完成；是否拉取远端由用户自己决定，用标题行 Sync 或 TM 菜单「🔄 立即全量同步」）。
+ * 导入包里的 repoCache 条目仍会被后续同步正确处理：远端若不存在该 star，整表 diff 会把它判为
+ * 本地独有，走既有的「外部取关 → 宽限期备份」管线。 */
 
 /** TM 菜单注册。导入入口是大窗（全屏遮罩 + 拖放区）：菜单点击只开窗（扩展 UI 无手势可转发，
  * tampermonkey#1827），窗内真实点击选文件或拖拽落 File 才开始导入。 */

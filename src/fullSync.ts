@@ -31,8 +31,11 @@
 import { DATA_REV, STORAGE_KEYS, SYNC_SVG } from './constants';
 import { gmGet, gmRegisterMenuCommand, gmSet } from './gm';
 import { applyExternalUnstar, getGitHubPat, promptForToken } from './starCheck';
+import { applyFilters } from './filters';
 import { notifyTokenIssue } from './tokenConfig';
+import { pushRestoreNotice } from './restore';
 import { loadPendingDelete, markRepoStarred } from './storage/pendingDelete';
+import { pushNotice } from './ui/notifications';
 import { loadRepoCache, saveRepoCache, saveRepoData } from './storage/repoCache';
 import type { FullSyncMeta, RepoCache, RepoData } from './types';
 
@@ -150,7 +153,9 @@ function authIssueMessage(resp: Response): string {
   if (resp.status === 403) {
     if (retryAfter) return `触发次级速率限制（retry-after ${retryAfter}s），稍后再试`;
     if (exhausted) return '主速率限制已用尽，稍后再试';
-    return '403 权限不足（fine-grained 需 Starring → Write）';
+    // 403 的文案不得让用户去「检查 Starring 权限」——fine-grained PAT 先天写不了他人公开仓库，
+    // 那是无解方向（ADR 0004）；写路径已由网页端点静默接管（ADR 0006），故只描述结果。
+    return '403 权限不足（Token 不能访问该资源）';
   }
   return `HTTP ${resp.status}`;
 }
@@ -522,14 +527,94 @@ function reportAuthIssue(resp: Response): void {
     const retryAfter = resp.headers.get('retry-after');
     const exhausted = resp.headers.get('x-ratelimit-remaining') === '0';
     if (!retryAfter && !exhausted) {
-      notifyTokenIssue('403 权限不足：fine-grained 需 Account permissions → Starring → Write + All repositories');
+      // 同上：不得再引导「检查 Starring 权限」（ADR 0004）——只说明 token 对该资源无权
+      notifyTokenIssue('403 权限不足：当前 Token 无权访问该资源');
     }
   }
+}
+
+/* ---------------- 变化简报与重绘（4.9.0，ADR 0003） ---------------- */
+
+/** 自动来源且用户刚有交互时，不在用户眼皮底下重绘（改成可点击的提示） */
+const INTERACTION_QUIET_MS = 10_000;
+let lastInteractionAt = 0;
+let interactionTrackingReady = false;
+
+/** 记录最近一次用户交互（用于判断「现在能不能安全重绘」）。只注册一次，成本是一个事件监听。 */
+function ensureInteractionTracking(): void {
+  if (interactionTrackingReady) return;
+  interactionTrackingReady = true;
+  const mark = (): void => {
+    lastInteractionAt = Date.now();
+  };
+  // capture + passive：只读不拦，不干扰 GitHub 自己的监听
+  document.addEventListener('pointerdown', mark, { capture: true, passive: true });
+  document.addEventListener('keydown', mark, { capture: true, passive: true });
+  document.addEventListener('scroll', mark, { capture: true, passive: true });
+}
+
+interface SyncReportInput {
+  total: number;
+  added: number;
+  restored: number;
+  unstarred: number;
+  refreshed: number;
+  unstarredItems: Array<{ repoId: string; name: string }>;
+}
+
+/**
+ * 同步收尾的变化简报（ADR 0003）：
+ * - **不判重**：每次同步各弹一条（相同摘要意味着中间必有变化，重复显示才诚实）；
+ * - 口径只有「取消 star / 新增 / 恢复」三类计数，**元数据刷新不进简报**（只进控制台）；
+ * - 无变化也弹「无变化（共 N 个 star）」；
+ * - 每条外部取关**各弹一条带「恢复」按钮的通知**（逐条动作，不做「恢复全部」语义）。
+ */
+function emitSyncReport(source: 'button' | 'auto', r: SyncReportInput): void {
+  if (r.added === 0 && r.restored === 0 && r.unstarred === 0) {
+    pushNotice(`同步完成：无变化（共 ${r.total} 个 star）`, 'info');
+    // 元数据刷新只进控制台（ADR 0003 口径）
+    if (r.refreshed > 0) console.log(`[github-star-manager] 同步：元数据刷新 ${r.refreshed} 条（不进简报）`);
+    return;
+  }
+  const parts: string[] = [];
+  if (r.unstarred > 0) parts.push(`取消 star ${r.unstarred}`);
+  if (r.added > 0) parts.push(`新增 ${r.added}`);
+  if (r.restored > 0) parts.push(`恢复 ${r.restored}`);
+  const text = `同步完成：${parts.join('、')}（共 ${r.total} 个 star）`;
+  // 有外部取关 = 数据有风险 → 用 danger 视觉并保持逐条可恢复；否则只是信息性更新
+  pushNotice(text, r.unstarred > 0 ? 'danger' : 'success');
+  for (const it of r.unstarredItems) pushRestoreNotice(it.repoId, it.name, 'report');
+  if (source === 'auto') console.log('[github-star-manager] 自动同步产出变化，简报已弹出');
+  if (r.refreshed > 0) console.log(`[github-star-manager] 同步：元数据刷新 ${r.refreshed} 条（不进简报）`);
+}
+
+/**
+ * 同步后是否重绘网格：有增删差异或可见元数据更新时才重绘。
+ * 自动来源且**最近 10s 内有用户交互**（可能在滚动/点按钮）时，改为弹一条可点击的提示，
+ * 不把列表在用户眼皮底下换掉。
+ */
+function maybeRerenderAfterSync(source: 'button' | 'auto', changed: number): void {
+  if (changed <= 0) return;
+  if (!document.querySelector('.stars-grid-container')) return; // 不在网格视图（如详情页）
+  if (source === 'auto') {
+    // 注意：布防**不在这里**。这里才布防会让最后一次交互的时间恒为 0
+    // （布防前 lastInteractionAt 一直是 0）→ 首次也是唯一一次变化事件上抑制必然失效。
+    // 真正的布防在 runFullSync 入口（ensureInteractionTracking 自身有幂等守卫）。
+    if (Date.now() - lastInteractionAt < INTERACTION_QUIET_MS) {
+      pushNotice(`列表有 ${changed} 项变化，点击刷新`, 'info', {
+        actionLabel: '刷新',
+        onAction: () => applyFilters({ keepPage: true }),
+      });
+      return;
+    }
+  }
+  applyFilters({ keepPage: true });
 }
 
 /** 手动/自动的共同入口；失败返回 null 且不改动任何数据 */
 export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummary | null> {
   if (syncing) return null;
+  ensureInteractionTracking(); // 入口即布防：重绘抑制要知道「刚才用户有没有在动页面」
   let tok = getGitHubPat();
   if (!tok && source === 'button') {
     promptForToken(false); // 自动触发场景不弹重复 prompt；保存成功后的同步由 savedHandler 接管
@@ -556,7 +641,10 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
         ...(scan.nextTailEtag ? { tailEtag: scan.nextTailEtag } : {}),
         lastFullSyncAt: Date.now(),
       });
-      return { pages: 0, total: storedMeta.count ?? 0, added: 0, restored: 0, unstarred: 0, backfilled: 0 };
+      // 无变化也弹（ADR 0003）：用户需要知道「同步确实跑过了」
+      const total = storedMeta.count ?? 0;
+      pushNotice(`同步完成：无变化（共 ${total} 个 star）`, 'info');
+      return { pages: 0, total, added: 0, restored: 0, unstarred: 0, backfilled: 0 };
     }
     console.log(
       `[github-star-manager] ★ P4 扫描：${scan.pages} 页（正文 ${scan.bodyPages} + 本地切片 ${scan.slicePages}，` +
@@ -567,6 +655,8 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
     // A. 外部 unstar：本地缓存有、远端无 → 走既有宽限管线。
     // 全正文模式：整表即权威确认；切片混合模式：嫌疑先逐条 GET 核对（204=切片平局误报保留 / 404=真取关）。
     const cacheBefore = loadRepoCache();
+    /** 本轮新确认的外部取关（简报要逐条给「恢复」按钮，故留名字） */
+    const unstarredItems: Array<{ repoId: string; name: string }> = [];
     let unstarred = 0;
     for (const repoId of Object.keys(cacheBefore)) {
       if (remoteMap.has(repoId)) continue;
@@ -581,8 +671,10 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
           continue;
         }
       }
-      if (applyExternalUnstar(repoId, cacheBefore[repoId].name || '')) {
+      const path = cacheBefore[repoId].name || '';
+      if (applyExternalUnstar(repoId, path)) {
         unstarred += 1;
+        unstarredItems.push({ repoId, name: path.replace(/^\//, '') || repoId });
       }
     }
 
@@ -645,6 +737,16 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
         `回填 star 时间 ${backfilled}、元数据刷新 ${refreshed}`
     );
     document.querySelector('.gsm-setup-banner')?.remove(); // 同步成功即撤配置横幅（缓存已就绪）
+    emitSyncReport(source, {
+      total: summary.total,
+      added,
+      restored,
+      unstarred,
+      refreshed,
+      unstarredItems,
+    });
+    // 有增删差异或可见元数据更新 → 重绘网格（自动来源且用户刚有交互时改成可点击的提示，见 emitSyncReport）
+    maybeRerenderAfterSync(source, added + restored + unstarred + backfilled + refreshed);
     // 写元数据：逐页 ETag 基线（304 页沿用旧校验值、正文页用响应值，剥 W/ 规范形）+ 首页 etag（兼容旧字段）+ lastFullSyncAt + 总数
     const outMeta: FullSyncMeta = { etag: scan.etag, etags: scan.etags, lastFullSyncAt: Date.now(), count: scan.items.length, dataRev: DATA_REV };
     if (scan.nextTailEtag) outMeta.tailEtag = scan.nextTailEtag; // 尾页越界 etag（缺省=清空：尾页转正或整表兜底后新越界页待首探）

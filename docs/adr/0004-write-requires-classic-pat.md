@@ -1,6 +1,7 @@
-# 只支持 classic token
+# REST 写路径只支持 classic token
 
-脚本的写路径（卡片星按钮、恢复）**只按 classic PAT 设计**：fine-grained PAT 在任何配置下都无法对「不属于本人、也不属于本人所属组织」的公开仓库执行加星/取消星（实测 `403 Resource not accessible by personal access token`），GitHub App token 更彻底——官方 OpenAPI 对该端点标 `enabledForGitHubApps: false`。快速创建入口因此预填 **classic PAT** 深链。检测到 `github_pat_` 前缀时**不拒绝**（读路径 `GET /user/starred` 不受 Additional permissions 限制，仍可同步），但必须在保存与写失败两处**明确提示其缺陷**。
+脚本的 **REST** 写路径（`PUT`/`DELETE /user/starred/{o}/{r}`）**只按 classic PAT 设计**：fine-grained PAT 在任何配置下都无法对「不属于本人、也不属于本人所属组织」的公开仓库执行加星/取消星（实测 `403 Resource not accessible by personal access token`），GitHub App token 更彻底——官方 OpenAPI 对该端点标 `enabledForGitHubApps: false`。快速创建入口因此**同时提供** classic PAT 深链与 fine-grained 深链，并在配置 UI 写明二者区别（见下「后果」）。检测到 `github_pat_` 前缀时**不拒绝**（读路径 `GET /user/starred` 不受 Additional permissions 限制，仍可同步）。
+> **范围限定**：本 ADR 只覆盖 REST 通道。**网页端点写回落**（用浏览器会话写，与 token 类型无关，fine-grained 用户经此获得同等写能力）见 `0006-web-endpoint-write-fallback.md` —— 本 ADR 不是写路径的全部约束。
 
 ## 依据
 
@@ -26,4 +27,5 @@
 - 403 `Resource not accessible by personal access token` 的提示**不得**再让用户「检查 Starring 权限」——那会把人引向无解的方向；应说明 fine-grained PAT 的先天缺陷并引导 classic PAT（`public_repo` 覆盖公开仓库、`repo` 另覆盖私有仓库）。
 - 401 仍是 token 失效，与 403 分派不同文案（官方：invalid credentials 返回 401）。
 - 预填深链的 scope 取 `repo`：`public_repo` 只覆盖公开仓库，会让私有仓库的 star 不出现在 `GET /user/starred` 里，被整表 diff 误判为外部取关（D3 已知局限）。`repo` 消除该误判，代价是权限更大——这是刻意选择，文案需说明。
-- 用户以 fine-grained PAT 配置时，读路径（同步）正常，仅写路径受限；脚本在 `github_pat_` 前缀被检测到时说明这一能力差异。
+- **快速创建入口给两条深链并写明区别**（用户裁定，4.9.0）：classic 深链 `https://github.com/settings/tokens/new?scopes=repo&description=GithubStarManager`（`?scopes=` 预填官方文档**未列**，来源为社区实测，实现时须真机验证一次；不生效则退化为只开 `/settings/tokens/new` 并在 UI 写明「请在 Scopes 勾选 `repo`」），fine-grained 深链沿用官方 Template URL（`starring=write`）。文案说明：**classic = 读写都走官方 REST、对任意公开仓库可写；fine-grained = 读可用、写他人公开仓库被 GitHub 拒绝**。`ghp_` 与 `github_pat_` **都接受保存**（拒绝会让读路径也无法用）。
+- 用户以 fine-grained PAT 配置时，读路径（同步）正常；**REST** 写路径被 GitHub 拒绝，但网页端点回落会静默接管（见 `0006`），因此用户不会遇到「配了 token 却写不了」的结果 —— 能力差异只在配置 UI 一次性说明，不再逐次提示。

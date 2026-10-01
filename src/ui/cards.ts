@@ -1,8 +1,12 @@
 import { FORK_META_SVG, STAR_EMPTY_SVG, STAR_FILL_SVG, STAR_META_SVG } from '../constants';
 import { getLangColor } from '../langColors';
+import { enqueueMutation, type MutationHandle } from '../mutationQueue';
+import { pushRestoreNotice } from '../restore';
+import { syncCardAfterStarChange } from '../starCheck';
+import { setStarState, writeFailureMessage, type StarWriteOutcome } from '../starWrites';
 import { markRepoStarred, markRepoUnstarred } from '../storage/pendingDelete';
-import { getGitHubPat } from '../starCheck';
-import { notifyTokenIssue } from '../tokenConfig';
+import { getToken, notifyTokenIssue } from '../tokenConfig';
+import { pushNotice } from './notifications';
 import { escapeHtml, formatRelative } from '../utils';
 import type { RepoData } from '../types';
 
@@ -83,73 +87,89 @@ export function createStarButtonElement(isStarred: boolean): HTMLButtonElement {
   return btn;
 }
 
-/** 切换星星按钮状态，并同步待删除区数据 */
-export function toggleStarButtonState(btn: HTMLButtonElement, card: HTMLElement, nowStarred: boolean): void {
-  if (nowStarred) {
-    btn.classList.remove('unstarred');
-    btn.classList.add('starred');
-    btn.innerHTML = STAR_FILL_SVG;
-    btn.title = 'Unstar';
-    const repoId = card.dataset.repoId;
-    if (repoId) markRepoStarred(repoId);
-  } else {
-    btn.classList.remove('starred');
-    btn.classList.add('unstarred');
-    btn.innerHTML = STAR_EMPTY_SVG;
-    btn.title = 'Star';
-    const repoId = card.dataset.repoId;
-    if (repoId) markRepoUnstarred(repoId);
-  }
+/** 只改按钮外观（不含任何存储/网络副作用）——乐观翻转与回滚都用它 */
+export function setStarButtonVisual(btn: HTMLButtonElement, isStarred: boolean): void {
+  btn.classList.toggle('starred', isStarred);
+  btn.classList.toggle('unstarred', !isStarred);
+  btn.innerHTML = isStarred ? STAR_FILL_SVG : STAR_EMPTY_SVG;
+  btn.title = isStarred ? 'Unstar' : 'Star';
 }
 
 
 
-/** 为缓存卡片创建星星按钮：PUT/DELETE /user/starred/{owner}/{repo}（Bearer PAT，无 CSRF，4.0.0） */
+/**
+ * 为缓存卡片创建星星按钮（4.9.0 重写）。
+ *
+ * 一次点击的完整语义（ADR 0003 / 0006）：
+ * 1. **乐观翻转**：立刻改按钮外观，不等网络；
+ * 2. **入全局串行队列**（间隔 ≥1s）——卡片按钮与恢复共用同一个队列；
+ * 3. **排队中再次点击 = 撤销排队**（请求不会发出，外观回滚）；执行中点击忽略；
+ * 4. 写通道由 `setStarState` 静默分派（REST 或浏览器会话），调用方不感知；
+ * 5. 成功 → 落本地权威数据（标签/备注随宽限期备份进出）+ 刷新卡片；
+ *    取消 star 还额外推一条带「撤销」按钮的通知；
+ * 6. 失败 → 回滚外观 + 结果导向的通知（不暴露通道细节；401 照旧上报配置面板）。
+ */
 export function createStarButtonForCached(card: HTMLElement, data: RepoData): void {
-  if (!data.name) return;
+  const fullName = data.name;
+  if (!fullName) return;
+  const repoId = card.dataset.repoId || '';
   const btn = createStarButtonElement(!data.unstarredAt);
 
-  btn.addEventListener('click', async (e) => {
+  /** 本卡片当前在途的一次操作（null = 空闲）；用于「排队中再点撤销」与「执行中忽略」 */
+  let inflight: { handle: MutationHandle<StarWriteOutcome>; target: boolean } | null = null;
+
+  btn.addEventListener('click', (e) => {
     e.stopPropagation();
     e.preventDefault();
-    if (btn.disabled) return;
 
-    const currentlyStarred = btn.classList.contains('starred');
-    const tok = getGitHubPat();
-    if (!tok) {
-      btn.title = '未配置 token：Tampermonkey 菜单 →「⭐ 设置 GitHub Token」';
+    // 排队中再点 = 撤销排队（ADR 0003：用户改主意时不必等它发出）
+    if (inflight && inflight.handle.isQueued()) {
+      const target = inflight.target;
+      inflight.handle.cancelQueued();
+      inflight = null;
+      setStarButtonVisual(btn, !target); // 回滚乐观翻转
+      pushNotice(`已取消排队：${fullName}`, 'info');
       return;
     }
-    const [owner, repo] = data.name.split('/');
-    if (!owner || !repo) return;
+    if (inflight) return; // 已在执行：不支持中途撤销（请求已发出）
 
-    btn.disabled = true;
-    try {
-      const resp = await fetch(
-        `https://api.github.com/user/starred/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
-        {
-          method: currentlyStarred ? 'DELETE' : 'PUT',
-          headers: {
-            Authorization: `Bearer ${tok}`,
-            'X-GitHub-Api-Version': '2022-11-28',
-          },
-        }
-      );
-      if (resp.ok) toggleStarButtonState(btn, card, !currentlyStarred);
-      else if (resp.status === 401) notifyTokenIssue('401 Bad credentials：Token 已失效或被撤销');
-      else if (
-        resp.status === 403 &&
-        !resp.headers.get('retry-after') &&
-        resp.headers.get('x-ratelimit-remaining') !== '0'
-      ) {
-        // 排除限速后的 403 才是权限问题（官方 troubleshooting 判定）
-        notifyTokenIssue('403 权限不足：fine-grained 需 Account permissions → Starring → Write');
+    const target = !btn.classList.contains('starred');
+    setStarButtonVisual(btn, target); // 乐观翻转
+
+    const handle = enqueueMutation<StarWriteOutcome>({
+      label: fullName,
+      run: () => setStarState(getToken(), fullName, target),
+    });
+    inflight = { handle, target };
+
+    void handle.done.then((outcome) => {
+      // 身份校验（必须）：用户可能已「取消排队 → 重新点击」开了新一次操作。
+      // 若这里无条件清空/回滚，会把**新操作**的护栏与外观一起搞坏
+      // （后果：同一仓库被重复入队并真的发两条写请求，违反 ADR 0003）。
+      const isCurrent = inflight !== null && inflight.handle === handle;
+      if (isCurrent) inflight = null;
+      if (outcome === null) {
+        // 排队期被撤销：请求从未发出，回滚外观即可（仅当仍是本操作在管这张卡）
+        if (isCurrent) setStarButtonVisual(btn, !target);
+        return;
       }
-    } catch {
-      // 网络错误 — 不做处理
-    } finally {
-      btn.disabled = false;
-    }
+      if (!outcome.ok) {
+        if (isCurrent) setStarButtonVisual(btn, !target);
+        const message = writeFailureMessage(outcome.reason, outcome.status);
+        console.warn(`[github-star-manager] 星标写入失败：${fullName}｜${outcome.reason}｜${outcome.detail || ''}`);
+        // ADR 0003「失败分支：一律只 alert 一行文字」——失败通知不能自行消失
+        if (isCurrent) window.alert(`${target ? '加星' : '取消 star'}失败：${message}`);
+        if (outcome.reason === 'unauthorized') notifyTokenIssue('401 Bad credentials：Token 已失效或被撤销');
+        return;
+      }
+      // 成功：先落本地权威数据（宽限期备份进出），再刷新卡片
+      if (repoId) {
+        if (target) markRepoStarred(repoId);
+        else markRepoUnstarred(repoId);
+      }
+      syncCardAfterStarChange(repoId, target);
+      if (!target) pushRestoreNotice(repoId, fullName, 'manual');
+    });
   });
 
   const header = card.querySelector('.stars-card-header');

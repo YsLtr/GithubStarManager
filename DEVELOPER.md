@@ -27,6 +27,9 @@ pnpm dev            # 开发服务器：改动走 HMR，无需手动往 Tampermo
 pnpm build          # 产出 dist/github-star-manager.user.js
 pnpm typecheck      # tsc --noEmit
 pnpm check          # typecheck + build
+pnpm test:exportimport   # 导入导出纯逻辑断言（51 项，无需浏览器）
+node scripts/verify-css.cjs                      # 产物 CSS 与源 CSS 等价性
+node scripts/ratelimit-probe.cjs --repo <me/repo> # 限流实测探针（默认 dry-run，零网络请求）
 ```
 
 ### dev 模式怎么用
@@ -71,17 +74,24 @@ src/
   search.ts           搜索表单拦截（纯本地）
   pagination.ts       本地分页拦截（只拦自造 data-gsm-page，零网络零 Turbo）
   langColors.ts       语言色引擎：linguist languages.yml 运行时拉取 + 行扫描提取 + GM 缓存 + 未命中补拉/回退重检 + 色点原地重涂
-  starCheck.ts        PAT 读写/前缀校验/菜单、外部 unstar 宽限管线（applyExternalUnstar）
-tokenConfig.ts      快捷 Token 配置（预填 **classic PAT** 深链 `scopes=repo`、剪贴板粘贴、保存回调）与 401/403(非限速) 失效上报
+  starCheck.ts        PAT 读写/前缀校验/菜单、外部 unstar 宽限管线（applyExternalUnstar）、卡片星标态刷新（syncCardAfterStarChange）
+  tokenConfig.ts      凭据单一来源：getToken / detectTokenKind（ghp_·gho_=classic，github_pat_=fine-grained）/ isClassicCredential、
+                      **两条**预填深链（classic `scopes=repo` + fine-grained `starring=write`）与差异文案、剪贴板粘贴、401/403(非限速) 上报
+  starWrites.ts       写路径抽象（4.9.0）：setStarState **静默分派** REST（classic/OAuth Bearer）↔ 网页端点（Cookie 会话 + GitHub-Verified-Fetch，
+                      422 才回退取页面表单 token 重发一次）、成功判定、失败归一 + writeFailureMessage
+  mutationQueue.ts    全局串行变异队列（4.9.0）：间隔 ≥1000ms、排队中可撤销、失败不阻断后续
+  restore.ts          恢复编排（4.9.0）：restoreOne / restoreMany（严格串行·可取消·不重试）/ pushRestoreNotice（同仓库通知去重）
   fullSync.ts         API 主模式同步：scanStarred 单遍条件扫描、波次并发、整表 diff、star 时间回填、进页 probe、runFullSync / registerSyncMenu / mountSyncButton / hasApiData
   storage/
     repoCache.ts      仓库缓存 CRUD
     tags.ts           标签存储 + 用户 ID 解析 + 备注键规则 + 迁移
     notes.ts          备注存储（saveNote 判空 = trim 后为空）
-    pendingDelete.ts  待删除区（unstar 宽限期，含标签/备注备份）
+    pendingDelete.ts  待删除区（unstar 宽限期，含标签/备注备份 + listRestorable/formatRemaining 供恢复窗口）
     exportImport.ts   导入导出**纯逻辑**（4.7.0）：buildExportPackage / validateExportPackage / applyImportPackage；不碰 DOM、不弹对话框
   ui/
-    cards.ts          卡片构建 + API 星星按钮（PUT/DELETE Bearer PAT）
+    cards.ts          卡片构建 + 星星按钮（4.9.0：乐观翻转 → 全局队列 → 排队中再点撤销 → 失败回滚 + alert）
+    notifications.ts  右上角通知栈（4.9.0）：内联样式 + transition 滑入、3s 自动消失、悬停整区暂停、划掉完成态
+    restoreMenu.ts    TM 菜单「♻️ 恢复已取消的 star」（4.9.0）：可勾选 + 一键恢复选中 + 每行 ☆ 按钮 + 进度 + 取消
     tagFilter.ts      标签 pill、筛选栏（原位重绘 = 共现收窄，勾选不关 popover）、pill 选中态同步、refreshTagFilterBar（候选刷新唯一入口）
     hideListsMenu.ts  TM 菜单「🙈 隐藏 Lists 区块」开关（持久键 stars_hide_lists + 标签刷新 + 门控即时生效）
     notes.ts          备注渲染与编辑
@@ -103,9 +113,11 @@ tests/exportImport/
   run.cjs                 导入导出纯逻辑断言：导出清洗 / 校验拒绝路径 / 合并语义 / 幂等 / 用户隔离
 scripts/
   verify-css.cjs      校验构建产物中的 CSS 与源 CSS 等价
+  ratelimit-probe.cjs REST 变异请求限流实测探针（4.9.0，阶段 A）：默认 `--dry-run` **零网络请求**，
+                      发请求须显式 `--run`；硬约束见 `docs/research-ratelimit-protocol.md` §4.7
 ```
 
-> 循环依赖：`filters.ts ⟷ ui/tagFilter.ts`，以及 `filters.ts → ui/cards.ts → starCheck.ts → filters.ts`（三跳）。这些路径上所有导出都是函数声明，靠提升解析，不会在模块初始化阶段取值，因此安全；新增模块时不要把这类互相引用的值用在模块顶层。
+> 循环依赖（4.9.0 后仍是唯一一个 SCC）：`ui/tagFilter.ts ↔ starCheck.ts ↔ restore.ts ↔ ui/cards.ts ↔ filters.ts`。环内**零个顶层可执行语句**（只有声明），所有导出都是函数声明，靠提升解析，不会在模块初始化阶段取值，因此安全。**新增模块时不要把互相引用的值用在模块顶层** —— `tokenConfig.ts` 独立成模块、`getGitHubPat` 做成 `export const getGitHubPat = getToken` 的函数别名，都是为了让环外的东西（PAT 读取）保持在环外。
 
 
 ## 4. 数据流
@@ -198,7 +210,7 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
 
 字符串，classic token（`ghp_...` classic PAT 或 `gho_...` OAuth app 授权）或 `github_pat_...`（fine-grained），空串 = 未配置。**不写 localStorage 镜像**（`gm.ts` 的 `SENSITIVE_KEYS`：lsWrite 跳过、gmGet 迁移时清历史镜像，XSS 防护）。仅用于 `Authorization: Bearer` 调 `api.github.com`；提示中只显示前 12 后 4 位掩码。
 
-**写路径只支持 classic token**（`docs/adr/0004-write-requires-classic-pat.md`）：fine-grained PAT 对「不属于本人、也不属于本人所属组织」的公开仓库只有 read-only，写操作实测 `403 Resource not accessible by personal access token`；GitHub App token 被官方 OpenAPI 标 `enabledForGitHubApps: false`，根本不可用；OAuth app token（`gho_`）走 scope 体系，与 classic PAT 同构。**scope 取 `repo`**（`public_repo` 不覆盖私有仓库，会让私有仓库的 star 因权限不可见而被整表 diff 误判为外部取关）。读路径（`GET /user/starred`）不受此限，fine-grained token 同步正常——检测到 `github_pat_` 前缀时不拒绝配置，但保存与写失败两处都要提示缺陷，403 提示不得再让用户去检查 Starring 权限。此缺口由 GitHub 控制（roadmap#600 NOT_PLANNED / #601 OPEN），将来补齐可回头放宽。
+**REST 写路径只支持 classic token**（`docs/adr/0004-write-requires-classic-pat.md`）：fine-grained PAT 对「不属于本人、也不属于本人所属组织」的公开仓库只有 read-only，写操作实测 `403 Resource not accessible by personal access token`；GitHub App token 被官方 OpenAPI 标 `enabledForGitHubApps: false`，根本不可用；OAuth app token（`gho_`）走 scope 体系，与 classic PAT 同构。**但写路径不止 REST 一条**：拿不到 classic token 时改用浏览器登录会话走网页端点（`docs/adr/0006-web-endpoint-write-fallback.md`），fine-grained 用户因此仍能改星标 —— 故「只支持 classic」这句话只在 REST 通道内成立。**scope 取 `repo`**（`public_repo` 不覆盖私有仓库，会让私有仓库的 star 因权限不可见而被整表 diff 误判为外部取关）。读路径（`GET /user/starred`）不受此限，fine-grained token 同步正常——`github_pat_` 前缀**不拒绝配置**，但配置 UI 必须写明它写不了他人公开仓库（`TOKEN_KIND_HELP`，与 classic 深链并排显示）；403 提示**不得**再让用户去检查 Starring 权限。此缺口由 GitHub 控制（roadmap#600 NOT_PLANNED / #601 OPEN），将来补齐可回头放宽。
 
 ### `stars_full_sync_meta`
 
@@ -264,6 +276,8 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 **不含**：`github_pat`（敏感）、`stars_full_sync_meta`（ETag 基线与 token 身份 + 远端瞬时状态绑定，跨设备导入会让「全 304 = 无变化」误判为「缓存即现值」）、`stars_pending_delete`（临时状态）。
 合并语义与拒绝路径见 `docs/adr/0001-export-import-format.md`。
 
+**导入后不自动同步**（4.9.0，`docs/adr/0005-no-auto-sync-after-import.md`，推翻 `0001` 原段落）：导入是数据搬运，落盘即完成，是否拉远端由用户自己决定（标题行 Sync / TM 菜单）。导入的条目若远端不存在该 star，会在下一次同步走既有「外部取关 → 宽限期备份」管线；收尾只做「Stars 页且网格已存在时重绘」。
+
 导入导出**不新增 `@grant`**（`GM_download` 除外，4.7.0 新增）：导出**只用 `GM_download`（Blob 直传），刻意不做原生 `<a download>` 兜底**——原生下载能绕过 TM 的扩展名白名单，等于架空用户的安全设置。TM 侧需开启下载功能且扩展名在白名单，否则**不抛错、只走 `onerror` 回 `not_whitelisted`**（`gmDownloadFile` 观测不到，见 §6）。
 
 导入是**大窗**（4.8.1）：TM 菜单点击 → 全屏遮罩 + 中央拖放大窗（样式全内联，不依赖 Stars 视图的样式表，任意页可用；点遮罩空白 / Esc / × 关闭，**无超时**——用户可能正忙着找文件）→ 窗内**真实点击**「选择文件」（页面级 transient user activation → 唤起 `<input type="file">`）或**拖拽** JSON 进窗（drop 事件不需要 activation，`DataTransfer` 直接给 `File`）→ `FileReader` 读取。拖入时整窗高亮（边框/背景变色 + 提示文案切换「松手开始导入」）。
@@ -274,9 +288,9 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 
 已实测排除的旁路：合成事件（isTrusted=false）、label 原生转发（两种关联方式）、`requestIdleCallback` 延迟、prompt 蹭激活（`prompt/confirm/alert` 不在 activation-gated 名单所以能弹，但不赠送激活态）、`window.open`（自身 gated 且消耗激活）、`GM_openInTab`（新页无激活态、@match 外脚本不跑）、`showOpenFilePicker`（github.com 下 API 未暴露）。弹文件选择器的唯一通行证 = **页面上下文内的真实用户输入**（点击/键盘/拖拽）。
 
-### 详情页（4.8.0：只监听，不写缓存）
+### 详情页（4.9.0：只清扫，不监听）
 
-仓库详情页分支只做两件事：`cleanupExpiredUnstarred()`（宽限期到期清扫）+ `watchRepoStarState()`（点 star 按钮 → `markRepoStarred` / `markRepoUnstarred` 宽限管线）。
+仓库详情页分支只做**一件事**：`cleanupExpiredUnstarred()`（宽限期到期清扫）后提前返回。4.9.0 删除了 `watchRepoStarState()` 与旧版 `form[action$="/unstar"]` 监听（决策 D17）：**星状态真相只由整表同步判定，与用户从哪个页面点的无关**，详情页也不再触碰 GitHub 拥有的 star 按钮 DOM。详情页仍会显示同步简报（TM 菜单手动同步时）。
 
 4.8.0 删除了「详情页提取元数据写缓存」（原 extract.ts）：它写的字段（name/desc/stars/forks）API 全覆盖，而它独有的时间字段是脏数据源——DOM 第一个 `<relative-time>` 与 API 语义不一致（曾互相覆写 `updatedAt`），缓存的相对时间文本（`updated`）永不刷新。**详情页访问不再提前刷新缓存**，元数据一律等同步。
 
@@ -311,9 +325,63 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 
 **`hasApiData()`** = 有 PAT + `meta.count > 0`，决定「缓存网格」还是「原生页 + 配置横幅」。
 
-### 星星按钮（纯 API）
+### 写路径（4.9.0：两条通道，静默分派）
 
-`createStarButtonForCached(repo)`：`PUT/DELETE https://api.github.com/user/starred/{owner}/{repo}` + `Authorization: Bearer <PAT>`（无需 CSRF）；点击即乐观翻转，失败回滚。401 → 面板提示 token 失效；403 且非限速（无 `retry-after` 且 `x-ratelimit-remaining` ≠ 0）→ 权限提示。
+`starWrites.setStarState(patOrEmpty, 'owner/repo', wantStar)` 是**唯一**的写入口，结果归一为
+`{ok:true, via}` 或 `{ok:false, reason, status, detail}`（不抛错）。通道由它**静默分派**，调用方与用户都不感知（ADR 0006）：
+
+| 条件 | 通道 | 成功判据 |
+|---|---|---|
+| token 是 classic PAT（`ghp_`）或 OAuth（`gho_`） | REST `PUT`/`DELETE /user/starred/{o}/{r}`，`Bearer` | `204`（`304` 一并当成功） |
+| 无上述 token，**或** REST 返回权限 403，且 `hasWebSession()` | 网页端点 `POST /{o}/{r}/star`（`/unstar`），Cookie 会话 | `200`，**且在页面上存在该仓库表单时**复核方向已翻转（未翻转即失败） |
+
+网页端点的关键事实（实测见 `docs/research-web-star-endpoints.md` §3.5）：
+
+- 凭据 = Cookie 会话（`credentials:'same-origin'`）+ `GitHub-Verified-Fetch: true`；**不发** `X-Fetch-Nonce`、**不发** `X-GitHub-Client-Version`。
+- `authenticity_token` 是 **per-form** 且与 action+method 绑定（stars 页实测 60 表单 60 唯一值）→ **离页仓库不先取 token**，只带 VF 头（实测足以通过）；请求体仍是 multipart 且带 `authenticity_token` + `context`，与实测组 B 同形。
+- **仅当返回 422**（Rails CSRF 失败）才回退：`GET /{o}/{r}` → `DOMParser` 取该页 `form[action="/{o}/{r}/star"]` 的真实 token → **重发一次**。故无 token 时正常 1 个请求/仓库，回退时 3 个。
+- **422 的响应体是 HTML**（即便带 `Accept: application/json`）→ 一律 `resp.text()` 后再 `try { JSON.parse }`。
+- **不用** `{"count":"N"}`：那是仓库 star 总数的事后快照（实测 278→277→278），不是本次动作的增量。
+- 会话检测是**双重判据**：`body.logged-in` **且** `meta[name="user-login"]` 的 content **非空串**（只看 meta 是否存在是错的）；`form[action$="/unstar"]` 不能当登录判据。
+- `form[action="..."]` 必须**精确**匹配：`action$="/star"` 会被 `/unstar` 命中。
+
+失败原因 → 用户文案见 `writeFailureMessage()`（结果导向，**不暴露通道**）。`requires-classic` 专门给「fine-grained token + 无登录会话」——不能笼统说「没配 token」。
+
+### 全局串行变异队列（4.9.0）
+
+`mutationQueue.ts`：卡片星按钮与恢复**共用同一个队列**（官方 best-practices 的 serial/queue + 「每个请求间至少 1 秒」两条要求；Octokit plugin-throttling 对写请求默认即 `{maxConcurrent:1, minTime:1000}`）。
+
+- 间隔按**开始时刻**算（`MUTATION_GAP_MS = 1000`），首条不等待。
+- `enqueueMutation()` 返回句柄：`cancelQueued()` 只对**排队中**（尚未发出）的条目生效；`done` 兑现结果，被撤销兑现 `null`。
+- 卡片语义：点击 → **乐观翻转** → 入队；**排队中再点 = 撤销**（回滚外观，请求不发出）；执行中点击忽略。
+- 卡片在途操作用 `inflight: {handle, target}` 记录，且 `.then` 里**必须做身份校验**（`inflight.handle === handle`）——否则「撤销 → 重新点击」会让旧条目的回调清掉**新操作**的护栏，同一仓库被重复入队。
+
+### REST 限流实测（4.9.0 阶段 A，**尚未执行**）
+
+队列的 1000ms 间隔目前来自官方 best-practices 与 Octokit 默认值（两个独立来源一致），**没有本地实测数据**。
+`scripts/ratelimit-probe.cjs` 是按 `docs/research-ratelimit-protocol.md` §4 实现的最小风险探针，用来回答
+「`PUT/DELETE /user/starred` 会不会触发二级限流、primary 记账是 1 还是 5」：
+
+- **默认 `--dry-run`：零网络请求**，只打印计划、硬约束与判定矩阵；真发请求必须显式 `--run`。
+- 硬约束（协议 §4.7，CLI 无法抬高）：变异请求 ≤60 次、只对**自有**仓库（owner == token 登录名，否则拒绝运行）、
+  凭证必须是 classic/OAuth（`x-oauth-scopes` 缺失即拒绝）、严格串行无并发、净状态不变（S0 → S0，结束时校验）、
+  任一次 403/429 立即整轮停止并按 60→120→240s 指数退避（≤3 次）、不做并发探测。
+- 判定不以 `x-ratelimit-*` 为准：二级限流的**唯一**可靠信号是响应体含 `secondary rate limit`
+  （三个独立实测样本在被 403 时 `x-ratelimit-remaining` 分别为 21 / 22–27 / 4840，且 `retry-after` 可能缺失）。
+- 结论产出到 `docs/research-ratelimit-measurement.md`。**执行前置**：自有仓库 + classic PAT（scope `repo`）+
+  能关闭本脚本的自动同步 + 出口非共享/VPN；任一不满足就跳过、不阻塞实现。
+
+### 恢复与变化简报（4.9.0）
+
+`restore.ts`（编排）+ `ui/restoreMenu.ts`（窗口）+ `fullSync.ts` 收尾。
+
+- **恢复 = 真实远端写请求**：`restoreOne()` 走队列 → `setStarState(..., true)` → 成功才 `markRepoStarred()`（复原标签/备注）+ `syncCardAfterStarChange()`。**禁止只做本地回滚**（那会制造「本地有星、远端无星」，下一轮同步又判成外部取关）。
+- `restoreMany()` **逐条 await**（严格串行）、执行中**可取消**（只停后续，已发出的不回滚）、**不自动重试**、无数量阈值。
+- TM 菜单「♻️ 恢复已取消的 star（24h 内）」= 可勾选 + 一键「恢复选中」+ **每行一个 ☆ 恢复 按钮**；`confirm` 显示条数与预估耗时（≥1s/条）。
+- **变化简报**（`emitSyncReport`）：任何 `runFullSync` 路径收尾都弹；口径只有「取消 star / 新增 / 恢复」，**元数据刷新只进控制台**；无变化也弹「无变化（共 N 个 star）」（304 免额度早退路径同样弹）；**不判重**；每条外部取关**各弹一条带「恢复」按钮的通知**。
+- **通知栈**（`ui/notifications.ts`）：右上角、新条目从底部追加、无条数上限、3s 自动消失、**悬停整个区域暂停计时**、带动作按钮的条目成功后原地划掉并重置 3s。样式全内联（可出现在任意 github.com 页面，不依赖 Stars 视图注入的样式表）。
+- **失败一律 `alert` 一行文字**（ADR 0003）：写失败、单条恢复失败、批量恢复的失败汇总都走 `alert`——3s 的通知承载不了「唯一可能造成数据丢失的事件」的反馈。
+- **重绘**：有增删差异或可见元数据更新时才 `applyFilters({keepPage:true})`；`source === 'auto'` 且最近 10s 内有用户交互时，改成弹一条可点击的「列表有 N 项变化，点击刷新」。
 
 ### 全缓存搜索与筛选联动
 

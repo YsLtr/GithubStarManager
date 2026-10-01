@@ -11,3 +11,6 @@ dist/
 # 导入导出测试的编译产物
 tests/exportImport/.build/
 tests/exportImport/.tmp/
+
+# 本地 agent 临时工作区（deep-plan 等）
+.pi/

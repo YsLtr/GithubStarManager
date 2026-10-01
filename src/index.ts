@@ -4,24 +4,27 @@ import baseCss from './styles/base.css?inline';
 import persistentCss from './styles/persistent.css?inline';
 import wideCss from './styles/wide.css?inline';
 import { installBootHide, isStarsPage, revealBootHide, revealTurboHide } from './boot';
-import { applyHideListsGate, getRepoIdMeta, getStarButton, getStarsMainColumn, hideListsSection, isHideListsEnabled, isStarButtonActive } from './dom';
+import { applyHideListsGate, getRepoIdMeta, getStarsMainColumn, hideListsSection, isHideListsEnabled } from './dom';
 import { applyFilters, exitCustomMode, initFiltersFromUrl } from './filters';
 import { hasApiData, registerSyncMenu, runFullSync, scheduleProbeSync } from './fullSync';
 import { interceptPagination } from './pagination';
 import { registerTokenMenu } from './starCheck';
 import {
   notifyTokenSaved,
+  openClassicTokenCreator,
   openTokenCreator,
+  TOKEN_KIND_HELP,
   pasteFromClipboard,
   saveToken,
   setTokenIssueHandler,
   setTokenSavedHandler,
 } from './tokenConfig';
-import { cleanupExpiredUnstarred, markRepoStarred, markRepoUnstarred } from './storage/pendingDelete';
+import { cleanupExpiredUnstarred } from './storage/pendingDelete';
 import { registerHideListsMenu, setHideListsRepositionHandler } from './ui/hideListsMenu';
 import { migrateTagsIfNeeded } from './storage/tags';
 import { transformStarsList } from './transform';
-import { registerExportImportMenu, runImportSync, setAfterImportHandler } from './ui/exportImportMenu';
+import { registerExportImportMenu, setAfterImportHandler } from './ui/exportImportMenu';
+import { registerRestoreMenu } from './ui/restoreMenu';
 import { isDesktop } from './utils';
 
 /* ============================================================
@@ -75,48 +78,9 @@ function exitStarsView(reason: string): void {
   revealBootHide(reason);
 }
 
-/**
- * 仓库详情页：跟踪 star / unstar 状态，维护待删除区。
- *
- * 新版页面是 React 组件，没有表单可监听 —— 按钮是
- * `button[data-testid="star-button"]`，状态体现在 `aria-label`
- * （`Star owner/repo` / `Unstar owner/repo`）与图标填充态上。
- * React 可能整块替换按钮节点，所以点击后短时轮询，而不是只挂
- * MutationObserver（节点被换掉后 observer 会跟丢）。
- * 旧版页面（存在 unstar 表单）仍然走 submit 监听。
- */
-function watchRepoStarState(repoId: string): void {
-  if (!repoId) return;
-
-  const btn = getStarButton();
-  if (btn) {
-    let last = isStarButtonActive(btn);
-
-    const apply = (): void => {
-      const fresh = getStarButton();
-      if (!fresh) return;
-      const now = isStarButtonActive(fresh);
-      if (now === last) return;
-      last = now;
-      if (now) markRepoStarred(repoId);
-      else markRepoUnstarred(repoId);
-    };
-
-    document.addEventListener('click', (e) => {
-      const target = e.target instanceof Element ? e.target : null;
-      if (!target || !target.closest('button[data-testid="star-button"]')) return;
-      const timer = window.setInterval(apply, 250);
-      window.setTimeout(() => window.clearInterval(timer), 5000);
-    });
-    return;
-  }
-
-  // 旧版页面：监听 unstar 表单提交
-  const unstarForm = document.querySelector<HTMLFormElement>('.starred form[action$="/unstar"]');
-  if (unstarForm) {
-    unstarForm.addEventListener('submit', () => markRepoUnstarred(repoId));
-  }
-}
+/* 4.9.0（决策 D17）：仓库详情页的 star/unstar 监听已删除 —— 星状态真相只由整表同步判定，
+ * 与用户从哪个页面点的无关；详情页也不再触碰 GitHub 拥有的 star 按钮 DOM（ADR 0003）。
+ * 详细页现在只做「清理超期宽限期备份」后提前返回（见 init）。 */
 
 /* ============================================================
  * Turbo 导航：防闪烁 + 入场过渡 + 离开恢复
@@ -251,17 +215,33 @@ function showSetupBanner(issueDetail?: string): void {
   bar.querySelector('.gsm-setup-msg')!.textContent = bannerMessage(issueDetail);
   const sync = document.createElement('button');
 
-  // 快捷获取：官方 Template URL 预填 Starring: write 最小权限；生成复制后回粘（填 token 框常驻显示，点快捷键聚焦）
-  const quick = document.createElement('button');
-  quick.className = 'btn btn-primary';
-  quick.type = 'button';
-  quick.textContent = '快速获取 Token';
-  quick.title = '打开 GitHub 创建页（已预填 Account permissions → Starring: write），生成并复制后回来粘贴';
-  quick.addEventListener('click', () => {
-    openTokenCreator();
+  // 两个快捷入口（4.9.0 用户裁定：两者都给，并说明区别）：
+  // classic = 读写都行；fine-grained = 读行、写别人的公开仓库会被 GitHub 拒。
+  const focusInput = (): void => {
     tokRow.hidden = false;
     tokInput.focus();
+  };
+  const quickClassic = document.createElement('button');
+  quickClassic.className = 'btn btn-primary';
+  quickClassic.type = 'button';
+  quickClassic.textContent = '快速获取 Token（classic，推荐）';
+  quickClassic.title = TOKEN_KIND_HELP;
+  quickClassic.addEventListener('click', () => {
+    openClassicTokenCreator();
+    focusInput();
   });
+  const quickFine = document.createElement('button');
+  quickFine.className = 'btn';
+  quickFine.type = 'button';
+  quickFine.textContent = '快速获取 Token（fine-grained，仅读）';
+  quickFine.title = TOKEN_KIND_HELP;
+  quickFine.addEventListener('click', () => {
+    openTokenCreator();
+    focusInput();
+  });
+  const kindHelp = document.createElement('span');
+  kindHelp.className = 'gsm-token-help';
+  kindHelp.textContent = TOKEN_KIND_HELP;
 
   const tokRow = document.createElement('span');
   tokRow.className = 'gsm-token-row';
@@ -269,7 +249,7 @@ function showSetupBanner(issueDetail?: string): void {
   const tokInput = document.createElement('input');
   tokInput.type = 'text';
   tokInput.spellcheck = false;
-  tokInput.placeholder = 'github_pat_… 或 ghp_（也可直接 Ctrl+V 到框里）';
+  tokInput.placeholder = 'ghp_ / gho_（classic）或 github_pat_（也可直接 Ctrl+V 到框里）';
   const tokMsg = document.createElement('span');
   tokMsg.className = 'gsm-token-msg';
   const tokPaste = document.createElement('button');
@@ -284,7 +264,7 @@ function showSetupBanner(issueDetail?: string): void {
   tokSave.addEventListener('click', () => {
     const kind = saveToken(tokInput.value);
     if (!kind) {
-      tokMsg.textContent = '前缀不对：预期 github_pat_（fine-grained）或 ghp_（classic）';
+      tokMsg.textContent = '前缀不对：预期 ghp_ / gho_（classic）或 github_pat_（fine-grained）';
       return;
     }
     console.log(`[github-star-manager] Token 已保存（${kind}），自动触发全量同步`);
@@ -301,7 +281,7 @@ function showSetupBanner(issueDetail?: string): void {
   });
 
 
-  bar.append(quick, sync, tokRow);
+  bar.append(quickClassic, quickFine, kindHelp, sync, tokRow);
   placeSetupBanner(bar, host);
 }
 
@@ -461,12 +441,14 @@ function init(): void {
   registerSyncMenu();
   // Hide Lists 开关（4.5.0）：任意匹配页可切换，默认开 = 隐藏 Lists 区块
   registerHideListsMenu();
+  // 恢复已取消的 star（4.9.0）：可勾选 + 一键「恢复选中」+ 每行 star 按钮（ADR 0003）
+  registerRestoreMenu();
   // 导入 / 导出（4.7.0）：任意匹配页可用（TM 菜单），数据落盘后不导航
   registerExportImportMenu();
-  // 导入完成后的收尾：仅在「Stars 页且网格已存在」时按当前筛选重绘，然后走同步同一路径
+  // 导入完成后的收尾：**只**在「Stars 页且网格已存在」时按当前筛选重绘。
+  // 4.9.0 起**不再自动同步**（ADR 0005：导入是数据搬运，落盘即完成；是否拉远端由用户决定）。
   setAfterImportHandler(() => {
     if (isStarsPage() && document.querySelector('.stars-grid-container')) applyFilters({ keepPage: true });
-    runImportSync(() => runFullSync('button'));
   });
   // 开关切换后重挂已存在的配置面板（🟡-1：关态下面板须挂网格列顶，不占 Lists 槽位）
   setHideListsRepositionHandler(() => repositionSetupBanner());
@@ -484,12 +466,13 @@ function init(): void {
 
   const repoIdMeta = getRepoIdMeta();
   const isRepoDetailPage = !isStarsPage() && !!repoIdMeta;
-  // 仓库详情页：监听 unstar（宽限期恢复）+ 提前返回。
+  // 仓库详情页：只做超期备份清理后提前返回（4.9.0 起不再监听该页的 star/unstar）。
   // 4.8.0 起不再从详情页提取缓存数据（extract.ts 已删）：它写的字段 API 全覆盖，
   // 且 DOM 时间字段与 API 语义不一致，曾是回写脏态的源头（zai-org/ZCode 案例）。
   if (isRepoDetailPage) {
+    // 详情页：只清理超期备份。不再监听 star/unstar（4.9.0 决策 D17：星状态真相只由整表
+    // 同步判定，与用户从哪个页面点的无关），也不再触碰该页 GitHub 拥有的 star 按钮 DOM。
     cleanupExpiredUnstarred();
-    watchRepoStarState(repoIdMeta.getAttribute('content') || '');
     return;
   }
 

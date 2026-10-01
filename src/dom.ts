@@ -152,26 +152,10 @@ export function hideListsSection(): void {
 }
 
 /* ================================================================
- * 仓库详情页（4.8.0 起只监听 star 状态）
+ * 仓库详情页：4.9.0 起本模块**不再**提供任何详情页 star 按钮读取器
+ * （getStarButton / isStarButtonActive 已随决策 D17 删除 —— 星状态真相只由整表同步判定，
+ * 详情页不再触碰 GitHub 拥有的按钮 DOM）。
  *
  * 内嵌 JSON 提取（readEmbeddedJson / getSidebarAbout / SidebarAboutPayload）已随
  * extract.ts 删除——它服务详情页缓存提取，现无消费者。
  * ================================================================ */
-
-/**
- * 详情页的 star 按钮（新版 React 组件）。
- * `aria-label` 为 `Star owner/repo` / `Unstar owner/repo`，可据此判断状态。
- */
-export function getStarButton(): HTMLButtonElement | null {
-  return document.querySelector<HTMLButtonElement>('button[data-testid="star-button"]');
-}
-
-/** star 按钮当前是否处于「已 star」态 */
-export function isStarButtonActive(btn: Element | null): boolean {
-  if (!btn) return false;
-  const label = (btn.getAttribute('aria-label') || '').trim();
-  if (/^unstar/i.test(label)) return true;
-  if (/^star\b/i.test(label)) return false;
-  // 图标兜底（侧栏那个只有图标的按钮没有 aria-label）
-  return !!btn.querySelector('.octicon-star-fill');
-}

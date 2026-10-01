@@ -639,6 +639,15 @@ html.gsm-turbo-entry .stars-grid-container {
 
 .gsm-setup-banner .btn { flex: none; }
 
+/* 4.9.0 两种 Token 的区别说明（配置横幅里与两个快捷入口并排显示）：
+ * 一整行、字号小、不抢按钮的视觉权重。 */
+.gsm-setup-banner .gsm-token-help {
+  flex: 1 0 100%;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fgColor-muted, #656d76);
+}
+
 /* 4.0.1 快捷 Token 配置：横幅内联粘贴行 + 失效弹窗（Primer 配色变量自适应暗色） */
 .gsm-token-row {
   display: inline-flex;
