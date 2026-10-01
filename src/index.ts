@@ -249,7 +249,7 @@ function showSetupBanner(issueDetail?: string): void {
   const tokInput = document.createElement('input');
   tokInput.type = 'text';
   tokInput.spellcheck = false;
-  tokInput.placeholder = 'ghp_ / gho_（classic）或 github_pat_（也可直接 Ctrl+V 到框里）';
+  tokInput.placeholder = 'ghp_ / gho_（classic）或 github_pat_（也可直接 Ctrl+V 粘贴）';
   const tokMsg = document.createElement('span');
   tokMsg.className = 'gsm-token-msg';
   const tokPaste = document.createElement('button');
@@ -317,7 +317,7 @@ function repositionSetupBanner(): void {
 /** 面板主文案：默认 = 首次配置引导；issueDetail = Token 失效/权限不足等具体问题（4.0.2 面板化） */
 function bannerMessage(issueDetail?: string): string {
   if (issueDetail) return `🔑 ${issueDetail} —— 请用下方按钮重新配置 Token，保存后会自动全量同步恢复。`;
-  return '⭐ GithubStarManager 需要一次性全量同步（GitHub API）：可一键预填权限创建 Token，或手动填写；保存后会自动开始全量同步。';
+  return '⭐ GithubStarManager 需要一次性全量同步（GitHub API）：可用下方按钮打开预填好权限的 Token 创建页，或手动填写；保存后会自动开始全量同步。';
 }
 
 function registerNavListeners(): void {

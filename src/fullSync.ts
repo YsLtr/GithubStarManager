@@ -180,7 +180,7 @@ async function fetchStarredPage(tok: string, page: number, signal: AbortSignal, 
   const remainingHeader = resp.headers.get('x-ratelimit-remaining');
   const remaining = remainingHeader === null ? NaN : Number(remainingHeader);
   if (Number.isFinite(remaining) && remaining < RATE_FLOOR) {
-    throw new Error(`速率余量 ${remaining} < ${RATE_FLOOR}，本次放弃（留量给核对队列）`);
+    throw new Error(`速率余量 ${remaining} < ${RATE_FLOOR}，本次放弃（须为逐条核对留出余量）`);
   }
 
   const body: unknown = await resp.json();
@@ -620,7 +620,7 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
     // 打开**配置横幅**（内联粘贴行 + 两条快速创建深链），而不是 window.prompt：
     // 原生 prompt 会阻塞整个页面主线程，且 prompt 式入口早已按用户更正撤除（见 index.ts
     // showSetupBanner 注释）；横幅是 ADR 0004 指定的配置入口。自动来源不弹，避免开页即打扰。
-    notifyTokenIssue('同步需要 Token —— 在下方粘贴，或用快速创建链接生成后回填');
+    notifyTokenIssue('同步需要 Token —— 请在下方输入框粘贴后点「保存并同步」');
     tok = getGitHubPat();
   }
   if (!tok) {

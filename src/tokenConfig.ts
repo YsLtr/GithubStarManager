@@ -8,7 +8,7 @@
 //   不出现在 GET /user/starred 里而被整表 diff 误判为外部取关（ADR 0004 后果）。
 // - fine-grained：GitHub 2025-08-26 起支持 Template URL（query 预填 name/description/
 //   expires_in/<permission>，write 含 read），`starring=write` 一键带出最小权限。
-//   它**读**够用、**写他人公开仓库必被拒**（ADR 0004）——但网页写路径会静默接管（ADR 0006），
+//   它**可读**、**写他人公开仓库必被拒**（ADR 0004）——但网页写路径会静默接管（ADR 0006），
 //   故仍接受配置。
 // 来源：
 // - https://github.blog/changelog/2025-08-26-template-urls-for-fine-grained-pats-and-updated-permissions-ui/
@@ -73,8 +73,8 @@ export const TOKEN_CLASSIC_URL =
  * 文案只说**结果**，不提写通道实现（ADR 0006「不向用户披露通道」）。
  */
 export const TOKEN_KIND_HELP =
-  'classic（ghp_，或 gh oauth 的 gho_）：读写都走官方 REST，可 star/unstar 任意公开仓库。' +
-  'fine-grained（github_pat_）：读列表够用，但 GitHub 不允许它 star/unstar 别人的公开仓库。';
+  'classic（ghp_，或 gh CLI OAuth 的 gho_）：读写都走官方 REST，可 star/unstar 任意公开仓库。' +
+  'fine-grained（github_pat_）：可读列表，但 GitHub 不允许它 star/unstar 别人的公开仓库。';
 
 /** 打开预填好的 fine-grained 创建页：走 gmOpenInTab（TM 菜单回调无用户激活，裸 window.open 会被弹窗拦截静默吞掉） */
 export function openTokenCreator(): void {

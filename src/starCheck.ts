@@ -6,7 +6,7 @@
 // （applyExternalUnstar → confirmExternalUnstar）。4.0.10 审查清理：裁决缓存（recordVerdict，
 // 只写不读无界增长）与 snapshot 注册钩子（onExternalUnstarConfirmed，注册者是死代码）随死码簇移除。
 // Token 双格式（2026-09-22 调研结论，来源链接记录在 AGENTS.md 决策记录）：
-// - classic `ghp_`：有效 token 即可读 /user/starred*；仅涉及公开仓库时可不勾
+// - classic `ghp_`：有效 token 即可读 /user/starred*；仅涉及公开仓库时无需勾选
 //   scope，涉及私有仓库请勾 `repo`——API 无法区分「无权限读取的私有仓库」与
 //   「已取消 star」（两者都是 404），无 repo scope 的 classic token 核对私有仓库
 //   存在误判风险，这是已知局限（决策：不做同源页面 fallback，抓页面太重）。
@@ -47,9 +47,9 @@ export function promptForToken(notify = true): void {
   const masked = cur ? `${cur.slice(0, 12)}…${cur.slice(-4)}` : '未设置';
   const input = window.prompt(
     'GitHub PAT，用于全量同步 star 列表、以及加星/取消星。\n' +
-      '· classic：ghp_ 前缀（OAuth 的 gho_ 也行）——读列表与写星标都能用，推荐。\n' +
-      '  核对/同步私有仓库需勾 repo scope；只关心公开仓库可不勾。\n' +
-      '· fine-grained：github_pat_ 前缀——读列表够用，但 GitHub 不允许它改别人的公开仓库星标。\n' +
+      '· classic：ghp_ 前缀（OAuth 的 gho_ 同样适用）——读列表与写星标都可用，推荐。\n' +
+      '  同步私有仓库需勾选 repo scope；只涉及公开仓库时无需勾选。\n' +
+      '· fine-grained：github_pat_ 前缀——可读列表，但 GitHub 不允许它改别人的公开仓库星标。\n' +
       '  仓库范围建议选 All repositories（否则私有仓库的 star 会被漏读而误判为已取关）。\n' +
       '（留空 = 删除当前 token 并重新打开配置面板；保存后立即生效）\n\n' +
       `当前：${masked}`,
@@ -81,7 +81,7 @@ export function registerTokenMenu(): void {
   gmRegisterMenuCommand('🔑 快捷创建 Token：classic（推荐，可写星标）', () => {
     openClassicTokenCreator();
   });
-  gmRegisterMenuCommand('🔑 快捷创建 Token：fine-grained（只能读）', () => {
+  gmRegisterMenuCommand('🔑 快捷创建 Token：fine-grained（仅读）', () => {
     openTokenCreator();
   });
 }
