@@ -92,3 +92,64 @@ L2 按协议是**间隔阶梯 1000 → 500 → 250ms，各 20 次**（合计 60 
 - star/unstar 是否计入 **内容创建限流**（80/分钟、500/小时）—— 未确证，见 `docs/research-web-star-endpoints.md` §4。
 - **abuse detection**（AUP §4「excessive automated bulk activity」）的实际触发规模 —— 无法在不触发的前提下测量，属于合规判断而非技术测量。
 - 二级限流触发时的响应形态（本应产出 D6）—— 本轮未触发，仍以 `docs/research-ratelimit-protocol.md` §4.8 的「响应体含 `secondary rate limit`」为唯一可靠判据（`x-ratelimit-*` 头不可作判据）。
+
+---
+
+## 7. 两条写通道的限流对照（2026-10-01 追加实测）
+
+同一会话内分别测两条通道的**响应头**，得出直接影响设计的对照。API 侧用 `curl -D -`，
+网页侧用出厂同形 `fetch` + 全响应头 dump。
+
+### 7.1 API 侧（`PUT` / `DELETE /user/starred/{o}/{r}`）—— 完全可观测
+
+```
+HTTP/1.1 204 No Content
+X-RateLimit-Limit: 5000        X-RateLimit-Used: 3   X-RateLimit-Resource: core
+X-RateLimit-Remaining: 4997    X-RateLimit-Reset: 1790857287
+Access-Control-Expose-Headers: … Retry-After … X-RateLimit-* …
+```
+
+紧随其后的 `DELETE` 返回 `Used: 4` ⇒ **一次变异 = 1 点**，与 §1 探针的 D1 判定**独立复现**
+（探针侧 20 个请求逐个 +1；此处 PUT→DELETE 3→4）。**「5 点/次」表不作用于 primary 得到两次独立确认。**
+
+### 7.2 网页侧（`POST /{o}/{r}/star`）—— **零限流可观测性**
+
+完整 18 个响应头（实测两次，均为 200）：
+
+```
+cache-control  content-encoding  content-security-policy  content-type  date
+document-policy  etag  origin-trial  referrer-policy  server
+strict-transport-security  vary  x-content-type-options  x-fetch-nonce
+x-frame-options  x-github-edge-region  x-github-request-id  x-xss-protection
+```
+
+**没有任何 `x-ratelimit-*`、没有 `retry-after`** —— 与调研报告 §Q5 的 3 次观测一致，
+这次是全头清单确认，不是「没找到」。
+
+顺带确证的两件事：
+
+- **响应会回 `x-fetch-nonce`**（`v2:2bf6d114-…`，每次不同），且 `vary` 头里含 `X-Fetch-Nonce`
+  ⇒ nonce 是**活的响应变化输入**，不是历史遗留。我们**不发**它仍得 200（§A.1），但 GitHub 会主动发给我们。
+- **`{"count":"N"}` = 仓库 star 总数（动作之后）**，再次确证：`jimmgreen/LumaShot` 取消 → `25`、
+  恢复 → `26`，与该仓库页面显示的 26 一致（§A.1 在 `qq_warning` 上观测到 3→4→3，同构）。
+  故它是**事后快照**，不是本次动作的增量 —— 继续不作判据。
+
+### 7.3 对照表（这是本轮最重要的产出）
+
+| | API（`PUT/DELETE /user/starred`） | 网页端点（`POST /{o}/{r}/star`） |
+|---|---|---|
+| 计入的桶 | `core`（**实测**） | **不在 core**（无该头；官方旁证：网页不是 REST） |
+| 单次成本 | **1 点/请求**（两次独立实测） | **未知**（无任何计数可读） |
+| 主限流 | 5000/小时（实测 `Limit: 5000`） | 名义上不适用 |
+| 二级限流 900 点/分钟 | 适用（REST 端点） | 名义上不适用（该值明确限定 REST） |
+| 内容创作限流 80/分 · 500/时 | 官方称覆盖 REST | 官方明确「**include actions taken on the GitHub web interface**」；**但 star 是否计入未确证** |
+| 失败前预警 | ✅ `Remaining` / `Used` / `Reset` / `Retry-After` | ❌ **没有任何头**，只能等 403/429 才知道 |
+| 我们配置的余量 | 60 写/分 = 60 点/分 → **对 900/分 有 15× 余量**、对 5000/时 有 83× | 60 写/分 → 对**名义** 80/分 只有 **1.33×** 余量，且**阈值未公开** |
+
+**结论（对本仓库的行为有影响）**：**在网页通道上做批量恢复，风险画像显著差于 API 通道** ——
+不是因为它更慢，而是因为①它 60/分 相对名义 80/分的余量只有 1.33×，②**完全没有可观测性**，
+脚本无法在逼近阈值时主动退避，只能撞到 403/429 才知道。ADR 0006 的通道优先级
+（**有 classic/OAuth token 就先 REST**）因此不只是「契约更好」，也是**节流余量更大**——
+批量恢复应优先走 API 通道；网页通道只该用在「没有 classic 凭证」的回落场景。
+本仓库当前实现已经如此（`setStarState` 先试 REST），无需改动；此条记录用于防止将来把
+「网页通道也能写」误当作「两条通道等价」。
