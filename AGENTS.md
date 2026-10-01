@@ -130,7 +130,7 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
 
 ---
 
-## dev 模式必须知道的三件事
+## dev 模式必须知道的四件事
 
 1. **dev 下 GM API 不可见**：dev 代码经动态 `import()` 跑在 `unsafeWindow` 作用域，该作用域没有 GM_api
    （[vite-plugin-monkey#35](https://github.com/lisonge/vite-plugin-monkey/issues/35)）。已用 `server.mountGmApi: true`
@@ -140,6 +140,14 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
    允许 Local Network Access 弹窗。详见 `DEVELOPER.md` §2。
 3. **两个脚本不能同时启用**：`transformStarsList()` 见到 `.stars-grid-container` 就早退，正式版先跑会让 dev 版
    「改了没反应」。开发时在 Tampermonkey 里禁用正式版。
+4. **改过脚本头（`@version` 最常触发）后必须重新安装 dev loader** —— 否则 TM 菜单会整体消失。
+   机制：`mountGmApi` 靠一个**由脚本头注释算出的 key**（`md5(头注释).base64url[0:16]`）在 sandbox 与页面域之间
+   传窗口；TM 里存的 loader 是安装那一刻的头，改头就换 key，两边对不上 → `gm.api.js` 读不到窗口直接 return
+   → 页面域**一个 `GM_*` 都没有**。表现是「TM 菜单空了」**且**「同步说未配置 token」（PAT 按安全设计不写
+   localStorage 镜像，GM 一缺席就必然读不到）。
+   修：重开 <http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js> 让 TM 更新（同名同 namespace → 原地更新，
+   不会变成两个脚本）。**正式版不受影响**（它不走 loader/mountGmApi 那套）。`gm.ts` 的 `warnMissingGmApi()`
+   会识别这种情况并在控制台直接给出该 URL。
 
 ---
 

@@ -94,6 +94,9 @@ export function gmGet<T>(key: string, defaultValue: T): T {
     }
     return gmValue;
   }
+  // GM 缺席（非 TM / dev 挂载失败）→ 退到 localStorage 镜像。注意 PAT 因安全设计**不进镜像**，
+  // 故这里读不到 token，症状是「同步报未配置 token」而用户明明配过 —— 必须显式说明。
+  warnMissingGmApi('GM_getValue');
   const lsValue = lsRead(key);
   return lsValue === undefined ? defaultValue : (lsValue as T);
 }
@@ -137,6 +140,44 @@ export function gmAddStyle(css: string): HTMLStyleElement {
   return style;
 }
 
+/**
+ * 诊断「GM API 为什么不在」。
+ *
+ * 两种情况在代码里长得**一模一样**（`typeof GM_xxx !== 'function'`），但成因与出路完全不同：
+ *  1. 真·非 TM 环境（或 TM 没给该脚本授权）——无解，属预期。
+ *  2. **dev 模式 mountGmApi 失败**：页面域 `document` 上有 `__monkeyWindow-*` 属性（TM 里的 dev loader
+ *     确实跑过），但该 key ≠ 本地 dev server 现在按**脚本头注释**算出的 key —— 于是
+ *     `__vite-plugin-monkey.gm.api.js` 读不到 sandbox window，直接 return，一个 GM_* 都挂不上。
+ *     **改过任何头字段（`@version` 最常触发）后必现**，因为 key 就是头注释的 md5 + base64url 前 16 位。
+ *
+ * 历史上这条日志把情况 2 报成「非 TM 环境」，把排查带偏过一次（现象是「TM 菜单消失了」，
+ * 但脚本分明在 TM 里跑着）。故这里显式区分，并直接给出修复动作。详见 DEVELOPER.md §2。
+ */
+function missingGmApiReason(): string {
+  const loaderKeys = Object.keys(document).filter((k) => k.startsWith('__monkeyWindow-'));
+  if (loaderKeys.length > 0) {
+    return (
+      `dev loader 与本地产物的 window key 不一致（页面是 ${loaderKeys[0]}）——` +
+      '改过脚本头（如 @version）后必现，导致 mountGmApi 读不到 sandbox window。' +
+      '重新安装 http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js 即可恢复。'
+    );
+  }
+  return '非 TM 环境，或 TM 未给该脚本该授权（@grant 缺项）';
+}
+
+/** 首次发现 GM API 缺席时打一条**完整可执行**的诊断；后续调用静默（菜单有 8 项，否则刷屏）。 */
+let gmApiWarned = false;
+function warnMissingGmApi(missing: string): void {
+  if (gmApiWarned) return;
+  gmApiWarned = true;
+  console.warn(
+    `[github-star-manager] GM API 不可用（首个缺失的调用：${missing}）：${missingGmApiReason()}\n` +
+      '· 后果：TM 菜单项消失；PAT 读不到（安全设计上 PAT 不写 localStorage 镜像）；' +
+      'GM_openInTab / GM_xmlhttpRequest / GM_download 退化为本地回退或失效。\n' +
+      '· 页面渲染不受影响：缓存等非敏感数据仍经 localStorage 镜像可用。'
+  );
+}
+
 /** 注册/更新 Tampermonkey 菜单命令（调用时判定；dev/非 TM 环境静默降级为日志）。
  *  options.id（TM 4.20+）传入既有 id = 原地更新该菜单项的标签（刷新开关态用，避免 unregister+register 的
   *  历史缺陷面）；不传 = 新建，返回值 = 菜单项 id。 */
@@ -148,7 +189,8 @@ export function gmRegisterMenuCommand(name: string, fn: () => void, options?: { 
       console.error('[github-star-manager] GM_registerMenuCommand 失败', e);
     }
   } else {
-    console.info('[github-star-manager] GM_registerMenuCommand 不可用（非 TM 环境），脚本菜单项（Token 设置 / 立即同步 / 隐藏 Lists）均不显示');
+    // 曾经这里写死「非 TM 环境」——正是这个误报把排查带偏（实为 dev mountGmApi 失败）。
+    warnMissingGmApi('GM_registerMenuCommand');
   }
   return undefined;
 }
@@ -156,7 +198,7 @@ export function gmRegisterMenuCommand(name: string, fn: () => void, options?: { 
 /** 移除菜单命令（4.5.0：与 gmRegisterMenuCommand 返回的 id 配对；仅作 options.id 更新不可用时的回退） */
 export function gmUnregisterMenuCommand(id: unknown): void {
   if (typeof GM_unregisterMenuCommand !== 'function') {
-    console.info('[github-star-manager] GM_unregisterMenuCommand 不可用（非 TM 环境或旧版 TM），跳过菜单项移除');
+    warnMissingGmApi('GM_unregisterMenuCommand');
     return;
   }
   try {
@@ -216,7 +258,7 @@ export function gmFetchText(url: string): Promise<string> {
  *  文档：https://www.tampermonkey.net/documentation.php?q=api:GM_download */
 export function gmDownloadFile(data: Blob, filename: string): boolean {
   if (typeof GM_download !== 'function') {
-    console.error('[github-star-manager] GM_download 不可用（非 Tampermonkey 环境？），无法导出');
+    warnMissingGmApi('GM_download');
     return false;
   }
   try {

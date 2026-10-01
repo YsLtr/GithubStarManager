@@ -55,6 +55,32 @@ GitHub 的 CSP 是 `script-src github.githubassets.com 'nonce-…'`，白名单�
 
 另有第三个坑：dev 代码经动态 `import()` 跑在 `unsafeWindow` 作用域，该作用域**没有 GM_api**（[vite-plugin-monkey#35](https://github.com/lisonge/vite-plugin-monkey/issues/35)）。已用 `vite.config.ts` 的 `server.mountGmApi: true` 解决（仅 dev 生效，产物不变）。
 
+### ⚠️ `mountGmApi` 的 key 会随脚本头变化 —— 改头后必须重装 dev loader
+
+`mountGmApi` 不是「注入一次就永久生效」，它靠一个**握手 key** 把 sandbox 的窗口对象递给页面域：
+
+```
+loader（存于 TM）      document["__monkeyWindow-<K>"] = window     // sandbox 窗口，带 GM_*
+gm.api.js（每次现拉）  monkeyWindow = document["__monkeyWindow-<K>"]  // 与上面同一个 K 才拿得到
+```
+
+而 `K = 'md5(脚本头注释).base64url.substring(0,16)'`（`vite-plugin-monkey/dist/node/index.mjs` 的 `simpleHash` +
+`finalMonkeyOptionToComment(..., 'serve')`）。**任何头字段变化都会改 K** —— `@version` 最常触发（每次发版必变）。
+
+于是：**TM 里存的 loader 是「安装那一刻」的头，dev server 每次都按「当前头」算 K**。改过头之后两边不等，
+`gm.api.js` 打一句 `[vite-plugin-monkey] not found monkeyWindow` 就 `return`，**一个 `GM_*` 都挂不上**。症状：
+
+- **TM 菜单整体消失**（8 个 `GM_registerMenuCommand` 全部变成空操作）；
+- **同步报「未配置 token」**，即使用户配过 —— 因为 PAT 按安全设计不写 localStorage 镜像（`gm.ts` 的
+  `SENSITIVE_KEYS`），GM 一缺席就必然读不到；而非敏感的缓存有镜像，所以**网格照常渲染**，极易误判成
+  「脚本正常，只是菜单没了」。
+
+修法：重新打开 <http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js> 让 TM 更新（`@name` / `@namespace`
+不变 → 原地更新，不会变成两个脚本）。`gm.ts` 的 `warnMissingGmApi()` 会识别该情形（判据：页面域 `document` 上
+存在 `__monkeyWindow-*` 属性 = loader 跑过，但 GM_* 仍缺失）并在控制台直接打出这个 URL。
+
+**正式版不受影响**：它不走 loader/mountGmApi 这条路，TM 直接以沙箱执行整个 bundle，`GM_*` 由 `@grant` 提供。
+
 不想折腾扩展时，退路是 `pnpm build` 后把 `dist/github-star-manager.user.js` 重新装进 Tampermonkey —— 构建只要 ~100ms，代价是没有 HMR。
 
 ## 3. 目录结构
