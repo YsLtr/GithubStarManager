@@ -77,8 +77,8 @@ src/
   starCheck.ts        PAT 读写/前缀校验/菜单、外部 unstar 宽限管线（applyExternalUnstar）、卡片星标态刷新（syncCardAfterStarChange）
   tokenConfig.ts      凭据单一来源：getToken / detectTokenKind（ghp_·gho_=classic，github_pat_=fine-grained）/ isClassicCredential、
                       **两条**预填深链（classic `scopes=repo` + fine-grained `starring=write`）与差异文案、剪贴板粘贴、401/403(非限速) 上报
-  starWrites.ts       写路径抽象（4.9.0）：setStarState **静默分派** REST（classic/OAuth Bearer）↔ 网页端点（Cookie 会话 + GitHub-Verified-Fetch，
-                      422 才回退取页面表单 token 重发一次）、成功判定、失败归一 + writeFailureMessage
+  starWrites.ts       写路径抽象（4.9.0）：setStarState **静默分派** REST（classic/OAuth Bearer）↔ 网页端点（Cookie 会话 + GitHub-Verified-Fetch）、
+                      成功判定、失败归一 + writeFailureMessage。**无 422 回退**（2026-10-01 实测推翻其前提，见 ADR 0006）
   mutationQueue.ts    全局串行变异队列（4.9.0）：间隔 ≥1000ms、排队中可撤销、失败不阻断后续
   restore.ts          恢复编排（4.9.0）：restoreOne / restoreMany（严格串行·可取消·不重试）/ pushRestoreNotice（同仓库通知去重）
   fullSync.ts         API 主模式同步：scanStarred 单遍条件扫描、波次并发、整表 diff、star 时间回填、进页 probe、runFullSync / registerSyncMenu / mountSyncButton / hasApiData
@@ -323,7 +323,7 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 
 **触发入口**（三处等价）：TM 菜单「🔄 立即全量同步」、横幅「立即同步」、标题行 Sync 按钮；另有进页 `scheduleProbeSync()`（冷却 60s + 有 PAT → `runFullSync('auto')`）。
 
-**`hasApiData()`** = 有 PAT + `meta.count > 0`，决定「缓存网格」还是「原生页 + 配置横幅」。
+**`hasApiData()`** = `stars_full_sync_meta` 有 `lastFullSyncAt` 且 `count > 0`（= 至少完整整表过一次），决定「缓存网格」还是「原生页 + 配置横幅」。**它不检查当前是否配置了 token**——token 被撤销/清除后缓存网格照常渲染，且 4.9.0 起仍能经浏览器会话写星标；同步与写各自失败时报错。
 
 ### 写路径（4.9.0：两条通道，静默分派）
 
@@ -335,11 +335,15 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 | token 是 classic PAT（`ghp_`）或 OAuth（`gho_`） | REST `PUT`/`DELETE /user/starred/{o}/{r}`，`Bearer` | `204`（`304` 一并当成功） |
 | 无上述 token，**或** REST 返回权限 403，且 `hasWebSession()` | 网页端点 `POST /{o}/{r}/star`（`/unstar`），Cookie 会话 | `200`，**且在页面上存在该仓库表单时**复核方向已翻转（未翻转即失败） |
 
+**两条通道都是每仓库恰好 1 个写请求**。4.9.0 实测推翻了原「422 → 取仓库页表单 token 重发」的回退
+（仓库页原始 HTML **0 个 `<form>`**，详见 `docs/adr/0006` 与 `docs/research-web-star-endpoints.md` 附录 A），
+故降级只剩两段：**页面有该仓库表单 → 用它的真实 token；否则只带 VF 头**；都失败就报错。
+
 网页端点的关键事实（实测见 `docs/research-web-star-endpoints.md` §3.5）：
 
 - 凭据 = Cookie 会话（`credentials:'same-origin'`）+ `GitHub-Verified-Fetch: true`；**不发** `X-Fetch-Nonce`、**不发** `X-GitHub-Client-Version`。
 - `authenticity_token` 是 **per-form** 且与 action+method 绑定（stars 页实测 60 表单 60 唯一值）→ **离页仓库不先取 token**，只带 VF 头（实测足以通过）；请求体仍是 multipart 且带 `authenticity_token` + `context`，与实测组 B 同形。
-- **仅当返回 422**（Rails CSRF 失败）才回退：`GET /{o}/{r}` → `DOMParser` 取该页 `form[action="/{o}/{r}/star"]` 的真实 token → **重发一次**。故无 token 时正常 1 个请求/仓库，回退时 3 个。
+- **没有 422 回退**（4.9.0 实测后删除）：原设计是「422 → `GET /{o}/{r}` → `DOMParser` 取表单 token → 重发」，但实测该页原始 HTML（HTTP 200 / 339 KB）**一个 `<form>` 都没有**（纯客户端渲染）⇒ 回退必然拿不到 token。per-form token 只存在于**原生 stars 列表页的服务端渲染**（实测 64 表单），且只覆盖当页仓库 —— 恢复场景的仓库按定义不在列表里，故不再保留任何 fetch 式回退。
 - **422 的响应体是 HTML**（即便带 `Accept: application/json`）→ 一律 `resp.text()` 后再 `try { JSON.parse }`。
 - **不用** `{"count":"N"}`：那是仓库 star 总数的事后快照（实测 278→277→278），不是本次动作的增量。
 - 会话检测是**双重判据**：`body.logged-in` **且** `meta[name="user-login"]` 的 content **非空串**（只看 meta 是否存在是错的）；`form[action$="/unstar"]` 不能当登录判据。

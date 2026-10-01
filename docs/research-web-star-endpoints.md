@@ -372,3 +372,76 @@ Rails 侧实现即 `per_form_csrf_token(session, action_path, method)`（HMAC，
 
 **实测（本机浏览器，2026-09-26）**
 20. 只读 DOM 观察 + 三组对照请求实验：`meta[fetch-nonce]` 跨页差异、60 表单 60 唯一 token、三组 HTTP 结果（200/200/422）、`{"count":"277"}`→ 复原 `{"count":"278"}`、限流头为 null、`meta[release]` 值。原始观测记录见本报告 §3.5 与 §3.2。
+
+---
+
+## 附录 A · 4.9.0 发布前的真机复核（2026-10-01）
+
+这一节是**出厂代码路径**的复核，不是探索性研究。方法：在真实 Chrome、已登录会话、**stars 页**内
+用与 `src/starWrites.ts` 逐字同形的 `fetch` 发请求（目标仓库 `YsLtr/qq_warning`，自有、public，
+且**不在该页 DOM 内** —— 即真正的「离页」）。方向双向各测一次，并用 `GET /user/starred/{o}/{r}`
+（204 = 已 star / 404 = 未 star）复核远端真实状态。基线 S0 = 未 star，测试后**已复原**（star 数 3→4→3）。
+
+### A.1 仅带 `GitHub-Verified-Fetch` 的离页写：**成立**
+
+```js
+const fd = new FormData();
+fd.append('authenticity_token', <86 字符随机占位>);   // 与实测组 B 同形
+fd.append('context', 'user_stars');
+await fetch('/YsLtr/qq_warning/star', {
+  method: 'POST', credentials: 'same-origin',
+  headers: { 'GitHub-Verified-Fetch': 'true', 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json' },
+  body: fd,
+});
+```
+
+| 请求 | 响应 | 远端复核 |
+|---|---|---|
+| `POST /YsLtr/qq_warning/star`（页面无该仓库表单） | **200**，`application/json`，`{"count":"4"}`，728 ms | `GET /user/starred/…` → **204**（确认已 star） |
+| `POST /YsLtr/qq_warning/unstar` | **200**，`{"count":"3"}` | `GET /user/starred/…` → **404**（确认已取消） |
+
+⇒ **「离页仓库 + 占位 token + 只带 VF 头」不是推断，是实测事实，且两个方向都成立。**
+这是 4.9.0 卡片星星按钮与批量恢复的可行性基础。
+
+### A.2 422 回退的前提**被推翻**（本节最重要的一条）
+
+原设计（本报告 §3.5 末句 + ADR 0006）的安全网是：VF 被拒（422）时 `GET /{o}/{r}` 取服务端 HTML 里的
+`form[action="/{o}/{r}/star"]` 真实 token 重发一次。实测：
+
+| 页面 | 原始 HTML | `<form>` 数量 |
+|---|---|---|
+| `GET /YsLtr/qq_warning`（仓库详情页） | 200，**339,195 字节** | **0**（`document.querySelectorAll('form').length === 0`，含任意 action） |
+| `GET /https://github.com/YsLtr?tab=stars`（原生 stars 列表页） | 200，1,142,704 字节 | **64** = 30 × `action$="/star"` + 30 × `action$="/unstar"`（与 live DOM 一致） |
+
+结论：仓库详情页已是**纯客户端渲染**，任何「从仓库页 HTML 取 per-form token」的方案都是死码；
+per-form token 只存在于**原生 stars 列表页的服务端渲染**，且只覆盖**当页那 30 个仓库**。
+恢复场景的对象按定义不在 stars 列表里 ⇒ 该来源也救不了恢复。
+
+**已据此删除该回退**（`src/starWrites.ts`），降级从三段变两段（真实 token → 仅 VF → 报错）。
+不去 fetch stars 列表页的理由：1.1 MB / 次，且覆盖不到恢复场景。
+
+### A.3 复核过程中暴露的另外两点
+
+- **`promptForToken` 用原生 `window.prompt`**：它会在**整个页面主线程上阻塞**（实测：点击 Sync 且未配置
+  token 时，页面 JS 通道整体失去响应，重载才恢复）。原生 JS 对话框属浏览器 chrome 层，
+  **不进页面合成帧** —— 所以截图看不到它，容易误判为「页面正常但无响应」。4.9.0 已把
+  「Sync 但无 token」这一路径改为打开**配置横幅**（`notifyTokenIssue`），TM 菜单入口保留 prompt。
+- **验证工具自身的干扰**：`agent-browser-cli` 会在页面 MAIN world 注入对话框抑制脚本，把
+  `window.alert/confirm/prompt` 换成 stub（`function(msg,def){toast('prompt',msg);return def||null;}`）。
+  凡是要观察 `alert`/`prompt` 行为的验证，都必须先确认该 stub 是否在场，否则会「看不到对话框」而误判。
+
+### A.4 出厂实现路径的端到端复核：**通过**（同一会话内完成）
+
+不是手搓请求，而是**真实触发脚本自己的代码**：对网格卡片 `jimmgreen/LumaShot` 的 `.stars-star-btn`
+派发一次 `.click()`（合成点击足以触发；脚本的处理器不校验 `isTrusted` —— 只有浏览器门控行为如文件选择器才需要）。
+判定**不采信 UI**（本环境 `window.alert` 被工具注入的 stub 吞掉），一律用 `GET /user/starred/{o}/{r}` 复核远端。
+
+| 步骤 | 观测 | 远端复核 |
+|---|---|---|
+| 点击卡片星按钮（无 token ⇒ 走网页通道，目标不在页面上） | 按钮**立即**变 `unstarred`（乐观翻转） | — |
+| ~1s 后 | **`.gsm-notify-stack` 被创建**，1 条 `gsm-notice gsm-notice-warn`（样式全内联）；文案 `已取消 star：jimmgreen/LumaShot`，含 **`撤销`** 动作按钮 + `×` 关闭 | `GET /user/starred/jimmgreen/LumaShot` → **404**（远端**真的**取消了） |
+| 点通知里的 `撤销` | 卡片按钮回到 `starred`；该通知**原地**变为 `✓ jimmgreen/LumaShot 已恢复`，动作按钮消失 | → **204**（远端**真的**恢复了，用户状态零残留） |
+| 通知生命周期 | 在**隐藏标签页**里 6s 仍在、50–75s 之间消失 —— 与 Chrome 把后台定时器节流到 ~1/min 一致（非缺陷；前台应为 3s） | — |
+
+⇒ **离页 + 仅 VF 的写路径、全局串行队列、通知栈、通知内「撤销」恢复，四者在真实浏览器里全部按设计工作。**
+（本次跑的是 dev 服务提供的**当前源码**；打包产物只经 `pnpm check` 验证，未在真机装载。）

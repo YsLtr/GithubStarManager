@@ -30,7 +30,7 @@
 
 import { DATA_REV, STORAGE_KEYS, SYNC_SVG } from './constants';
 import { gmGet, gmRegisterMenuCommand, gmSet } from './gm';
-import { applyExternalUnstar, getGitHubPat, promptForToken } from './starCheck';
+import { applyExternalUnstar, getGitHubPat } from './starCheck';
 import { applyFilters } from './filters';
 import { notifyTokenIssue } from './tokenConfig';
 import { pushRestoreNotice } from './restore';
@@ -617,7 +617,10 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
   ensureInteractionTracking(); // 入口即布防：重绘抑制要知道「刚才用户有没有在动页面」
   let tok = getGitHubPat();
   if (!tok && source === 'button') {
-    promptForToken(false); // 自动触发场景不弹重复 prompt；保存成功后的同步由 savedHandler 接管
+    // 打开**配置横幅**（内联粘贴行 + 两条快速创建深链），而不是 window.prompt：
+    // 原生 prompt 会阻塞整个页面主线程，且 prompt 式入口早已按用户更正撤除（见 index.ts
+    // showSetupBanner 注释）；横幅是 ADR 0004 指定的配置入口。自动来源不弹，避免开页即打扰。
+    notifyTokenIssue('同步需要 Token —— 在下方粘贴，或用快速创建链接生成后回填');
     tok = getGitHubPat();
   }
   if (!tok) {

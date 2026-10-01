@@ -31,13 +31,26 @@
 来源支持，没有本地实测数据。执行前置与协议见 `DEVELOPER.md` §6「REST 限流实测」与
 `docs/research-ratelimit-protocol.md`。结论落 `docs/research-ratelimit-measurement.md`（尚未创建）。
 
-**未真机验证的实现假设**（写在这里以免被当成已验证的事实）：
+**2026-10-01 真机复核结果**（`docs/research-web-star-endpoints.md` 附录 A，出厂代码路径、双向、含远端 API 复核）：
 
-- 网页端点离页写路径「只带 `GitHub-Verified-Fetch` 头 + 占位 `authenticity_token`」——形态与实测组 B 同形，
-  但**批量/离页场景从未实测**；422 回退假设 `GET /{o}/{r}` 的服务端 HTML 里有 `form[action="/{o}/{r}/star"]`
-  （详情页已 React 化，若原始 HTML 不含该表单则回退失效）。两点都记在 `docs/adr/0006` 的「未确证」段。
-- `context` 字段在 repo 作用域端点上取 `user_stars` 是否有副作用：未确证（只作原样携带）。
-- classic 创建页 `?scopes=repo` 预填：官方文档**未列**（来源是社区实测），需真机点一次验证。
+| 事项 | 结论 |
+|---|---|
+| 离页仓库 + 仅 VF 头 + 86 字符占位 token | ✅ **成立、双向**：`POST /star` 200 → API 复核 204；`POST /unstar` 200 → 复核 404。基线已复原。 |
+| 422 回退的前提 | ❌ **被推翻**：`GET /{o}/{r}` 原始 HTML（200 / 339 KB）**0 个 `<form>`**（纯客户端渲染）⇒ 回退是死码，**已从 `starWrites.ts` 删除**，降级由三段变两段。per-form token 只在**原生 stars 列表页**有（实测 64 表单 = 30 star + 30 unstar，仅覆盖当页仓库），而恢复场景的仓库不在列表里，故不改为 fetch 列表页。 |
+| classic 创建页 `?scopes=repo` 预填 | ⚠️ **无法判定**：`settings/tokens/new` 被 sudo 门（"Confirm access" + passkey）拦住，勾选状态不可观测。`description=` 预填**已确认生效**。**不得**声称可用或不可用。 |
+| `context=user_stars` 用于 repo 作用域端点 | 不报错（200），但服务端是否据其分支仍不可知 → 继续只作原样携带。 |
+| **4.9.0 写路径端到端**（真实触发脚本代码，非手搓请求） | ✅ **通过**：卡片星按钮点击 → 乐观翻转 → 通知栈出现 `已取消 star：…｜撤销` → API 复核 404（远端真取消了）→ 点「撤销」→ 通知原地变 `✓ … 已恢复` → **API 复核 204（零残留）**。目标用自有仓库 + 用户已 star 的三方仓库各一，结束后状态与初始一致。跑的是 dev 服务的**当前源码**；打包产物仅经 `pnpm check`。 |
+
+**顺带修掉的一个真问题**：`fullSync` 在「点 Sync 但没配 token」时调 `promptForToken` → **原生 `window.prompt`
+阻塞整个页面主线程**（实测：页面 JS 通道整体失去响应，重载才恢复；原生对话框属浏览器 chrome 层，
+**不进页面合成帧**，截图看不到 ⇒ 极易误判成「页面正常但无响应」）。prompt 式入口早按用户更正撤除，
+横幅才是 ADR 0004 指定的入口 —— 已改为 `notifyTokenIssue(...)` 打开配置横幅（TM 菜单入口仍保留 prompt）。
+
+**自动化真机验证的两个环境坑**（下次别再踩）：① 标签页 `visibilityState:'hidden'` 时 Chrome **丢弃
+CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint` 确认命中，`window.__clicks` 仍为空）；
+② `agent-browser-cli` 会在页面 MAIN world 注入对话框抑制脚本，把 `window.alert/confirm/prompt` 换成 stub；
+凡要观察 alert/prompt 的验证必须先确认该 stub 是否在场。另外 `Page.bringToFront` 需
+`allowFocus` 作为 **`method` 的同级参数**（不是 `params` 内），否则静默 skipped。
 
 ---
 
@@ -54,7 +67,9 @@
   （`ghu_`/`ghs_`）被官方 OpenAPI 标 `enabledForGitHubApps: false`。OAuth app user token（`gho_`）走 **scope** 体系，
   与 classic PAT 同构，可用。
 - **但写路径不止 REST**：拿不到 classic token 时改用浏览器登录会话走网页端点 —— 这是 fine-grained 用户获得写能力
-  的唯一现实手段。触发条件、凭据、成功判定、失败语义、三段式降级全见 `docs/adr/0006-web-endpoint-write-fallback.md`。
+  的唯一现实手段。触发条件、凭据、成功判定、失败语义见 `docs/adr/0006-web-endpoint-write-fallback.md`。
+  **降级只有两段**（页面有该仓库表单 → 用真实 token；否则仅 VF；都失败即报错）：原第三段「422 → 取仓库页表单
+  token 重发」经 2026-10-01 实测证明前提不成立，已删除，见 `docs/research-web-star-endpoints.md` 附录 A。
   两条通道由 `setStarState()` **静默分派**，**不向用户披露**（用户裁定），但**静默 ≠ 静默失败**：任何失败都必须报错。
 - **scope 取 `repo`**（非 `public_repo`）：`public_repo` 不覆盖私有仓库，会让私有仓库的 star 不出现在
   `GET /user/starred` 里而被整表 diff 误判为外部取关。用 `repo` 消除该误判，代价是权限更大——刻意选择。
@@ -76,7 +91,8 @@
 
 **D6/D7 · 同步与数据权威（现行总则）**
 
-- 有 PAT → API 主模式（全量缓存渲染 + 本地分页 + 本地筛选 + 纯 API 星星按钮）；无 PAT → 原生页 + `.gsm-setup-banner` 强推配置。
+- 有**完整缓存**（`hasApiData()` = 有 `lastFullSyncAt` 且 `count > 0`，**与当前有没有 token 无关**）→ 网格主模式
+  （缓存渲染 + 本地分页 + 本地筛选 + 星星按钮）；无缓存 → 原生页 + `.gsm-setup-banner` 强推配置。
 - **权威边界**：远端权威 = 星标成员关系 / star 时间 / 仓库元数据；本地权威 = 标签 / 备注（同步绝不写 tags/notes）。
 - **完整性红线**：分页中断、解析失败、超 200 页上限、速率余量不足 → 整表放弃、不改任何数据（半张表会把未拉到的页全判 unstar）。
 - 单遍条件扫描：全 304 → 免额度早退；部分 200 → 只有变化页带 body，304 页用本地缓存切片复原。

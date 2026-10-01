@@ -72,7 +72,9 @@ export function writeFailureMessage(reason: StarWriteFailure, status: number): s
     case 'requires-classic':
       return '当前 Token 改不了这个仓库的星标（fine-grained 对他人公开仓库只读）。请改用 classic Token，或先登录 github.com 再试。';
     case 'csrf-failed':
-      return 'GitHub 拒绝了这次操作，请刷新页面后重试。';
+      // 4.9.0 起没有「取页面 token 重发」的回退（实测仓库页无表单，见 webWrite 注释）→
+      // 刷新页面只在「当前页正好有该仓库表单」时有意义，故同时给出真正可行的出路。
+      return 'GitHub 拒绝了这次操作。请刷新页面后重试；若仍失败，请配置 classic Token。';
     case 'network':
       return '网络错误，请检查网络后重试。';
     default:
@@ -191,6 +193,18 @@ function offPageBody(): FormData {
   return fd;
 }
 
+/**
+ * 网页写路径（4.9.0）。
+ *
+ * **不设 422 回退**（2026-10-01 真机实测推翻原设计，见 ADR 0006「未确证项」）：
+ * 原设计是「422 → GET 仓库页 → 取该页 form 的 per-form token → 重发一次」，实测该仓库页
+ * （`GET /{owner}/{repo}`，HTTP 200、339 KB）**一个 `<form>` 都没有**（React 全客户端渲染），
+ * 故该回退必然拿不到 token、纯属死码。唯一真实存在 per-form token 的地方是**原生 stars 列表页
+ * 的服务端渲染**（实测 64 表单：30 star + 30 unstar，且仅覆盖当页仓库），而「恢复」场景的仓库
+ * 按定义不在 stars 列表里 —— 用 1.1 MB 的 HTML 换极少能救回的场景，不如明确失败。
+ *
+ * 因此降级只剩两级：**页面有该仓库表单 → 用它的真实 token；否则仅带 VF 头**。两者都失败就报错。
+ */
 async function webWrite(
   fullName: string,
   wantStar: boolean,
@@ -262,39 +276,6 @@ async function webWrite(
   return { ok: false, reason: 'unknown', status: resp.status, detail };
 }
 
-/**
- * 422 回退：GET 目标仓库页 → 取该页 `form[action="/{fullName}/star"]` 的真实 per-form token
- * → 重发一次。**逐仓库**是必须的：per-form token 与 action+method 绑定，一个仓库的 token
- * 不能拿去写另一个仓库（stars 页实测 60 表单 60 唯一值）。
- * 只在 VF 路径被 GitHub 收紧（返回 422）时才会走到，属 ADR 0006 的三段式降级第 1→2 层。
- */
-async function fetchRepoPageFormToken(fullName: string, wantStar: boolean): Promise<string | null> {
-  try {
-    const resp = await fetch(`/${fullName}`, {
-      credentials: 'same-origin',
-      headers: { Accept: 'text/html' },
-    });
-    if (!resp.ok) return null;
-    const html = await resp.text();
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    const form = doc.querySelector<HTMLFormElement>(`form[action="${formAction(fullName, wantStar)}"]`);
-    const input = form?.querySelector<HTMLInputElement>('input[name="authenticity_token"]');
-    return input?.value || null;
-  } catch (err) {
-    console.warn('[github-star-manager] 取页面表单凭据失败：', err);
-    return null;
-  }
-}
-
-async function webWriteWithFallback(fullName: string, wantStar: boolean): Promise<StarWriteOutcome> {
-  const first = await webWrite(fullName, wantStar);
-  if (first.ok || first.reason !== 'csrf-failed') return first;
-  console.warn('[github-star-manager] 网页写路径被拒（422），回退取该仓库页的真实表单凭据后重发一次');
-  const token = await fetchRepoPageFormToken(fullName, wantStar);
-  if (!token) return first;
-  return webWrite(fullName, wantStar, token);
-}
-
 /* ---------------- 静默分派 ---------------- */
 
 /**
@@ -317,12 +298,12 @@ export async function setStarState(
     // fine-grained 之外的权限 403 也可以试网页路径：会话是另一套凭据，可能仍然可用
     if (r.reason === 'permission-denied' && hasWebSession()) {
       console.warn('[github-star-manager] REST 写被拒（权限），改用浏览器会话路径重试');
-      return webWriteWithFallback(fullName, wantStar);
+      return webWrite(fullName, wantStar);
     }
     return r;
   }
   // 无 token，或 token 是 fine-grained（写他人公开仓库必被拒，直接走会话路径，省一次无谓请求）
-  if (hasWebSession()) return webWriteWithFallback(fullName, wantStar);
+  if (hasWebSession()) return webWrite(fullName, wantStar);
   if (!patOrEmpty) return { ok: false, reason: 'no-credential', status: 0 };
   // 有 fine-grained token 但无登录会话：REST 值得一试（仓库属于本人时它其实能写）
   const r = await restWrite(patOrEmpty, fullName, wantStar);
