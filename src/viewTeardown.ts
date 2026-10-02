@@ -53,10 +53,11 @@ export function teardownStarsView(reason: string): void {
     .querySelectorAll('.stars-grid-container, .gsm-top-pager, .gsm-sync-btn, .gsm-sync-status')
     .forEach((el) => el.remove());
 
-  // 3) 脚本插进原生筛选行的控件 + 信息条 + 配置横幅
+  // 3) 脚本插进原生筛选行的控件 + 信息条 + 配置横幅 + 归属警告横幅
+  //    `.gsm-account-banner`（4.11.0）在这里清**节点**；它的关闭态键是页面级偏好，刻意不随视口回滚。
   document
     .querySelectorAll(
-      '.gsm-type-filter, .gsm-lang-filter, .gsm-sort-filter, .stars-tag-filter, .stars-tag-info-bar, .gsm-setup-banner',
+      '.gsm-type-filter, .gsm-lang-filter, .gsm-sort-filter, .stars-tag-filter, .stars-tag-info-bar, .gsm-setup-banner, .gsm-account-banner',
     )
     .forEach((el) => el.remove());
 

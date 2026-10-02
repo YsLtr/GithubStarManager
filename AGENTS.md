@@ -8,42 +8,48 @@
 
 ## 当前状态
 
-版本 **4.10.0**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
+版本 **4.11.0**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
 
-> 交接时间：**2026-10-02 20:30 +0800**（本机时钟；上一次交接标注的 21:40 与本机 `date` 不符，以本行为准）。
+> 交接时间：**2026-10-02 22:29 +0800**（本机时钟）。**本轮工作已随本次 handoff 一起提交**（见 `git log` 最新一条）。
 
-**4.10.0（本次交接的版本）**：两组功能 + 一处顺带修 + 一轮死码清理 + 一轮发布前独立审查修复。规划与验收标准见
-`docs/plans/archive/2026/2026-10-02-分页按钮可跳页-点击输入目标页-所有-sync-入口与头部同步按钮完全联动-图标旋转-删除旧的整.md`
-（联网调研证据另见 `docs/research-pager-jump-a11y-spinner.md`）：
+**4.11.0（本次交接的版本）**：补上「Token 归属校验」+ 不符时的常驻可关闭警告横幅。规划与验收标准见
+`docs/plans/archive/2026/2026-10-02-补上-token-归属校验环节-比对脚本-token-身份与浏览器当前登录账号-不符时在现有配置.md`
+（已归档；联网查证证据 `.pi/tmp/research-token-identity.md`，决策口径见 **`docs/adr/0007`** 与 **D25**；
+发布前经过**两轮**独立审查，共修 3 P1 + 4 P2）：
 
-1. **分页按钮可以跳页** —— 修「页码指示器只显示页数、点击无任何效果」：指示器由静态 `span` 升级为
-   `<button type="button" class="btn BtnGroup-item gsm-page-info">`；点击 → **同一单元格内原位换成输入框**
-   （`type=text` + `inputmode=numeric`，**不用** `type=number`）→ `Enter` 提交 / `Escape` 取消 / 失焦提交。
-   非数字与越界**静默夹取**（`0`/`-1` → 第 1 页，`999` → 末页），夹取后等于当前页则不重绘，全程不弹提示。
-   跳页与 `Previous`/`Next` **共用唯一提交口径** `navigateToLocalPage()`（`src/pagination.ts`）。
-   交互**全部由 window-capture 委托承担**（不往分页器节点挂监听）—— 顶部分页器是 `cloneNode(true)` 的克隆件，
-   **克隆不会复制事件监听**（见 D22）。
-2. **所有同步入口都驱动头部 Sync 按钮** —— 修「部分入口点击后无明显回应」：`fullSync.ts` 新增同步状态
-   **单一真相**（`SyncState` = idle/running/failed + `getSyncState` / `subscribeSyncState` / `setSyncState`），
-   `runFullSync` 只推进状态并在开始/finally 广播；`mountSyncButton` 是该状态的**唯一视图**。
-   五个入口（TM 菜单 / 配置横幅 / 标题行按钮 / Token 保存后 / 进页自动）触发的同步，都让按钮内的
-   **octicon 旋转**，而按钮文字与几何**恒定不变**（见 D23）。
-3. **删除旧刷新态**：`.gsm-pager-loading`（整按钮文字变透明 + `::before` 伪元素转圈）与其全部 `classList`
-   读写已删；`@keyframes gsm-spin` 保留并转由新规则复用。git 全历史查证**不存在第二套刷新态实现**
-   （`270ba4d` 翻页链接引入 → `fff03cc` Sync 按钮复用 → `91be837` 搬到横幅 → `5284745` 全删 → `67151c9` 恢复），
-   用户所说的「旧的整按钮刷新态」就是这一套，现已无任何消费者。
-4. **顺带修**：`pushNotice` 的容器入口加视口门 —— 窄视口下从 TM 菜单触发同步不再把通知栈懒重建出来
-   （消掉「已知风险」第 10 条的剩余一半，见 D24）。
-5. **发布前独立审查轮**（外部 reviewer 复核整批 diff，抓到 1 个 P0 + 3 个 P1，**全部已修**）：
-   P0 = 新引入的「失焦即提交」在渲染**内部**嵌套再调一次 `renderBrowsePage`（`renderBrowsePage` 会
-   `remove()` 底部那份分页器再插回，而摘掉含焦点的子树本身触发 `blur`）⇒ 页码文字与网格内容各说各话，
-   触发路径全与用户无关（进页自动同步 / 同步后重渲染 / 导入后的 `applyFilters`）；改为 **blur 延后一拍
-   再判 `input.isConnected`**。P1 = `updateLocalPagers()` 那道过粗的跳过门（编辑态下 prev/next 不更新）、
-   关闭输入后焦点掉到 `body`、文档说 `-1` 会夹到第 1 页而实现是「不跳」。顺带清掉重复注释、无消费者的
-   `export`、`getSyncState` 返回可变引用等 P2。逐条口径见 **D22 / D23**，验证见「下一步」第 8 条。
+1. **补上缺失的一环**：4.10.0 及之前全库**没有任何一处**比对「脚本 token 属于哪个账号」与「浏览器当前登录哪个账号」
+   （`getStarsUserId()` 只用于存储键隔离与导入包归属校验；`hasWebSession()` 只判**有没有**会话、从不读 meta 的值；
+   token 侧身份根本不存在——全库无 `GET /user`）。由此存在真实错号路径：**fine-grained token 属 A + 浏览器登录 B**
+   ⇒ 网格数据来自 A、点星操作记到 B，且**方向相反**（显示已 star → 发的是 unstar）。
+2. **判定口径（D25）**：两侧各取**数字 ID**（页面 **`octolytics-actor-id`（登录者）** vs `GET /user` 的 `id`；`login` 只用于文案，
+   因为官方明文 login 可改名、id 持久）；**只在「有 token + 有登录会话 + 两侧 id 都取到」时判定**；
+   取不到任一侧 = `unknown`，**不冒充相符也不误报不符**（`GET /user` 401 走既有 `notifyTokenIssue`，不算归属不符）；
+   **不阻断写路径**（网页端点通道是 fine-grained 用户唯一的写能力，且用户可能刻意双账号）。
+3. **新增两个模块**：`src/accountGuard.ts`（判定 + 凭证指纹缓存，FNV-1a 内联哈希，**不存 token 明文**、不用 `crypto.subtle`）+ 
+   `src/ui/accountBanner.ts`（`div.gsm-account-banner`，`role="alert"`，复用 `placeSetupBanner` 落位但**不复用**
+   `.gsm-setup-banner` 类名——那个类名有 4 条撤除路径，复用会被静默删掉且再无重建时机）。
+4. **关闭态**：`stars_account_banner_dismissed` = `<tokenId>#<sessionId>`，同一对账号不再打扰，**组合一变立刻重新武装**。
+5. **求值点四处**（都 fire-and-forget，不进 `runFullSync` 关键路径、不影响 `SyncState`）：Token 保存成功后、
+   桌面转换成功出口、`runFullSync` 的 `finally`（**不覆盖**无 token 早退）、token-issue handler（**清空 Token 的唯一路径**）。
+   指纹缓存命中后**稳态零请求**（首次仅 +1 次 primary 请求）。异步返回后**必须复判世代 + 视口**（否则慢网下
+   一次 `GET /user` 就能在窄视口建出完整样式的横幅）。
+6. **两轮独立审查修掉的真问题**（都是「看起来对、真实路径上不成立」类）：
+   ① 异步返回缺世代/视口复判 ⇒ 窄视口残留横幅；② classic 场景文案断言了不成立的后果（写通道按次决定，
+   REST 403 时会回落网页端点 ⇒ 那一次落到登录者）；③ **取错身份字段** —— `octolytics-dimension-user_id` 是**页面主人**，
+   用它会让每个他人 stars 页都假阳性（实测 `/mattn?tab=stars`：dimension=10111/mattn，actor=130123551/YsLtr）；
+   ④ 清空 Token 后过期警告不撤（三个常规求值点都覆盖不到）；⑤ 关闭后换回旧组合残留另一对的横幅。
+   逐条口径与实测见 **`docs/adr/0007`** 与本文「下一步」第 9 条。
+7. **窄视口完全惰性**：求值首行判视口直接返回 unknown，不建节点不发请求（横幅样式在 `@media` 之外，靠 JS 门守，同 D18）。
+8. **文案口径**：沿用 ADR 0006「不向用户披露通道」——只讲后果（数据取自谁 / 操作记到谁 / 两边不一致）与两条出路
+   （换匹配的 Token / 改用 token 所属账号登录），不出现「网页端点 / 浏览器登录会话 / GitHub-Verified-Fetch / REST」。
 
 > **交接第一件事**：`@version` 已变 ⇒ **用 dev 脚本的人必须重装 dev loader**（重开安装页原地更新），
 > 否则 TM 菜单整体消失。正式版不受影响。机制见下「dev 模式必须知道的四件事」第 4 条。
+
+**4.10.0 提要**（仍生效的口径已全部归入 D22–D24，此处只留一句）：分页按钮可跳页（原位输入 + window-capture 委托）+
+所有同步入口驱动头部 Sync 按钮（`SyncState` 单一真相、`mountSyncButton` 是唯一视图）+ 删旧的整按钮刷新态 +
+`pushNotice` 视口门；另一轮发布前独立审查修掉 1 P0 + 3 P1。细节查 `git log` 与归档方案
+`docs/plans/archive/2026/2026-10-02-分页按钮可跳页-*.md`（联网调研证据 `docs/research-pager-jump-a11y-spinner.md`）。
 
 **4.9.2 提要**（仍生效的口径已全部归入 D18–D21，此处只留一句）：窄视口完全惰性 + `viewTeardown` 幂等回滚 +
 `lifecycle` 世代号 + GM 权限 8→5；另有一轮独立审查修掉 5 处真缺陷（原生搜索拦截未解绑、回滚后仍发整表 API、
@@ -335,6 +341,50 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
   与「窄视口完全惰性」正面冲突（原「已知风险」第 10 条的剩余一半）。
 - 与 D18 的关系：新增任何**异步通知路径**时不必各自加视口门 —— 只要经过 `pushNotice` 就被拦住；
   但**绕过 `pushNotice` 直接建节点**的路径仍然会破这条约束。
+
+**D25 · Token 归属校验：不符只告警、不阻断（4.11.0）**
+
+- **要解决的问题**：写路径静默分派（ADR 0006）使「有 classic token → 写到 token 主人」「无 classic token → 写到浏览器登录者」，
+  而读路径永远用 token ⇒ token 与登录会话分属两账号时，**fine-grained 场景下读与写方向相反**（显示已 star → 发 unstar）。
+  4.10.0 及之前全库无任何比对（`hasWebSession()` 只判有没有会话、从不读 meta 值；无 `GET /user`）。
+- **比对键 = 数字 ID**（页面 **`octolytics-actor-id`（登录者）** vs `GET /user` 的 `id`）。**不用 `login`**：官方明文 login 可改名、
+  id 持久，用 login 会在改名后产生**永久误报**（唯一出路只剩重配 token）。`login` 只用于文案。
+- **必须取「登录者」而非「页面主人」**（第二轮审查 P1-2，真机实测）：`octolytics-dimension-user_id`（= 既有
+  `getStarsUserId()`）是**被访问者**的 id —— 打开他人 stars 页时它与登录者不同，用它做比对键会让每个他人的 stars 页
+  都假阳性，并断言「浏览器登录的是 @页面主人」。**取不到 actor-id 时不回退到 dimension-\***（回退等于恢复假阳性）。
+  实测表（登录态、只读同源 fetch，工装 `.diag/probe-viewer-id.js`）：
+  `user-login`/`octolytics-actor-id` 恒为登录者（YsLtr / 130123551），`octolytics-dimension-user_id` 在他人页变为 10111（mattn）。
+- **只在「有 token + 有登录会话 + 两侧 id 都取到」时判定**；其余组合（有 token 无会话 / 无 token）一律 `unknown`。
+  取不到任一侧或请求失败 = `unknown`，**既不冒充相符也不误报不符** —— 页面 meta **无官方契约**（`csrf-token` 曾消失，
+  是同类前例），要求是「失效 = 退回今天的行为」，不是「失效 = 满屏误报」。
+- **`GET /user` 401 不算归属不符**：走既有 `notifyTokenIssue` → 配置横幅。**不阻断写路径**：网页端点通道是 fine-grained 用户
+  唯一的写能力，且用户可能**刻意**双账号（个人号读、工作号写）；处置交给用户。**不做写前校验**（会污染写路径失败语义）、
+  **不做周期轮询**（纯耗额度）。
+- **UI = `div.gsm-account-banner`**（`role="alert"`，三个控件：classic 深链 / 打开既有配置面板 / 关闭），落位**复用**
+  `placeSetupBanner`，但**不复用 `.gsm-setup-banner` 类名** —— 那个类名有 4 条撤除路径（内联保存、保存回调、同步成功后、
+  `viewTeardown` 第 3 项），复用会让警告在「保存了新 token」「同步成功」时被静默删掉且再无重建时机。已登记进
+  `viewTeardown` 第 3 项选择器串；关闭键 `stars_account_banner_dismissed`（= `<tokenId>#<sessionId>`，组合一变重新武装）
+  属**页面级偏好**，不随视口回滚。
+- **求值点三处**：Token 保存成功后（`index.ts` 的 `setTokenSavedHandler`）、桌面转换成功出口（紧随 `scheduleProbeSync`）、
+  `runFullSync` 的 `finally`（同步链唯一全覆盖点）。全部 fire-and-forget，**不得**进入同步关键路径或影响 `SyncState`（D23）。
+- **窄视口惰性**：求值首行判视口 → `unknown`（不建节点、不发请求）。横幅样式在 `@media` 之外，靠 JS 门守（同 D18）；
+  变宽时由既有 `transformAndReveal(false)` 重新求值。**异步返回后必须复判**（4.11.0 发布前审查 P1）：
+  `mountAccountGuard` 捕获 `currentGeneration()`，`.then` 里先判世代、再判视口 —— 否则慢网下一次 `GET /user`
+  就能在手机上凭空建出完整样式的警告横幅（求值在途时收窄 → teardown 跑完 → 延迟返回照样建节点）。
+- **文案按写通道分叉，且 classic 分支**不得**做确定性断言**（4.11.0 发布前审查 P1 + 用户质询后复审）：
+  `AccountVerdict.writeTarget` 由 `isClassicCredential(token)` 决定 —— classic 走 REST ⇒ 通常记到 **token 主人**；
+  fine-grained / 无 classic 走网页端点 ⇒ 记到**浏览器登录者**。但 classic 分支**不能说「一定」**：
+  `setStarState` 在 REST 返回 403（非限速）且存在登录会话时**会回落网页端点**（`src/starWrites.ts:299`），
+  那一次写落到登录者名下（实测：`DELETE /user/starred/…` → 403 后紧跟 `POST /{o}/{r}/unstar`，
+  见 `.diag/assert-account-fallback.js`）。故 classic 措辞为「**通常**也记到 @A……**若 @A 被拒绝，会改以 @B 的身份进行**」；
+  只有 fine-grained 那条路（有会话时只走网页端点、失败不跨通道回落）才允许直说「会记录到 @B」。
+- **`hasToken` 区分「确定没配 token」与「取不到身份」**（4.11.0 发布前审查 P2）：前者横幅前提已消失 ⇒ 允许撤掉；
+  后者（含判定异常，保守取 `hasToken: true`）**不得**抹掉已显示的警告。
+- **接入 `setHideListsRepositionHandler`**：与配置横幅同一套落位规则，开关切换时一并 `repositionAccountBanner()`。
+- **额度**：首次 +1 次 primary 请求，指纹缓存（`stars_account_identity`，FNV-1a 内联哈希，**不存 token 明文**、
+  不用 `crypto.subtle`）命中后稳态零请求。
+- **文案**：沿用 ADR 0006「不向用户披露通道」，只讲后果与两条出路，不出现「网页端点 / 浏览器登录会话 / REST」等实现词。
+- 完整口径、依据与已知局限：**`docs/adr/0007-token-account-match-check.md`**。
 ---
 
 ## dev 模式必须知道的四件事
@@ -429,13 +479,27 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
     `remove()` 底部 pager 再插回，落在里面的焦点无法存活。标题行那份（顶部，也是本功能的入口）不经过
     这条路径，焦点能正常回到按钮。要彻底修就得让 `renderBrowsePage` 也管焦点，代价大于收益。
 12. **`.gsm-sync-btn[aria-disabled='true']` 上的 `cursor: progress` 实际不生效**（`pointer-events: none`
-    把光标让给了父级）—— 纯装饰，留着不修。
+   把光标让给了父级）—— 纯装饰，留着不修。
+13. **归属校验依赖**无官方契约**的页面 meta**（`octolytics-actor-id` / `user-login`）：一旦被改名或移除，本功能**静默失效**
+   （判 `unknown`、不弹任何东西，其余行为不变——这是有意的降级方向）。同类前例：`meta[name="csrf-token"]` 曾在 github.com 上
+   普遍存在，如今已完全消失。真机复查手法：只读探针枚举 `document.querySelectorAll('meta')` 看字段是否还在。
+   普遍存在，如今已完全消失。真机复查手法：只读探针枚举 `document.querySelectorAll('meta')` 看该字段是否还在。
+14. **「无 token + 有登录会话」组合不做归属校验**（V5 有意收窄）：该组合下网格缓存可能来自上一个账号（`hasApiData()` 与
+   账号无关 = D6），但 `stars_full_sync_meta` **不记录账号归属**，要先加字段才能可靠告警，属独立改动。
+15. **GHES / SAML SSO 下页面身份 meta 行为未确证**（GitHub Docs 全站含各 GHES 版本、`github/docs` 抽查、相关 issue 与
+   userscript 社群均无权威来源）：届时本功能可能完全失效，但仍为 `unknown`（不误报）。
+16. **非本人 stars 页的既有缺口（本次实测顺带确证，**未修**）**：`getStarsUserId()` 取的是
+   `octolytics-dimension-user_id` = **页面主人**，而它被用作**标签/备注的存储键命名空间**（`storage/tags.ts` 与 `notes.ts`）
+   与导入包归属校验（`storage/exportImport.ts` 的 `user.id` 比对）。实测（登录态，`/mattn?tab=stars`）该值 = 10111（mattn）而
+   登录者 `octolytics-actor-id` = 130123551（YsLtr），且该页确实含 `#user-starred-repos` + `.col-lg-9`（脚本会转换它）
+   ⇒ 在他人 stars 页上，脚本读写的标签/备注是**那个人的命名空间**而非自己的。这与本功能无关（归属校验已改用 actor-id），
+   属既有行为，见「下一步」第 3 条；动手前先想清「他人页该不该转换」这个更大的问题。
 
 ---
 
 ## 下一步
 
-1. **@version 已升到 4.10.0 → 若你在用 dev 脚本，必须重装 dev loader**：重开
+1. **@version 已升到 4.11.0 → 若你在用 dev 脚本，必须重装 dev loader**：重开
    <http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js> 让 TM 原地更新，否则 TM 菜单会整体消失
    （机制见「dev 模式必须知道的四件事」第 4 条：`@version` 变了 → 脚本头变了 → mountGmApi 的 key 对不上）。
    正式版不受影响；`@version` 变了却没重装，表现是「TM 菜单空了」+「同步说未配置 token」。
@@ -443,7 +507,10 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
    **不得**声称可用或不可用）、`context=user_stars` 服务端是否据其分支（实测 200 但不可知）。
    离页仓库 + 仅 VF 头**已实测成立**（见「当前状态」的实测结论），不必重复验。
 3. 后续阶段（详见 `todo` 与 `DEVELOPER.md` §13）：GraphQL 分页调研、周期自动同步、非本人 star 页
-   `GET /users/{u}/starred` 接入。（「分页按钮可跳页」已于 4.10.0 完成，见 D22。）
+   `GET /users/{u}/starred` 接入。**最后一项因本次实测而更紧迫**：脚本目前**会转换他人的 stars 页**
+   （实测 `/mattn?tab=stars` 含 `#user-starred-repos` + `.col-lg-9`），而网格数据来自**自己的 token**、标签/备注又按
+   **页面主人**的 id 命名空间读写（见「已知风险」第 16 条）。动手前先定「他人页该不该转换」这个更大的问题
+   —— 本次只把归属校验的比对键修正为登录者（`octolytics-actor-id`），没动这个既有缺口。
 4. 未消化的架构建议：单遍 facet 计算、响应式漏斗（见 `starmgr-arch-review-report.md`）。
 5. fine-grained PAT 写他人公开仓库的能力缺口由 GitHub 控制（roadmap#600 NOT_PLANNED、#601 OPEN）——将来若补齐，
    可回头简化 `docs/adr/0006` 的网页端点通道。
@@ -518,6 +585,75 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
    （①②的行为层已由仿真断言覆盖，真机只做观感与安装页核对）。
    **一处刻意的实现收窄**（与方案 T6 的措辞不同）：**被并发丢弃的同步不广播 `failed`**，只留 console ——
    改成 failed 会把正在转的按钮停下、谎报失败（见 D23）。
+
+9. **4.11.0 的验证（T9，2026-10-02 已跑完）**：静态 = `pnpm check` 绿（tsc + build）、
+   `node scripts/verify-css.cjs` **EXIT 0**、`pnpm test:exportimport` **51/0** 不回归、
+   dist 头部 `@grant` **恰 5 项**、dist 内 `gsm-pager-loading` 0 命中、新增类/键均在产物里
+   （`gsm-account-banner` 5 命中、`stars_account_identity` 1、`api.github.com/user` 4 处）；
+   dist 内两处通道词（`GitHub-Verified-Fetch` 头、`浏览器会话` console）经定位确认**都在既有代码里**、
+   不在新增文案中（新增横幅文案零命中）。
+
+   **仿真页断言全绿**（工装 `.diag/gen-account-harness.cjs` → `account-harness.html` +
+   `.diag/assert-account.js`，均在 gitignore 下可重跑；**URL 必须带 `?tab=stars`**，否则脚本不转换、
+   `grid:0` 会被误读成全绿；夹具含 3 个仓库 + 身份 meta，`fetch` 全用桩、零真实网络）：
+
+   | 断言 | 实测结果 |
+   |---|---|
+   | A1 不符即弹 | `div.gsm-account-banner` 出现、`role="alert"`、子节点顺序 = `[msg, btn-primary, btn, btn gsm-account-dismiss]`、文案同时含两侧登录名 |
+   | A1 落位 | 父链 `DIV < TURBO-FRAME#user-profile-frame < MAIN.Layout-main < DIV.Layout` —— 与 `err401` 组里 `.gsm-setup-banner` 的父链**完全一致**（同一 `placeSetupBanner` 分流） |
+   | A2 相符不弹 | 冷启动 0 节点 + **0 次 `/user` 请求**；运行中从「不符」改成「相符」后**主动撤掉**已显示的横幅（不留过期警告） |
+   | A3 关闭与重新武装 | 点「关闭」→ 节点消失、`stars_account_banner_dismissed = '42#999'`；同组合再求值**不再弹**；把会话 id 改成 777 ⇒ **重新弹出** |
+   | A4a 窄视口零痕迹 | `#narrow` 载入：`.gsm-*` 节点 **0**、`.stars-*` 节点 0、`grid` 0、无配置横幅、**0 次 `/user` 请求**、`__errors` 空 |
+   | A4b 无登录会话 | 摘掉 `body.logged-in` ⇒ 不弹、**不发请求** |
+   | A5 取不到页面身份 | 删掉 `octolytics-dimension-user_id` ⇒ 不弹、**不发请求** |
+   | A6a 401 | 桩 401 ⇒ 不弹归属横幅、**不写身份缓存**，并走既有链弹出配置横幅（「🔑 401 Bad credentials：Token 已失效或被撤销…」） |
+   | A6b 网络错 | 桩 reject ⇒ 不弹、不写缓存、无 unhandled rejection |
+   | A7 稳态零请求 | 缓存为空时首次恰 **1** 次 `GET /user` 且写入指纹缓存；再求值 ⇒ 计数**仍为 1**（增量 0） |
+   | A8 不阻断写路径 | 横幅在场时点卡片星按钮 ⇒ **1 次写请求**发出、`/user` 增量 **0**、横幅仍在（`setStarState` 未被改） |
+   | A9 回滚与重现 | 横幅在场 → 收窄 ⇒ 节点 0、grid 0 → 拖回 ⇒ 横幅重现 + grid 重建、无重复节点、`__errors` 空 |
+   | A11 文案不披露通道 | 横幅 DOM 文本与 HTML 对「网页端点 / 浏览器会话 / GitHub-Verified-Fetch / REST」**零命中** |
+
+   **踩到并已修掉的测工装缺陷（值得记住）**：`gm.ts` 的 `gmGet` 有一条迁移路径
+   「GM 值 == 默认值 **且** localStorage 镜像有数据 → 把镜像写回 GM」，于是工装只清 GM 侧会被镜像**原地复活**
+   ——表现是「横幅刚出现就被关掉」。包装 `GM_setValue` 抓栈定位到调用链 `isDismissed → gmGet → GM_setValue(迁移)`，
+   而非任何 dismiss 点击。修法：工装把 `github-star-manager::` 前缀下的 `Storage.prototype.getItem` 一律视为空
+   （GM 层成为唯一真相）。**这正是 AGENTS.md 早记过的「双清」坑，只是这次发生在测工装侧。**
+
+   **仍需真机确认**：① 真机上「用另一个账号的 token」触发时的实际观感（横幅位置 / 配色 / 关闭手感）；
+   ② TM 安装页里授权清单是否恰 5 项（dist 头部已核为 5 项）。行为层已由仿真断言覆盖。
+   **一处「不可做」**：真机验证归属校验必须**真的换成另一个账号的 token**（或改本地缓存 `stars_account_identity`）——
+   相符时它按设计不产生任何可见痕迹，这是特性不是缺陷。
+
+   **发布前独立审查轮**（外部 reviewer，只读复核 + 自建复现实验）抓到 2 P1 + 3 P2，**全部已修**，
+   修复后另跑针对性断言（`.diag/assert-account-fixes.js`，同一工装，全绿）：
+
+   | 审查项 | 修复后的实测 |
+   |---|---|
+   | P1 在途收窄残留（违反 D18） | `/user` 挂起期间收窄 → teardown 后 banner 0 / grid 0 / `gsm-*` 节点 0 → **释放请求（延迟 resolve mismatch）后仍为 0**（修复前为 1）；拖回桌面横幅正常重现（1）|
+   | P1 文案错断言（classic 场景） | classic（`ghp_`）⇒「**通常**也记到 @tokenuser（不会改动 @smoke-user）……若 @tokenuser 的 Token 被 GitHub 拒绝，操作会改以 @smoke-user 的身份进行」，`saysWritesToSession=false`；fine-grained（`github_pat_`）⇒ 仍为「会记录到 @smoke-user」 |
+   | P1 复审 · classic 确实会回落 | `.diag/assert-account-fallback.js`：classic + REST 403(非限速) ⇒ `DELETE /user/starred/owner3/repo3`（403）后紧跟 `POST /owner3/repo3/unstar`，`fellBackToWebEndpoint=true`。**用户质询后复审推翻了自己第一版的修法** —— 当时写「都会记到 @tokenuser（不会改动 @smoke-user）」同样是过度断言（写通道是按次决定的，classic 可回落）|
+   | P2 清空 token 后横幅不撤 | `github_pat=''` + 重新求值 ⇒ banner 0（`hasToken=false` 才允许撤，其余 unknown 仍不抹） |
+   | P2 Hide Lists 切换不重挂 | 触发菜单项后 banner 仍为 1（`repositionAccountBanner` 已接入） |
+   | P2 零消费者 export | `AccountMatch` 改回模块内类型（`AccountVerdict` 仍 export，有消费者） |
+   | 无回归 | 原 8 组场景全组复跑通过（mismatch/match/nocache/nomseata/nosession/err401/errnet/#narrow，`errors` 全空）；`pnpm check` 绿、`verify-css` EXIT 0、51/0、dist `@grant` 恰 5 |
+
+   **一处口径变化**：mismatch 场景的文案现在按凭证类型分叉（夹具用的是 `ghp_`，故走 classic 分支）。
+
+   **第二轮独立审查轮**（外部 reviewer，只读复核 + 端到端实测）抓到 **2 P1 + 1 P2，全部已修**，
+   修复后另跑针对性断言（`.diag/assert-account-fixes2.js`，全绿）：
+
+   | 审查项 | 修复后的实测 |
+   |---|---|
+   | **P1 取错了身份字段**（假阳性） | `/mattn?tab=stars` 实测：`user-login`/`octolytics-actor-id` = YsLtr/130123551（**登录者**），而 `octolytics-dimension-user_id` = 10111（**页面主人 mattn**），且该页含 `#user-starred-repos` + `.col-lg-9`（脚本会转换）。第一版用后者作比对键 ⇒ 每个他人 stars 页都假阳性并断言「浏览器登录的是 @mattn」。改用 `octolytics-actor-id`（`getViewerId()`），**取不到时不回退**（回退＝恢复假阳性）。实测：他人页 + token 属 42（≠登录者 999）⇒ 弹且文案说 @smoke-user、**不**说 @page-owner；他人页 + token 属 999 ⇒ **不弹**（无假阳性）|
+   | **P1 清空 Token 后不撤** | 走**真实 TM 菜单入口** + 真实 `promptForToken`（prompt 返回空）⇒ `pat=""`、归属横幅 **0**、配置横幅显示「🔑 Token 已清除」（修复前横幅仍在）。根因：三个常规求值点都覆盖不到这条路径（`runFullSync` 的无 token 早退发生在 `try` 之前）⇒ 改在 `setTokenIssueHandler` 内复评 |
+   | **P2 残留另一对的横幅** | 「不符(42#999) → 关闭 → 换 token(77#999) → 换回 42」：修复后 banner **0**、pair `null`（修复前屏幕上停在 77#999 的横幅，宣称「Token 属于 @other-user」）|
+   | 顺带（🟢） | `showAccountBanner` 收回模块内；`fullSync.ts` 注释从「同步链上唯一全覆盖点」改为「成功 / 304 早退 / 抛错三条路径」并显式注明**不覆盖**清空 Token |
+
+   **工装自身的两个缺陷也一并修了（教训）**：① 夹具只有 `octolytics-dimension-user_id` / `_user_login`，**缺登录者的
+   `octolytics-actor-id`** —— 于是「夹具全绿」掩盖了取错字段这个问题；现已补齐并新增 `otherpage` / `otherpage-match` 两个
+   场景（把登录者与页面主人拆开）。② 生成脚本里插入的注释/字符串用了**反引号**，把外层模板字符串截断（`SyntaxError`），
+   必须用字符串拼接；另有一次替换留下了**空的前置分支**（`else if (c) {} else if (c) {...}`）导致场景静默失效 ——
+   **场景不生效的表现是「断言全绿」**，所以改工装后必须先用探针确认夹具状态（本次靠 `.diag/probe-nomseata.js` 抓到）。
 
 ## 快速构建约定
 

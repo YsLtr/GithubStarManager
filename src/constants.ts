@@ -47,6 +47,12 @@ export const STORAGE_KEYS = {
   langColors: 'stars_lang_colors',
   /** Hide Lists 开关（4.5.0：TM 菜单「隐藏 Lists 区块」，默认 true = 隐藏；false = Lists 原生内容正常显示） */
   hideLists: 'stars_hide_lists',
+  /** Token 归属校验缓存（4.11.0）：{ [凭证指纹]: { id, login } }。只存哈希与数字 ID，**不存 token 明文**；
+   *  指纹命中即零请求（GET /user 只在首次见到该凭证时发一次） */
+  accountIdentity: 'stars_account_identity',
+  /** 归属不符警告的关闭态（4.11.0）：`<tokenId>#<sessionId>`。仅当该组合变化（换 token / 换登录账号）
+   *  才重新弹出 —— 属**页面级偏好**，不随视口回滚（见 viewTeardown 的边界）。 */
+  accountBannerDismissed: 'stars_account_banner_dismissed',
 } as const;
 
 /** 脚本给「被自己改过 display 的原生节点」打的标记（4.9.1）。teardown 只按这个标记回滚，

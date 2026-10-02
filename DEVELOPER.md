@@ -108,6 +108,10 @@ src/
                       **两条**预填深链（classic `scopes=repo` + fine-grained `starring=write`）与差异文案、剪贴板粘贴、401/403(非限速) 上报
   starWrites.ts       写路径抽象（4.9.0）：setStarState **静默分派** REST（classic/OAuth Bearer）↔ 网页端点（Cookie 会话 + GitHub-Verified-Fetch）、
                       成功判定、失败归一 + writeFailureMessage。**无 422 回退**（2026-10-01 实测推翻其前提，见 ADR 0006）
+  accountGuard.ts      Token 归属校验（4.11.0）：evaluateAccountMatch（三态 match/mismatch/unknown + 单飞）、
+                      两侧 **数字 ID** 比对（页面 `octolytics-actor-id`（**登录者**；非 dimension-user_id＝页面主人）vs `GET /user` 的 `id`）、
+                      凭证指纹缓存（FNV-1a 内联哈希，不存 token 明文）、accountPairKey。
+                      只在「有 token + 有登录会话 + 两侧 id 都取到」时判定，其余一律 unknown（见 ADR 0007 / D25）
   mutationQueue.ts    全局串行变异队列（4.9.0）：间隔 ≥1000ms、排队中可撤销、失败不阻断后续
   restore.ts          恢复编排（4.9.0）：restoreOne / restoreMany（严格串行·可取消·不重试）/ pushRestoreNotice（同仓库通知去重）
   fullSync.ts         API 主模式同步：scanStarred 单遍条件扫描、波次并发、整表 diff、star 时间回填、进页 probe、runFullSync / registerSyncMenu / hasApiData
@@ -129,6 +133,9 @@ src/
     hideListsMenu.ts  TM 菜单「🙈 隐藏 Lists 区块」开关（持久键 stars_hide_lists + 标签刷新 + 门控即时生效）
     notes.ts          备注渲染与编辑
     exportImportMenu.ts  TM 菜单「📤 导出 / 📥 导入」交互层（隐藏 file input、confirm/alert、下载触发、结果提示）
+    accountBanner.ts   归属不符警告横幅（4.11.0）：`div.gsm-account-banner`（role=alert）+ 关闭态持久化 + mountAccountGuard。
+                      落位**委托** index.ts 的 placeSetupBanner（注册式回调，避免 index↔ui 成环）；
+                      独立 class（**不复用** `.gsm-setup-banner` —— 那类名有 4 条撤除路径）。**不碰判定逻辑**（在 accountGuard.ts）
   styles/
     base.css          ≥768px 布局与组件样式（第 4 节 Lists 隐藏规则带 html.gsm-hide-lists 门控前缀）
     wide.css          ≥1200px 三栏布局
@@ -269,6 +276,17 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
 
 布尔，默认 `true`（隐藏 Lists 区块）。TM 菜单「🙈 隐藏 Lists 区块」切换，见 §6。
 
+### `stars_account_identity`
+
+Token 归属校验的身份缓存（4.11.0）：`{ [凭证指纹]: { id, login } }`。指纹是 token 字符串的 **FNV-1a 32 位**哈希（内联实现，
+刻意不用 `crypto.subtle`——它要求 secure context 且在脚本沙箱的可用性未验证），**不存 token 明文**。
+命中即零请求；只在 `GET /user` 成功时写入（失败不写，下个求值点自然重试）。见 ADR 0007 / §6「Token 归属校验」。
+
+### `stars_account_banner_dismissed`
+
+归属警告的关闭态（4.11.0）：字符串 `<tokenId>#<sessionId>`。同一对账号被用户关掉后不再打扰（重开页面也不弹），
+**组合一变立刻重新武装**。属**页面级偏好**，不随视口回滚（对照 `viewTeardown` 第 3 项只清节点、不清这个键）。
+
 > 4.9.1 删掉了只写不读的单数 `etag` 字段：基线一律用逐页 `etags`（`scanStarred` 的 304 判定只认它），
 > 单数那份是 4.0.4 时代留下的兼容字段，没有任何读取点。
 >
@@ -276,6 +294,29 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
 > 与它的 `init()` 一次性 `gmRemove` 清理同样在 4.9.1 删除（含 `GM_deleteValue` 授权）——
 > 该清理属于 4.0.10 的存量迁移，已跨 9 个版本，残留死键无任何功能影响。
 ## 6. 核心机制
+
+### Token 归属校验（4.11.0）
+
+判定「脚本持有的 token 属于哪个账号」与「浏览器当前登录哪个账号」是否一致，不符则在配置横幅同位置插一条**常驻可关闭**的
+警告。完整口径（含依据与已知局限）见 **`docs/adr/0007-token-account-match-check.md`** 与 AGENTS.md **D25**，此处只记实现要点：
+
+- **两侧各取数字 ID**：页面 **`meta[name="octolytics-actor-id"]`（登录者）** vs `GET /user` 的 `id`。
+  **不要用 `getStarsUserId()` 的结果做比对键** —— 它取的是 `octolytics-dimension-user_id` = **页面主人**，
+  在他人 stars 页上与登录者不同，用它会让每个他人页都假阳性（第二轮审查 P1-2，实测见 `.diag/probe-viewer-id.js`）。
+  **不用 `login`** 比对（官方明文 login 可改名、id 持久；用 login 会在改名后永久误报），`login` 只进文案。
+- **只在一个组合下判定**：有 token **且** 有登录会话 **且** 两侧 id 都取到。其余（含任一侧取不到、请求失败）判 `unknown`，
+  **不弹任何东西** —— 页面 meta 无官方契约（`csrf-token` 的前例证明它会无声消失），要求是「失效 = 退回今天的行为」。
+  `GET /user` 401 不算归属不符，走既有 `notifyTokenIssue` → 配置横幅。
+- **求值点仅三处**（都 `void mountAccountGuard()`，fire-and-forget）：`setTokenSavedHandler`、`transformAndReveal` 成功出口、
+  `runFullSync` 的 `finally`（同步链唯一全覆盖点）。**不得**进入同步关键路径或影响 `SyncState`。
+- **不阻断写路径**：`setStarState` 的静默分派一字未改。网页端点通道是 fine-grained 用户获得写能力的唯一现实手段（ADR 0006），
+  且用户可能刻意让 token 与登录会话分属两个账号。
+- **窄视口惰性**：`evaluateAccountMatch()` 首行判视口 → `unknown`（不建节点、不发请求）。
+- **UI**：`div.gsm-account-banner` 落位**复用** `placeSetupBanner`（注册式回调 `setAccountBannerPlacer`，避免 index↔ui 成环），
+  但**不复用** `.gsm-setup-banner` 类名 —— 后者有 4 条撤除路径，复用会让警告在「保存了新 token」「同步成功」时被静默删掉。
+  文案沿用 ADR 0006「不向用户披露通道」，只讲后果与两条出路，并**按写通道分叉**（classic / fine-grained 落点不同）。
+  注意 classic 分支**不得**断言「一定记到 token 主人」：REST 被 403（非限速）拒绝且存在登录会话时
+  `setStarState` 会回落网页端点，那一次写落到登录者名下（`src/starWrites.ts:299`，实测见 `.diag/assert-account-fallback.js`）。
 
 ### 窄视口完全惰性（4.9.1 引入 / 4.9.2 审查补全）
 

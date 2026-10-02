@@ -40,6 +40,7 @@ import { loadRepoCache, saveRepoCache, saveRepoData } from './storage/repoCache'
 import type { FullSyncMeta, RepoCache, RepoData } from './types';
 import { currentGeneration, ifCurrent } from './lifecycle';
 import { isDesktop } from './utils';
+import { mountAccountGuard } from './ui/accountBanner';
 
 interface RemoteStar {
   repoId: string;
@@ -806,6 +807,11 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
         ? { phase: 'failed', reason: failureReason, lastSummary: lastSyncSummary }
         : { phase: 'idle', lastSummary: lastSyncSummary }
     );
+    // 归属校验（4.11.0）：覆盖「成功 / 304 早退 / 抛错」三条路径。刻意放在 setSyncState **之后**
+    // 且 fire-and-forget：不得进入同步关键路径，也不得影响状态机（按钮 busy / 失败态只由 SyncState 决定，见 D23）。
+    // **注意**：无 token 时本函数在 try 之前就 return（见上方「未配置 Token」早退），故这条路径**不覆盖**
+    // 「清空 Token」—— 那条由 index.ts 的 token-issue handler 负责复评（第二轮审查 P1-1）。
+    mountAccountGuard();
   }
 }
 

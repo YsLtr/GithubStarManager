@@ -23,6 +23,12 @@ import {
 import { cleanupExpiredUnstarred } from './storage/pendingDelete';
 import { registerHideListsMenu, setHideListsRepositionHandler } from './ui/hideListsMenu';
 import { migrateTagsIfNeeded } from './storage/tags';
+import {
+  mountAccountGuard,
+  repositionAccountBanner,
+  setAccountBannerPlacer,
+  setOpenTokenConfigHandler,
+} from './ui/accountBanner';
 import { transformStarsList } from './transform';
 import { registerExportImportMenu, setAfterImportHandler } from './ui/exportImportMenu';
 import { registerRestoreMenu } from './ui/restoreMenu';
@@ -201,6 +207,8 @@ function transformAndReveal(animate: boolean, retries = 12): void {
     revealAfterTransform(animate);
     // API 主模式：进页自动 ETag 快筛 → 变更整表（无 token 内部静默返回）
     scheduleProbeSync();
+    // 归属校验（4.11.0）：冷启动 / Turbo 进页的主要求值点，覆盖「浏览器换了账号但 Token 未变」
+    mountAccountGuard();
     return;
   }
   if (retries > 0) {
@@ -501,18 +509,42 @@ function init(): void {
     if (isStarsPage() && document.querySelector('.stars-grid-container')) applyFilters({ keepPage: true });
   });
   // 开关切换后重挂已存在的配置面板（🟡-1：关态下面板须挂网格列顶，不占 Lists 槽位）
-  setHideListsRepositionHandler(() => repositionSetupBanner());
+  setHideListsRepositionHandler(() => {
+    repositionSetupBanner();
+    // 归属警告横幅走同一套落位规则，开关切换时也要跟着重挂（否则会紧贴冒出来的原生 Lists 上方）
+    repositionAccountBanner();
+  });
+
+  // Token 归属警告横幅（4.11.0）：落位**复用**配置面板的 placeSetupBanner（同一套 Lists 槽位 /
+  // 网格列顶规则，重写一份必然漂移）；「打开 Token 配置」也直接指向既有的 showSetupBanner
+  // （它有幂等分支，已存在时只刷文案）。
+  setAccountBannerPlacer((bar) => {
+    const host = getStarsMainColumn() || document.getElementById('user-starred-repos');
+    if (!host) return false;
+    placeSetupBanner(bar, host);
+    return true;
+  });
+  setOpenTokenConfigHandler(() => showSetupBanner());
 
   // Token 保存成功（横幅内联 / 失效弹窗 / TM 菜单 prompt 任一入口）→ 撤配置横幅 + 自动全量同步
   setTokenSavedHandler(() => {
     document.querySelector('.gsm-setup-banner')?.remove();
+    // 归属校验（4.11.0）：用户正在配置流程里，最有机会当场发现自己换了账号还没换 Token（反之亦然）
+    mountAccountGuard();
     void runFullSync('button').then((sum) => {
       if (sum && isStarsPage() && !document.querySelector('.stars-grid-container')) transformAndReveal(false);
     });
   });
 
   // Token 问题（401 / 403 非限速）→ 初始化面板呈现（4.0.2：替代居中弹窗），已有横幅则刷新文案
-  setTokenIssueHandler((detail) => showSetupBanner(detail));
+  setTokenIssueHandler((detail) => {
+    showSetupBanner(detail);
+    // 归属复评（4.11.0 第二轮审查 P1-1）：**清空 Token 走的就是这条链**（starCheck 的 promptForToken 留空
+    // → notifyTokenIssue → 这里），而清空后「没有 token」这个事实必须让过期归属警告被撤掉 ——
+    // 否则屏幕上会同时挂「🔑 Token 已清除」与「⚠️ Token 属于 @A」。三个常规求值点覆盖不到这条路径
+    // （不进 transform、不进 setTokenSavedHandler，runFullSync 的无 token 早退发生在 try 之前）。
+    mountAccountGuard();
+  });
 
   const repoIdMeta = getRepoIdMeta();
   const isRepoDetailPage = !isStarsPage() && !!repoIdMeta;

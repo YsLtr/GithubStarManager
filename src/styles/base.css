@@ -711,3 +711,43 @@ html.gsm-turbo-entry .stars-grid-container {
   color: var(--fgColor-danger, #d1242f);
   font-size: 12px;
 }
+
+/* 4.11.0 Token 归属不符警告横幅。与 `.gsm-setup-banner` 同一落位（placeSetupBanner），
+ * 但**不复用那个类名**：它有 4 条撤除路径，而归属不符不会因保存 token / 同步成功而消失。
+ * 配色沿用 GitHub 自己的 `.flash-warn` 语义（attention-muted 底 + 真描边 + attention 前景），
+ * 与通知栈的 warn 族同源；尺度对齐本脚本既有 UI（6px 圆角 / 12px 16px 内边距）。
+ * 与配置横幅的差异：这条是**警告**，故用 attention 语义色而非 setup 的中性灰底。 */
+.gsm-account-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  border: 1px solid var(--borderColor-attention-muted, #d4a72c66);
+  border-radius: 6px;
+  background: var(--bgColor-attention-muted, #fff8c5);
+  font-size: 14px;
+  color: var(--fgColor-default, #1f2328);
+}
+
+.gsm-account-banner .gsm-account-msg {
+  flex: 1 1 320px;
+  min-width: 0;
+  line-height: 1.5;
+  color: var(--fgColor-attention, #9a6700);
+}
+
+.gsm-account-banner .btn {
+  flex: none;
+}
+
+/* 关闭按钮：比两侧动作按钮轻一档，鼠标反馈靠 CSS 的 :hover（内联样式没有 :hover，
+ * 这也是这里不用 JS 补三态的原因 —— 有样式表就该用样式表） */
+.gsm-account-dismiss {
+  opacity: 0.8;
+}
+
+.gsm-account-dismiss:hover {
+  opacity: 1;
+}

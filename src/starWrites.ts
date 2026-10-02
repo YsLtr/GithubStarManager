@@ -90,7 +90,7 @@ export function writeFailureMessage(reason: StarWriteFailure, status: number): s
  * `body.logged-in` 且 `meta[name="user-login"]` 的 content 非空串。
  * `form[action$="/unstar"]` 不能当登录判据（它只说明该仓库已 star）。
  */
-function hasWebSession(): boolean {
+export function hasWebSession(): boolean {
   const body = document.body;
   if (!body || !body.classList.contains('logged-in')) return false;
   const meta = document.querySelector('meta[name="user-login"]');
