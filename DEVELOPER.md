@@ -116,7 +116,7 @@ src/
     exportImport.ts   导入导出**纯逻辑**（4.7.0）：buildExportPackage / validateExportPackage / applyImportPackage；不碰 DOM、不弹对话框
   ui/
     cards.ts          卡片构建 + 星星按钮（4.9.0：乐观翻转 → 全局队列 → 排队中再点撤销 → 失败回滚 + alert）
-    notifications.ts  右上角通知栈（4.9.0）：内联样式 + transition 滑入、3s 自动消失、悬停整区暂停、划掉完成态
+    notifications.ts  通知栈（4.9.0 建立 / 4.9.1 改定位与观感）：锚在全局头部下方（挂 body、随滚动重算）+ 观感照 GitHub `.flash`（语义浅色底 + 1px 细描边 + 细线图标）+ transition 滑入、3s 自动消失、悬停整区暂停、划掉完成态
     restoreMenu.ts    TM 菜单「♻️ 恢复已取消的 star」（4.9.0）：可勾选 + 一键恢复选中 + 每行 ☆ 按钮 + 进度 + 取消
     tagFilter.ts      标签 pill、筛选栏（原位重绘 = 共现收窄，勾选不关 popover）、pill 选中态同步、refreshTagFilterBar（候选刷新唯一入口）
     hideListsMenu.ts  TM 菜单「🙈 隐藏 Lists 区块」开关（持久键 stars_hide_lists + 标签刷新 + 门控即时生效）
@@ -409,9 +409,9 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 - `restoreMany()` **逐条 await**（严格串行）、执行中**可取消**（只停后续，已发出的不回滚）、**不自动重试**、无数量阈值。
 - TM 菜单「♻️ 恢复已取消的 star（24h 内）」= 可勾选 + 一键「恢复选中」+ **每行一个 ☆ 恢复 按钮**；`confirm` 显示条数与预估耗时（≥1s/条）。
 - **变化简报**（`emitSyncReport`）：任何 `runFullSync` 路径收尾都弹；口径只有「取消 star / 新增 / 恢复」，**元数据刷新只进控制台**；无变化也弹「无变化（共 N 个 star）」（304 免额度早退路径同样弹）；**不判重**；每条外部取关**各弹一条带「恢复」按钮的通知**。
-- **通知栈**（`ui/notifications.ts`）：右上角、新条目从底部追加、无条数上限、3s 自动消失、**悬停整个区域暂停计时**、带动作按钮的条目成功后原地划掉并重置 3s。样式全内联（可出现在任意 github.com 页面，不依赖 Stars 视图注入的样式表）。
+- **通知栈**（`ui/notifications.ts`）：常挂 `document.body`（**不是** header 子节点），锚在**全局头部下方**（`div.header-wrapper.js-header-wrapper` 底边 + 8px，滚动/改窗口时 rAF 重算，头部滚出视口后回落视口顶部 8px）、新条目从底部追加、无条数上限、3s 自动消失、**悬停整个区域暂停计时**、带动作按钮的条目成功后原地划掉并重置 3s。**观感 = GitHub 自己的 `.flash`**（内联消息族）：`bgColor-*-muted` 浅色底 + `borderColor-*-muted` 1px 真描边 + 16px 细线 octicon 着 `fgColor-*` + `KIND_STYLE` 一张表管全套；尺度对齐本脚本既有 UI（6px 圆角、`0 1px 3px rgba(0,0,0,.08)` 阴影、`12px 16px` 内边距、按钮 14px / `6px 14px`）。**不要**用 Primer `Toast` 的 48px 满饱和图标条 + 三层悬浮投影（浮动 toast 族，与卡片/横幅语言不同族）。样式全内联（可出现在任意 github.com 页面，不依赖 Stars 视图注入的样式表）。
 - **失败一律 `alert` 一行文字**（ADR 0003）：写失败、单条恢复失败、批量恢复的失败汇总都走 `alert`——3s 的通知承载不了「唯一可能造成数据丢失的事件」的反馈。
-- **重绘**：有增删差异或可见元数据更新时才 `applyFilters({keepPage:true})`；`source === 'auto'` 且最近 10s 内有用户交互时，改成弹一条可点击的「列表有 N 项变化，点击刷新」。
+- **重绘**：有增删差异或可见元数据更新就**立即** `applyFilters({keepPage:true})`——手动与自动来源一视同仁，**不再问「是否刷新」**（原先自动来源 + 最近 10s 有交互会改成可点击提示，已删除）。
 
 ### 全缓存搜索与筛选联动
 

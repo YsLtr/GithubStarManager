@@ -535,24 +535,6 @@ function reportAuthIssue(resp: Response): void {
 
 /* ---------------- 变化简报与重绘（4.9.0，ADR 0003） ---------------- */
 
-/** 自动来源且用户刚有交互时，不在用户眼皮底下重绘（改成可点击的提示） */
-const INTERACTION_QUIET_MS = 10_000;
-let lastInteractionAt = 0;
-let interactionTrackingReady = false;
-
-/** 记录最近一次用户交互（用于判断「现在能不能安全重绘」）。只注册一次，成本是一个事件监听。 */
-function ensureInteractionTracking(): void {
-  if (interactionTrackingReady) return;
-  interactionTrackingReady = true;
-  const mark = (): void => {
-    lastInteractionAt = Date.now();
-  };
-  // capture + passive：只读不拦，不干扰 GitHub 自己的监听
-  document.addEventListener('pointerdown', mark, { capture: true, passive: true });
-  document.addEventListener('keydown', mark, { capture: true, passive: true });
-  document.addEventListener('scroll', mark, { capture: true, passive: true });
-}
-
 interface SyncReportInput {
   total: number;
   added: number;
@@ -589,32 +571,18 @@ function emitSyncReport(source: 'button' | 'auto', r: SyncReportInput): void {
 }
 
 /**
- * 同步后是否重绘网格：有增删差异或可见元数据更新时才重绘。
- * 自动来源且**最近 10s 内有用户交互**（可能在滚动/点按钮）时，改为弹一条可点击的提示，
- * 不把列表在用户眼皮底下换掉。
+ * 同步后重绘网格：有增删差异或可见元数据更新就**立即重绘**。
+ * 用户裁定：不再问「是否刷新」——自动来源同样直接换列表，简报已经说明发生了什么。
  */
-function maybeRerenderAfterSync(source: 'button' | 'auto', changed: number): void {
+function rerenderAfterSync(changed: number): void {
   if (changed <= 0) return;
   if (!document.querySelector('.stars-grid-container')) return; // 不在网格视图（如详情页）
-  if (source === 'auto') {
-    // 注意：布防**不在这里**。这里才布防会让最后一次交互的时间恒为 0
-    // （布防前 lastInteractionAt 一直是 0）→ 首次也是唯一一次变化事件上抑制必然失效。
-    // 真正的布防在 runFullSync 入口（ensureInteractionTracking 自身有幂等守卫）。
-    if (Date.now() - lastInteractionAt < INTERACTION_QUIET_MS) {
-      pushNotice(`列表有 ${changed} 项变化，点击刷新`, 'info', {
-        actionLabel: '刷新',
-        onAction: () => applyFilters({ keepPage: true }),
-      });
-      return;
-    }
-  }
   applyFilters({ keepPage: true });
 }
 
 /** 手动/自动的共同入口；失败返回 null 且不改动任何数据 */
 export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummary | null> {
   if (syncing) return null;
-  ensureInteractionTracking(); // 入口即布防：重绘抑制要知道「刚才用户有没有在动页面」
   let tok = getGitHubPat();
   if (!tok && source === 'button') {
     // 打开**配置横幅**（内联粘贴行 + 两条快速创建深链），而不是 window.prompt：
@@ -748,8 +716,8 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
       refreshed,
       unstarredItems,
     });
-    // 有增删差异或可见元数据更新 → 重绘网格（自动来源且用户刚有交互时改成可点击的提示，见 emitSyncReport）
-    maybeRerenderAfterSync(source, added + restored + unstarred + backfilled + refreshed);
+    // 有增删差异或可见元数据更新 → **立即重绘**网格（不问「是否刷新」）
+    rerenderAfterSync(added + restored + unstarred + backfilled + refreshed);
     // 写元数据：逐页 ETag 基线（304 页沿用旧校验值、正文页用响应值，剥 W/ 规范形）+ 首页 etag（兼容旧字段）+ lastFullSyncAt + 总数
     const outMeta: FullSyncMeta = { etag: scan.etag, etags: scan.etags, lastFullSyncAt: Date.now(), count: scan.items.length, dataRev: DATA_REV };
     if (scan.nextTailEtag) outMeta.tailEtag = scan.nextTailEtag; // 尾页越界 etag（缺省=清空：尾页转正或整表兜底后新越界页待首探）

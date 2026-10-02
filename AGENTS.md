@@ -8,9 +8,19 @@
 
 ## 当前状态
 
-版本 **4.9.0**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
+版本 **4.9.1**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
 
-> 交接时间：**2026-10-01 18:20 +0800**。
+> 交接时间：**2026-10-02 17:10 +0800**。
+
+**4.9.1（未提交时的工作树，本次交接一起提交）**：三处通知栈/同步收尾的行为与观感修订，
+细节见 `DEVELOPER.md` §「变化简报与恢复」、`docs/adr/0003` 的「位置与观感」条与 D11/D12：
+
+1. **通知栈定位**：从「视口右上角固定 `top:16px`」改为**锚在全局头部下方**（`header-wrapper` 底边 +8px，
+   滚动/改窗口 rAF 重算，头部滚出视口后回落视口顶部 8px）。容器仍挂 `document.body`，**不是** header 子节点。
+2. **同步后立即重渲染**：删掉「自动来源 + 最近 10s 有交互 → 弹『点击刷新』」整条分支（含交互追踪三监听），
+   手动/自动一视同仁直接 `applyFilters({keepPage:true})`（用户裁定）。
+3. **观感换成 GitHub `.flash`**（内联消息族）：语义浅色底 + `borderColor-*-muted` 细描边 + 16px 细线 octicon，
+   尺度对齐脚本既有卡片/横幅。**不要**回退到 Primer `Toast` 族（48px 满饱和色条 + 三层悬浮投影，与卡片不同族）。
 
 **4.9.0 已实现并提交**，四组改动：
 
@@ -128,6 +138,29 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
 - `.then` 里**必须做 handle 身份校验**：否则「撤销 → 重新点击」会让旧条目回调清掉新操作的护栏，同一仓库被重复入队。
 - **不自动重试**；失败分类（401 / 403 权限 / 403 限流 / 404 / 网络 / 422 CSRF）各有独立文案，文案**不暴露通道**。
 
+**D11 · 通知栈的定位与观感（4.9.1）**
+
+- **定位**：容器常挂 `document.body`，**不是** header 子节点；`header-wrapper` 只当**几何锚点** → `top = max(headerBottom + 8, 8)`。
+  头部随页面滚走（实测其 `position: relative`、滚动 400 时 `rect.top = -400`），故头部出视口后**夹回视口顶部 8px**。
+  重算走 `scroll`(capture) / `resize` / `visibilitychange` + rAF 合帧。**visibilitychange 不可省**：后台标签页里
+  `scroll` 事件与 rAF 都被冻结（实测 scrollEvents 恒为 0），回前台不补一次就会停在过期位置。
+- **观感 = GitHub 自己的 `.flash`**（内联消息族，配对 token 逐条抄自线上样式表）：`bgColor-*-muted` 浅底 +
+  `borderColor-*-muted` **1px 真描边** + 16px **细线** octicon 着 `fgColor-*`，一套 `KIND_STYLE` 表管全套。
+  尺度对齐本脚本既有 UI：6px 圆角、`0 1px 3px rgba(0,0,0,.08)` 阴影、`12px 16px` 内边距、按钮 14px / `6px 14px`。
+- **不要用 Primer `Toast` 族**（`bgColor-*-emphasis` 48px 满饱和图标条 + `--shadow-floating-small` 三层投影）：
+  那是浮动 toast 语言，用户 2026-10-02 明确判定「与卡片格格不入」。`--shadow-floating-legacy` /
+  `--color-overlay-shadow` 在今天的 github.com **都未定义**（探针证实），照抄源码名字会静默失效。
+- 交互反馈内联样式没有 `:hover`，用 `withHover()` 一对监听补（按钮三态走 GitHub 默认按钮 token；关闭按钮 `.flash-close` 的 0.7/0.5）。
+- **DOM 顺序铁律**：动作按钮必须在 `box.append(icon, label)` **之后**追加，否则按钮会插到图标之前
+  （曾真实发生过：`appendChild(btn)` 写在统一 append 之前 → 渲染成 `[按钮][图标][文本][关闭]`）。
+
+**D12 · 同步后立即重渲染（4.9.1，推翻 4.9.0 的抑制策略）**
+
+- `changed > 0`（增删差异 **或** 可见元数据更新）且在网格视图 → 直接 `applyFilters({keepPage:true})`，
+  **手动与自动来源一视同仁、不问「是否刷新」**（用户裁定）。
+- 4.9.0 的 `INTERACTION_QUIET_MS` / `lastInteractionAt` / `ensureInteractionTracking()` 三监听已整段删除；
+  **不要**恢复「弹一条可点击的刷新提示」——那是被明确否决的口径。
+- 已知代价（用户裁定接受）：进页自动同步时列表会在用户眼前重排；换来的是「简报说什么，列表就是什么」，不再有「提示与数据不一致」的中间态。
 ---
 
 ## dev 模式必须知道的四件事
@@ -159,7 +192,18 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
   `Uint8Array.from(atob(...), c => c.charCodeAt(0))` + `TextDecoder('utf-8')` 解码后再 eval。
 - **幂等早退**：改 transform 逻辑前先 `Page.reload()`，否则 `.stars-grid-container` 幂等检查会提前返回。
 - **清数据**：GM_setValue 与 localStorage 镜像**双清**（`gmGet` 迁移路径会自愈单边清理，只清一边看不出问题）。
-- **通知栈相关**：`gsm-notify-stack` 的悬停会**暂停整区倒计时**，真机测「3s 自动消失」时别把鼠标停在右上角。
+- **通知栈相关**：`gsm-notify-stack` 的悬停会**暂停整区倒计时**（真实 `mouseenter` 监听，可用来冻住条目做截图/量测）；位置随 header 底边走，量测前先确认 `scrollY` 与 `visibilityState`。
+- **别用 `setInterval` 给通知补种测试数据**：页面会持续弹出，看上去就像「脚本自己在反复弹通知」——
+  2026-10-02 真踩过并把夹具误当成真实产出报给用户。夹具只推一次；要用循环补种就必须在同一个脚本里
+  把 `clearInterval` 与容器清理一起做完，且**不得**把它当作「样式/行为已生效」的视觉证据。
+- **验证内部函数**：`.diag/gen-notify-test.cjs` 的做法可复用 —— 复制 dist、把 `init();` 注释掉（避免真实行为干扰）、
+  在 IIFE 收尾前 `window.__gsmTest = { pushNotice }`，UTF-8 安全解码后注入。用完 `location.reload()` 清场。
+- **读 `computedStyle` 前要等过渡结束**：按钮上挂着 `80ms` 的 transition，同步读取会拿到**起点值**，
+  极易误判成「hover 监听没生效」。等 ~250ms 再读（实测 rest→hover→active→hover→rest 五态可完整复现）。
+- **`visibilityState` 会自己掉回 hidden**：`Page.bringToFront` 之后页面可能又变 hidden（rAF/scroll/定时器全停）。
+  可靠写法是 `{"method":"Page.bringToFront","params":{},"allowFocus":true}`，并在每次量测前回读 `document.visibilityState`。
+- **恢复被覆盖的 `console.log`**：注入工装若改过它，用 `iframe.contentWindow.console.log` 取原生实现再赋回
+  （`delete console.log` 会把 `console` 打残）。
 
 ```bash
 # 真机注入（.diag/ 已在 .gitignore）
@@ -187,26 +231,35 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
 1. **dev HMR 需浏览器放行 CSP**（见上「dev 模式三件事」第 2 条）。
 2. **经典 token + 私有仓库**：无 `repo` scope 时同步可能把私有仓库误判 unstar（见 D3，已知局限）。
 3. **`GitHub-Verified-Fetch: true` 是玻璃地板**：无文档、无契约（公开来源仅 2 次观测），GitHub 随时可收紧。
-   这是保留「422 → 取真实 token 重发一次」回退与三段式降级的全部理由；若批量下开始返回 422，回退就成了实际主路径。
+   已从 `starWrites.ts` 删除（实测该页纯客户端渲染、0 个 `<form>`），**降级只剩两段**：页面有该仓库表单 → 真实 token；否则仅 VF；都失败即报错。此条风险因此不做缓解，只作观察项：若批量下开始返回 422，说明 GitHub 收紧了 VF 地板。
 4. **网页通道的成功判定在网格/离页场景无法复核方向**（页面上没有该仓库表单），只能以 HTTP 200 为准 —— 已知弱点。
 5. **TM 菜单标签不跨标签页同步**；窄视口下 frame-render 分支的 `hideListsSection()` 无 `isDesktop()` 门（既有行为）。
 6. **一键批量恢复会代发请求**，技术上落在 AUP §4「automated starring / large volume in a short period」的邻域；
    用户 2026-10-01 知情后要求实现。缓解：严格串行 ≥1s、进度可见、可取消、不自动重试、确认弹窗显示条数与预估耗时。
    同样地，「写通道不向用户披露」与 RDA §4(v) 的披露要求存在偏差，两者都记在 `docs/adr/0006`。
+7. **通知栈无条数上限 + 现在压在内容区上方**：一次同步若检出多条外部取关，会各弹一条（ADR 0003 刻意不设上限、
+   不判重）→ 通知可能成列盖住列表右上半屏。缓解只有 3s 自动消失与关闭按钮；若用户反馈碍事，可考虑「同类合并计数」。
+8. **通知栈兜底值是浅色硬编码**：正常走 GitHub 的 `--bgColor-*-muted` 等变量（自动适配 dark/dimmed），
+   但变量一旦被 GitHub 移除就回落到浅色兜底值 → 暗色主题下会变刺眼（低风险，仅影响兜底路径）。
 
 ---
 
 ## 下一步
 
-1. **跑限流实测（阶段 A）**：`node scripts/ratelimit-probe.cjs --run --repo <自有仓库>`，产
+1. **@version 已升到 4.9.1 → 若你在用 dev 脚本，必须重装 dev loader**：重开
+   <http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js> 让 TM 原地更新，否则 TM 菜单会整体消失
+   （机制见「dev 模式必须知道的四件事」第 4 条：`@version` 变了 → 脚本头变了 → mountGmApi 的 key 对不上）。
+   正式版不受影响；`@version` 变了却没重装，表现是「TM 菜单空了」+「同步说未配置 token」。
+2. **跑限流实测（阶段 A）**：`node scripts/ratelimit-probe.cjs --run --repo <自有仓库>`，产
    `docs/research-ratelimit-measurement.md`。前置（任一不满足就跳过）：自有仓库、classic PAT（scope `repo`）、
    能关闭脚本自动同步、出口非共享/VPN（走 VPN 只做 L1）。结论只作验证与文档，**不自动改 1s 默认值**。
-2. **真机验证 `docs/adr/0006` 的三条未确证项**（见「当前状态」末段），尤其「离页仓库只带 VF 头能否成功」——
-   用一个仓库做单次验证即可。
-3. 后续阶段（详见 `todo` 与 `DEVELOPER.md` §13）：GraphQL 分页调研、周期自动同步、非本人 star 页
+3. **`docs/adr/0006` 剩余两项不可观测项**：`?scopes=repo` 预填是否真的勾上（被 sudo/passkey 门拦住，
+   **不得**声称可用或不可用）、`context=user_stars` 服务端是否据其分支（实测 200 但不可知）。
+   离页仓库 + 仅 VF 头**已实测成立**（见「当前状态」表），不必重复验。
+4. 后续阶段（详见 `todo` 与 `DEVELOPER.md` §13）：GraphQL 分页调研、周期自动同步、非本人 star 页
    `GET /users/{u}/starred` 接入、分页按钮可跳页。
-4. 未消化的架构建议：单遍 facet 计算、响应式漏斗（见 `starmgr-arch-review-report.md`）。
-5. fine-grained PAT 写他人公开仓库的能力缺口由 GitHub 控制（roadmap#600 NOT_PLANNED、#601 OPEN）——将来若补齐，
+5. 未消化的架构建议：单遍 facet 计算、响应式漏斗（见 `starmgr-arch-review-report.md`）。
+6. fine-grained PAT 写他人公开仓库的能力缺口由 GitHub 控制（roadmap#600 NOT_PLANNED、#601 OPEN）——将来若补齐，
    可回头简化 `docs/adr/0006` 的网页端点通道。
 
 ## 快速构建约定
