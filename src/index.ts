@@ -1,5 +1,6 @@
-import { gmAddStyle, gmRemove } from './gm';
-import { LEGACY_STORAGE_KEYS } from './constants';
+import { gmAddStyle } from './gm';
+import { beginGeneration, createScope } from './lifecycle';
+import { teardownStarsView } from './viewTeardown';
 import baseCss from './styles/base.css?inline';
 import persistentCss from './styles/persistent.css?inline';
 import wideCss from './styles/wide.css?inline';
@@ -25,7 +26,7 @@ import { migrateTagsIfNeeded } from './storage/tags';
 import { transformStarsList } from './transform';
 import { registerExportImportMenu, setAfterImportHandler } from './ui/exportImportMenu';
 import { registerRestoreMenu } from './ui/restoreMenu';
-import { isDesktop } from './utils';
+import { isDesktop, subscribeBreakpointChange } from './utils';
 
 /* ============================================================
  * 样式生命周期
@@ -47,6 +48,9 @@ let layoutStyleEl: HTMLStyleElement | null = null;
 let starsSetupDone = false;
 
 function ensureStyles(): void {
+  // 窄视口**不注入任何样式**（4.9.1）：CSS 全都在媒体查询里、本来也不生效，但注入本身会
+  // 在页面上留下两个 <style> 节点（且 persistent 那张从不移除）—— 正是要消掉的"残次内容"。
+  if (!isDesktop()) return;
   if (!persistentStyleEl || !persistentStyleEl.isConnected) {
     persistentStyleEl = gmAddStyle(persistentCss);
   }
@@ -55,9 +59,13 @@ function ensureStyles(): void {
   }
 }
 
-/** 幂等：样式 + 一次性存储迁移/清理。profile 页直入（样式从未注入过）也走这里。 */
+/** 幂等：门控类 + 样式 + 一次性存储迁移/清理。profile 页直入（样式从未注入过）也走这里。 */
 function ensureStarsSetup(): void {
+  // 门控类在这里对齐（而不是只在 document-start）：跨断点从窄回到桌面时，
+  // teardown 已把 gsm-hide-lists 摘掉，这里负责按当前视口 + 开关重新挂上。
+  applyHideListsGate();
   ensureStyles();
+  // 存储迁移 / 超期备份清理与视口无关（数据不随窗口大小改变，回滚也不回滚数据）
   if (starsSetupDone) return;
   starsSetupDone = true;
   migrateTagsIfNeeded();
@@ -73,9 +81,11 @@ function deactivateStars(): void {
 
 /** 离开 Stars 的完整收尾：解除一切隐藏 + 撤样式，回到 GitHub 原生视图。幂等。 */
 function exitStarsView(reason: string): void {
-  revealTurboHide();
+  // 世代推进：让所有**已排队**的转换/重渲染回调自我作废 —— 否则刚拆干净，
+  // 上一轮排的那个 150ms 重试就把样式表重新装了回来（4.9.1 修的点）。
+  beginGeneration();
+  teardownStarsView(reason);
   deactivateStars();
-  revealBootHide(reason);
 }
 
 /* 4.9.0（决策 D17）：仓库详情页的 star/unstar 监听已删除 —— 星状态真相只由整表同步判定，
@@ -94,6 +104,9 @@ function exitStarsView(reason: string): void {
  * 这些监听必须在**任何**匹配页都注册：纯 profile 页（无 tab=stars）也要能
  * 响应"点 Stars 标签"的 turbo 事件把用户接进来。
  * ============================================================ */
+/** 页面级作用域：导航监听与它们的延迟回调都登记在这里（生命周期 = 整个页面，不随回滚释放）。
+ *  延迟回调一律走 guardedTimeout：世代被推进（回滚/新一轮转换）后自动作废。 */
+const navScope = createScope('gsm-nav');
 let starsNavPending = false;
 let navFailsafeTimer: number | undefined;
 
@@ -143,7 +156,19 @@ function revealAfterTransform(animate: boolean): void {
  * 失败重试耗尽时解除隐藏并撤掉样式，回落到 GitHub 原生页面。
  */
 function transformAndReveal(animate: boolean, retries = 12): void {
+  // 世代推进：本次转换开始后，上一轮排队的重试/延迟回调全部作废
+  beginGeneration();
   const root = document.documentElement;
+
+  // **先于一切注入**判定视口（4.9.1）。脚本声明「仅桌面端生效」，窄视口就该完全惰性：
+  // 不注入样式表、不建节点、不插配置横幅。旧代码把这道门放在 ensureStarsSetup() 之后，
+  // 于是手机上照样挂着两张 <style> + 一条样式完整的配置横幅（.gsm-setup-banner 的样式
+  // 在 base.css 里位于媒体查询**之外**，窄视口不会被断点挡掉）。
+  if (!isDesktop()) {
+    starsNavPending = false;
+    revealAfterTransform(false); // 幂等；窄视口本就没藏过页面，这里只为撤销导航兜底
+    return;
+  }
   if (animate) {
     // 起点先行：布局样式一注入，侧边栏就会算成 180px。先把 prepare 立好
     // （= 原生 296px），注入与转换全程都停在起点宽度，解除隐藏时一次性过渡。
@@ -155,6 +180,10 @@ function transformAndReveal(animate: boolean, retries = 12): void {
   if (!hasApiData()) {
     starsNavPending = false;
     revealAfterTransform(false);
+    // Lists 标题行不归门控 CSS 管（那条 CSS-only 兜底 4.9.1 已删），而正常路径是
+    // transformStarsList → hideListsSection()，这条分支不转换 ⇒ 必须自己补一次，
+    // 否则首次安装/未配 token 时「Lists (5)」标题行孤零零挂在配置横幅上方。
+    hideListsSection();
     showSetupBanner();
     return;
   }
@@ -174,14 +203,11 @@ function transformAndReveal(animate: boolean, retries = 12): void {
     scheduleProbeSync();
     return;
   }
-  if (!isDesktop()) {
-    // 移动端永远不会转换，别捂着页面
-    revealAfterTransform(false);
-    return;
-  }
   if (retries > 0) {
     if (retries === 12) console.log('[github-star-manager] 转换目标未就绪，150ms 后重试');
-    window.setTimeout(() => transformAndReveal(animate, retries - 1), 150);
+    // guardedTimeout：回滚/新一轮转换会推进世代 → 这条重试自动作废（旧代码会一直重试到 12 次，
+    // 把刚拆掉的样式表重新装回去）
+    navScope.guardedTimeout(() => transformAndReveal(animate, retries - 1), 150);
     return;
   }
   // 重试耗尽：解除隐藏 + 撤样式，恢复原生页面（诊断日志要能一眼看出失配）
@@ -197,6 +223,12 @@ function transformAndReveal(animate: boolean, retries = 12): void {
  * prompt 按钮按用户更正移除）；保存成功自动全量同步 → hasApiData 变 true → 重新出网格。
  */
 function showSetupBanner(issueDetail?: string): void {
+  // 窄视口不显示任何脚本 UI（4.9.1）：横幅的样式不在媒体查询内，手机上会以完整样式出现，
+  // 是"残次内容"里最刺眼的一件。需要配置 Token 的窄视口用户走 TM 菜单入口。
+  if (!isDesktop()) {
+    console.log('[github-star-manager] 窄视口：不显示配置面板（如需配置 Token，请用 TM 菜单「⭐ 设置 GitHub Token」）');
+    return;
+  }
   const exist = document.querySelector<HTMLElement>('.gsm-setup-banner');
   if (exist) {
     if (issueDetail) {
@@ -356,9 +388,9 @@ function registerNavListeners(): void {
     }
     if (frameId === 'user-starred-repos') {
       const arrive = starsNavPending;
-      setTimeout(() => transformAndReveal(arrive), 100);
+      navScope.guardedTimeout(() => transformAndReveal(arrive), 100);
     } else if (frameId === 'user-profile-frame') {
-      setTimeout(() => {
+      navScope.guardedTimeout(() => {
         hideListsSection();
         // 兜底：若换进来的不是 Stars 标签内容（无 starred 列表），立即解除并撤样式
         const pf = document.getElementById('user-profile-frame');
@@ -400,13 +432,16 @@ function registerNavListeners(): void {
   });
 
   document.addEventListener('turbo:load', () => {
+    // 窄视口（4.9.1）：脚本完全惰性 —— 既没有要建立的东西，也没有要收尾的东西
+    // （运行中收窄的情况已由断点订阅处理，这里不再需要 exitStarsView）。
+    if (!isDesktop()) return;
     if (!isStarsPage()) {
       starsNavPending = false;
       exitStarsView('非 Stars 页 turbo:load');
       return;
     }
     const arrive = starsNavPending;
-    setTimeout(() => transformAndReveal(arrive), 200);
+    navScope.guardedTimeout(() => transformAndReveal(arrive), 200);
   });
 
   // 记录"即将切到 Stars 标签"：frame 导航期间 URL 不会立刻变，isStarsPage() 测不到
@@ -420,6 +455,10 @@ function registerNavListeners(): void {
 
   // 修正 GitHub 原生 "Clear filter"（4.0.0）：全部本地化 — 清状态 → 本地浏览页 → 干净地址栏，不再整页导航
   document.addEventListener('click', (e) => {
+    // 窄视口（4.9.1）：交回 GitHub 原生行为。本地化 Clear filter 会经 exitCustomMode →
+    // applyFilters → hideNativeFilterMenus() 把原生的 Type/Language/Sort 三个 action-menu
+    // 设成 display:none —— 在手机上就是「点了一下原始筛选条，三个菜单永久消失」。
+    if (!isDesktop()) return;
     const target = e.target instanceof Element ? e.target : null;
     const link = target ? target.closest('a.issues-reset-query') : null;
     if (!link) return;
@@ -431,10 +470,21 @@ function registerNavListeners(): void {
 function init(): void {
   // 导航监听必须最先挂：纯 profile 页（非 stars、非仓库详情）也要能响应
   // "点 Stars 标签"，否则从 profile 进 Stars 时没有任何转换逻辑在跑。
-  // 4.0.10：一次性清理历史死键（快照/裁决/位移管线已删；GM + localStorage 镜像同删，幂等）
-  for (const k of LEGACY_STORAGE_KEYS) gmRemove(k);
 
   registerNavListeners();
+
+  // 断点订阅（4.9.1）：运行中把窗口从桌面拖到手机宽度（或反向）时双向切换。
+  // 这是修「缩到手机尺寸后留下一地残次内容」的关键 —— 旧代码只在导航时判定视口，
+  // 已经建好的网格、被搬走的侧栏、写下的内联样式都不会自己回退。
+  subscribeBreakpointChange((desktop) => {
+    if (desktop) {
+      // 回到桌面：重新走转换管线（与「手动同步后重建网格」同一条路径）
+      if (isStarsPage() && !document.querySelector('.stars-grid-container')) transformAndReveal(false);
+      return;
+    }
+    // 收窄到手机宽度：完整回滚成 GitHub 原生页面
+    exitStarsView('跨断点收窄(窄视口)');
+  });
   // TM 菜单：任意匹配页都可设置/清除核对用 PAT
   registerTokenMenu();
   // 手动同步唯一入口（4.0.3：横幅与标题行的手动同步按钮均已移除）

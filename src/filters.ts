@@ -2,6 +2,7 @@ import {
   ARROW_DOWN_SVG,
   ARROW_UP_SVG,
   CHECK_SVG,
+  GSM_HIDDEN_ATTR,
   NATIVE_PAGE_SIZE,
   SORT_OPTIONS,
   TRIANGLE_DOWN_SVG,
@@ -15,7 +16,7 @@ import { loadAllTags } from './storage/tags';
 import { buildCardFromCache, createStarButtonForCached } from './ui/cards';
 import { renderNotes } from './ui/notes';
 import { refreshTagFilterBar, refreshTagPillStates, renderTags } from './ui/tagFilter';
-import { escapeHtml } from './utils';
+import { escapeHtml, isDesktop } from './utils';
 import type { FilteredRepo, RepoData, TypeFilter } from './types';
 
 /**
@@ -27,8 +28,22 @@ import type { FilteredRepo, RepoData, TypeFilter } from './types';
  * - `updateLocalFilterControls()`：常驻本地 Type/Language/Sort(+方向) 接管原生菜单（4.4.0 起容器只建一次 + 原位刷新）。
  */
 
+/* ---------------- 原生节点的隐藏/还原（4.9.1） ----------------
+ * 我们对 GitHub 原生节点只做「藏起来」这一种写入。写下时必须同时打 GSM_HIDDEN_ATTR 标记：
+ * 回滚（窄视口收窄 / 离开 Stars）靠标记逐个还原 —— 裸的 inline display 无法与 GitHub
+ * 自己的样式区分，猜错就是直接改坏别人的页面（见 viewTeardown.ts 的铁律）。
+ * 还原时用 removeProperty 而不是赋空串：不留 `style=""` 残迹。 */
+function hideNativeNode(el: HTMLElement): void {
+  el.style.display = 'none';
+  el.setAttribute(GSM_HIDDEN_ATTR, '1');
+}
+
+function showNativeNode(el: HTMLElement): void {
+  el.style.removeProperty('display');
+  el.removeAttribute(GSM_HIDDEN_ATTR);
+}
 /** facet 候选计算时可跳过的约束维度 */
-export type QuerySkip = 'lang' | 'type';
+type QuerySkip = 'lang' | 'type';
 
 /**
  * 按 filterState.sort/direction 就地排序。
@@ -86,7 +101,7 @@ function typeMatches(data: RepoData, type: TypeFilter): boolean {
 }
 
 /** 唯一查询管线：type → lang 约束 → tags AND → search 全文 → 排序。skip = 算该 facet 候选时忽略自身约束（D1 替换语义）。 */
-export function queryRepos(skip?: QuerySkip): FilteredRepo[] {
+function queryRepos(skip?: QuerySkip): FilteredRepo[] {
   const cache = loadRepoCache();
   const allTags = loadAllTags();
   const allNotes = loadAllNotes();
@@ -179,7 +194,7 @@ export function hasAnyTags(): boolean {
  * Language 候选（多选，D1 忽略自身维度约束——否则选完就剩一项没法加选）：
  * `queryRepos('lang')` 里出现的语言 ∪ 已选语言（已选恒可见，可取消）。
  */
-export function computeLanguageCandidates(): string[] {
+function computeLanguageCandidates(): string[] {
   const langs = new Set<string>();
   for (const { data } of queryRepos('lang')) {
     if (data.lang) langs.add(data.lang);
@@ -193,7 +208,7 @@ export function computeLanguageCandidates(): string[] {
 /** Language 菜单「None」哨兵值：无语言仓库（data.lang 为空；linguist 无同名语言，不会撞车） */
 export const LANG_NONE = '(none)';
 /** None 在界面上的显示文案 */
-export const LANG_NONE_LABEL = 'None';
+const LANG_NONE_LABEL = 'None';
 
 /** 无语言仓库是否存在（当前约束下动态收窄，D1；已选恒可见） */
 function hasLangNoneCandidate(): boolean {
@@ -208,7 +223,7 @@ function hasLangNoneCandidate(): boolean {
  * Type 候选（多选，同 Language 忽略自身维度约束）：
  * `queryRepos('type')` 结果里能命中的 type 值 ∪ 已选 type；菜单顺序固定为原生序。
  */
-export function computeTypeCandidates(): TypeFilter[] {
+function computeTypeCandidates(): TypeFilter[] {
   const present = new Set<TypeFilter>();
   for (const { data } of queryRepos('type')) {
     for (const opt of TYPE_OPTIONS) {
@@ -313,7 +328,7 @@ function highlightMatchesInCard(card: HTMLElement, terms: string[]): void {
 }
 
 /** 渲染结果计数信息条（含 Clear filter）：tags/lang/type/search 任一激活即出现 */
-export function renderFilterInfoBar(count: number): void {
+function renderFilterInfoBar(count: number): void {
   // 移除旧信息条
   document.querySelectorAll('.stars-tag-info-bar').forEach((el) => el.remove());
 
@@ -326,7 +341,7 @@ export function renderFilterInfoBar(count: number): void {
 
   // 隐藏原生 clear filter 条
   const nativeBar = getNativeFilterBar(colLg9);
-  if (nativeBar) nativeBar.style.display = 'none';
+  if (nativeBar) hideNativeNode(nativeBar);
 
   const bar = document.createElement('div');
   bar.className = 'stars-tag-info-bar TableObject border-bottom color-border-muted py-3';
@@ -378,7 +393,10 @@ export function renderFilterInfoBar(count: number): void {
  * 在勾选过程中保持打开（勾选不收起）。
  */
 export function applyFilters(opts: { keepPage?: boolean } = {}): void {
-  // 1. 移除旧的缓存卡片
+  // 窄视口（4.9.1）：整条渲染/控件管线一行都不跑。这是**兜底门**——回调可能来自
+  // 回滚之前排的队（如 search.ts 的 50ms 定时器），而 applyFilters 会往 GitHub 原生筛选行
+  // 里插控件、把原生菜单设成 display:none；在手机宽度上发生这些就是纯残留。
+  if (!isDesktop()) return;
   document.querySelectorAll('.stars-grid-card-cached').forEach((el) => el.remove());
 
   // 2. 常驻本地控件（Type / Language / Sort+方向）原位刷新，同时保证原生菜单持续隐藏
@@ -393,7 +411,10 @@ export function applyFilters(opts: { keepPage?: boolean } = {}): void {
   // 3. 原生 clear filter 条：筛选态藏（信息条顶替）、browse 态还
   if (colLg9) {
     const nativeBar = getNativeFilterBar(colLg9);
-    if (nativeBar) nativeBar.style.display = filtered ? 'none' : '';
+    if (nativeBar) {
+      if (filtered) hideNativeNode(nativeBar);
+      else showNativeNode(nativeBar);
+    }
   }
   if (!filtered) {
     document.querySelectorAll('.stars-tag-info-bar').forEach((el) => el.remove());
@@ -532,7 +553,7 @@ function hideNativeFilterMenus(): void {
   ]) {
     const btn = document.getElementById(id);
     const menu = btn ? btn.closest('action-menu') : null;
-    if (menu instanceof HTMLElement) menu.style.display = 'none';
+    if (menu instanceof HTMLElement) hideNativeNode(menu);
   }
 }
 

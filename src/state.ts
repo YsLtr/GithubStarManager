@@ -11,7 +11,7 @@ import type { SortDirection, SortKey, TypeFilter } from './types';
  * （对齐原生默认 Recently starred）。
  * 4.2.0：新增 type（Type 本地接管）。
  */
-export interface FilterState {
+interface FilterState {
   /** 已选中的标签（多选，需全部命中） */
   tags: string[];
   /** 语言筛选（多选 OR），[] = 全部；可含 LANG_NONE 哨兵（无语言仓库，4.3.2） */

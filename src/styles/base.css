@@ -1,4 +1,7 @@
-/* 桌面端基础布局（对应 MOBILE_BREAKPOINT = 768px，见 src/constants.ts） */
+/* 桌面端基础布局（对应 MOBILE_BREAKPOINT = 768px，见 src/constants.ts）。
+   ⚠️ 断点在这里是**写死的**（CSS 读不到 TS 常量）：JS 侧 isDesktop() 用的媒体查询文本
+   由 constants.MOBILE_BREAKPOINT 拼出，改一处必须同步改三处 ——
+   base.css / persistent.css 的 (min-width: 768px) 与 wide.css 的 (min-width: 1200px)。 */
 @media (min-width: 768px) {
 
   /* ===== 1. 页面容器加宽 ===== */
@@ -127,11 +130,9 @@
   html.gsm-hide-lists turbo-frame#user-profile-frame > div > div.blankslate {
     display: none !important;
   }
-  /* CSS-only 兜底：脚本执行前的一瞬，容忍 my-3 / tmp-my-3 两代类名 */
-  html.gsm-hide-lists turbo-frame#user-profile-frame > div > .my-3.d-flex.flex-justify-between.flex-items-center:has(h2.f3-light),
-  html.gsm-hide-lists turbo-frame#user-profile-frame > div > .tmp-my-3.d-flex.flex-justify-between.flex-items-center:has(h2.f3-light) {
-    display: none !important;
-  }
+  /* 4.9.1：原来这里还有一条「容忍 my-3 / tmp-my-3 两代类名」的 CSS-only 兜底，已删除 ——
+     它的代价是每次改版都要追加一份选择器副本，而收益只是"脚本执行前的一瞬"；
+     主路径（JS 打 .stars-lists-hidden 标记 + 上面三条规则）已覆盖真实场景。 */
 
   /* ===== 5. 网格容器 — 自适应列数 ===== */
   .stars-grid-container {

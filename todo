@@ -30,14 +30,14 @@
 -[x] ~~详情页star/unstar检测~~（作废：星状态真相只由整表同步判定，位置无关）
 -[x] 筛选中选择tag导致结果为0，会让tags直接变空
 -[x] 可选hide lists
--[] 优化手机页面的脚本失效、隐藏
--[] 清旧代码，删冗余兜底
+-[x] 优化手机页面的脚本失效、隐藏
+-[x] 清旧代码，删冗余兜底
 -[x] 多选筛选，筛选结果多页
 -[x] 修复胶囊样式歪斜
 -[] 分页按钮可跳页
 -[x] 优化token获取和更新、失效识别和弹出（4.9.0：401 → 配置面板；403 文案不再指向无解的 Starring 权限）
 -[x] sync 实时表格渲染
--[] 简化GM权限列表（在改为api调用后）
+-[x] 简化GM权限列表（在改为api调用后）
 -[] 同步操作与同步按钮完全联动
 -[] 当前登录账号与脚本token的相符性检测
 
@@ -46,3 +46,5 @@
 -[x] 真机验证网页写路径：离页只带 VF 头 ✅ 成立（双向）；422 回退前提 ❌ 被推翻（仓库页 0 表单，回退已删）；classic `?scopes=` 预填 ⚠️ 被 sudo 门挡住不可判定 —— 见 `docs/research-web-star-endpoints.md` 附录 A
 -[x] 4.9.0 写路径端到端真机复核（卡片星按钮 → 通知栈 → 「撤销」恢复，均以 API 复核）
 -[] 在 Tampermonkey 里装载打包产物做一次验收（本会话浏览器标签页为 hidden，CDP 派发的鼠标事件被 Chrome 丢弃，真受信任点击做不了）
+-[] 4.9.2 真机验收（只能在真 github.com + Tampermonkey 上做）：真·窄窗口观感、Turbo 导航路径、安装页授权清单是否恰 5 项、导出仍能触发 `GM_download`、TM 菜单项齐全
+-[] 审查轮未采纳的 4 条低价值项（见 `docs/plans/archive/2026/2026-10-02-优化手机端-*.md` §11）：R7 `hideNativeNode` 未保存被覆盖前的 inline `display`（仅理论风险）/ R9 `isDesktop()` 每次新建 `MediaQueryList`（可缓存单例）/ R10 `disposeNotificationStack` 的 `for...of` 等价 `items.clear()` / R11 收窄窗口时不关掉已打开的对话框

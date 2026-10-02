@@ -1,4 +1,4 @@
-/* 宽屏三栏布局（对应 WIDE_BREAKPOINT = 1200px，见 src/constants.ts） */
+/* 宽屏三栏布局（断点 1200px；JS 侧只认 768px 那一个断点，此值仅 CSS 使用） */
 @media (min-width: 1200px) {
   .Layout-sidebar {
     display: block !important;

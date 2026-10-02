@@ -14,7 +14,7 @@ export default defineConfig({
         namespace: 'https://github.com/YsLtr',
         version: pkg.version,
         description:
-          '将 GitHub Stars 页面的列表视图改为卡片网格视图，缩小左侧个人资料栏，最大化仓库展示空间（仅桌面端生效）',
+          '将 GitHub Stars 页面的列表视图改为卡片网格视图，缩小左侧个人资料栏，最大化仓库展示空间（仅桌面端生效；窄视口 <768px 下完全惰性，不注入样式、不改动页面）',
         author: 'YsLtr',
         // 单条覆盖全站：必须包含纯 profile 根路径 /<user>（旧的 */* 要求两段路径，
         // 匹配不到 /YsLtr → 从 profile 点 Stars 标签时脚本根本没在跑）；
@@ -22,7 +22,12 @@ export default defineConfig({
         match: ['https://github.com/*'],
         // 不靠 `$` 导入自动推断 grant(那会在 document-start 顶部捕获 GM_*),显式声明
         // （GM_registerMenuCommand: TM 菜单「设置 GitHub Token」入口）
-        grant: ['GM_getValue', 'GM_setValue', 'GM_registerMenuCommand', 'GM_unregisterMenuCommand', 'GM_openInTab', 'GM_deleteValue', 'GM_xmlhttpRequest', 'GM_download'],
+        // 4.9.1 精简为 5 项：TM 的能力徽标是按**声明的 @grant 数组**生成的（不做调用分析），
+        // 所以「声明了却用别的通道实现」的授权同样会被算进用户看到的能力清单里 —— 要真变短就得删掉：
+        // - GM_xmlhttpRequest  → 语言色改用原生 fetch（该域实测 CORS `*`，见 langColors.ts）
+        // - GM_unregisterMenuCommand → 菜单标签改走 GM_registerMenuCommand 的 { id } 原地更新（TM 5.0+）
+        // - GM_deleteValue     → 唯一用途是清理 4.0.10 的历史死键，该一次性清理已删除
+        grant: ['GM_getValue', 'GM_setValue', 'GM_registerMenuCommand', 'GM_openInTab', 'GM_download'],
         'run-at': 'document-start',
       },
       build: {

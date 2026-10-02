@@ -1,3 +1,4 @@
+import { GSM_TOPICS_SRC_ATTR } from './constants';
 import { getRepoItems, getStarsMainColumn, hideListsSection } from './dom';
 import { applyFilters } from './filters';
 import { interceptSearchForm } from './search';
@@ -59,6 +60,11 @@ export function transformStarsList(): boolean {
     while (colLg3.firstChild) {
       rightSidebar.appendChild(colLg3.firstChild);
     }
+    // 留下的「出处痕迹」（4.9.2 审查补）：teardown 只把内容还回**打了这个标记的那个** `.col-lg-3`。
+    // 单靠 `isConnected` 不够 —— Turbo 原地重渲染 `#user-starred-repos` 后会换出一个**新的**
+    // `.col-lg-3`（内含 GitHub 自己渲染好的 topics），此时把右栏里的陈旧内容倒进去就是重复的 topics。
+    // 新节点的标记是我们清掉的（或从未有过），所以 teardown 见到无标记就直接丢弃右栏内容 —— 那正是对的。
+    colLg3.setAttribute(GSM_TOPICS_SRC_ATTR, '1');
   }
 
   // 应用筛选（Tags 候选条由 applyFilters→refreshTagFilterBar 按需创建/收窄/撤条）

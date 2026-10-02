@@ -14,12 +14,12 @@
  * 获取失败 / 解析为空一律沿用旧缓存（fail-closed：坏数据不覆盖好缓存）。
  */
 import { STORAGE_KEYS } from './constants';
-import { gmFetchText, gmGet, gmSet } from './gm';
+import { gmGet, gmSet } from './gm';
 
 /** 数据源：linguist 官方色表（2026-09-23 curl 实证：200 + CORS `*` + ETag） */
 const SOURCE_URL = 'https://raw.githubusercontent.com/github/linguist/master/lib/linguist/languages.yml';
 /** 未命中语言的圆点兜底色（GitHub 语言点默认灰） */
-export const LANG_COLOR_FALLBACK = '#8b949e';
+const LANG_COLOR_FALLBACK = '#8b949e';
 /** 获取失败冷却：防止弱网/离线时每次渲染都打请求 */
 const FETCH_COOLDOWN_MS = 30_000;
 
@@ -67,12 +67,37 @@ function recolorDots(): void {
   });
 }
 
+/** 从数据源取整份 languages.yml 文本。
+ *
+ *  用页面内的原生 `fetch`，**不用 GM_xmlhttpRequest**（4.9.1）：
+ *  - 该域名实测返回 `Access-Control-Allow-Origin: *` + `Cross-Origin-Resource-Policy: cross-origin`，
+ *    是简单 GET、不需要预检，页面直接 fetch 就能拿到（2026-09-23 与 2026-10-02 两次实测）；
+ *  - github.com 的 CSP `connect-src` 已显式列出该主机；
+ *  - 少声明一个 @grant，用户看到的能力清单就少一条「full internet access」——
+ *    而 TM 的能力徽标是按 @grant 数组生成的（不做调用分析），不删授权就白搭。
+ *
+ *  超时用 AbortController **手搓**：`AbortSignal.timeout()` 需要 Safari 16+，
+ *  而本脚本的 cssTarget 含 safari15，同一轮兼容口径下不用它。 */
+const FETCH_TIMEOUT_MS = 20_000;
+
+async function fetchLangColorTable(): Promise<string> {
+  const ctrl = new AbortController();
+  const timer = window.setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const resp = await fetch(SOURCE_URL, { cache: 'no-cache', signal: ctrl.signal });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return await resp.text();
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 /** 从数据源获取语言色并写缓存（单飞；成功后回退集重检命中，失败沿用旧数据 + 冷却） */
-export function fetchLangColors(): Promise<void> {
+function fetchLangColors(): Promise<void> {
   if (inflight) return inflight;
   if (Date.now() < nextFetchAt) return Promise.resolve();
   nextFetchAt = Date.now() + FETCH_COOLDOWN_MS;
-  inflight = gmFetchText(SOURCE_URL)
+  inflight = fetchLangColorTable()
     .then((text) => {
       const parsed = parseLangColors(text);
       const size = Object.keys(parsed).length;

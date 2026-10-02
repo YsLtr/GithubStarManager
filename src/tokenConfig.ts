@@ -24,7 +24,7 @@
 import { STORAGE_KEYS } from './constants';
 import { gmGet, gmOpenInTab, gmSet } from './gm';
 
-export type TokenKind = 'classic' | 'fine-grained';
+type TokenKind = 'classic' | 'fine-grained';
 
 /**
  * 前缀 → 凭证类型。
@@ -51,7 +51,7 @@ export function getToken(): string {
 }
 
 /** fine-grained 官方 Template URL：starring=write 覆盖读列表+加星/去星（预填参数官方有文档） */
-export const TOKEN_TEMPLATE_URL =
+const TOKEN_TEMPLATE_URL =
   'https://github.com/settings/personal-access-tokens/new' +
   '?name=GithubStarManager' +
   '&description=GithubStarManager%20userscript%20-%20Account%20permission%3A%20Starring%20write' +
@@ -63,7 +63,7 @@ export const TOKEN_TEMPLATE_URL =
  * 真机验证过一次；失效时用户仍能在该页手动勾选 `repo`。
  * scope 取 `repo`：见文件头「为什么不取 public_repo」。
  */
-export const TOKEN_CLASSIC_URL =
+const TOKEN_CLASSIC_URL =
   'https://github.com/settings/tokens/new' +
   '?scopes=repo' +
   '&description=GithubStarManager';

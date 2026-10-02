@@ -60,14 +60,14 @@ export async function restoreOne(entry: { repoId: string; name: string }): Promi
   return { repoId, name, ok: true };
 }
 
-export interface BatchOptions {
+interface BatchOptions {
   /** 每条结束后的回调（含成功与失败），用于进度显示 */
   onProgress?: (done: number, total: number, result: RestoreOutcome) => void;
   /** 取消令牌：在执行每条之前检查；置 true 后不再启动后续条目 */
   token?: { cancelled: boolean };
 }
 
-export interface BatchResult {
+interface BatchResult {
   total: number;
   succeeded: number;
   failed: RestoreOutcome[];

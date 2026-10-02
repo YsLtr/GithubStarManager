@@ -78,7 +78,7 @@ export function buildCardFromCache(repoId: string, data: RepoData): HTMLDivEleme
 }
 
 /** 创建星星按钮（仅按钮本身，不含事件） */
-export function createStarButtonElement(isStarred: boolean): HTMLButtonElement {
+function createStarButtonElement(isStarred: boolean): HTMLButtonElement {
   const btn = document.createElement('button');
   btn.className = 'stars-star-btn' + (isStarred ? ' starred' : ' unstarred');
   btn.type = 'button';
@@ -88,7 +88,7 @@ export function createStarButtonElement(isStarred: boolean): HTMLButtonElement {
 }
 
 /** 只改按钮外观（不含任何存储/网络副作用）——乐观翻转与回滚都用它 */
-export function setStarButtonVisual(btn: HTMLButtonElement, isStarred: boolean): void {
+function setStarButtonVisual(btn: HTMLButtonElement, isStarred: boolean): void {
   btn.classList.toggle('starred', isStarred);
   btn.classList.toggle('unstarred', !isStarred);
   btn.innerHTML = isStarred ? STAR_FILL_SVG : STAR_EMPTY_SVG;

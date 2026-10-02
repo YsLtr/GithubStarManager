@@ -1,5 +1,6 @@
 import { STORAGE_KEYS } from './constants';
 import { gmGet } from './gm';
+import { isDesktop } from './utils';
 
 /** 当前页面仓库数字 ID 的 meta 标签（仅仓库详情页存在） */
 export function getRepoIdMeta(): HTMLMetaElement | null {
@@ -21,8 +22,7 @@ export function getRepoIdMeta(): HTMLMetaElement | null {
 export function getStarsMainColumn(): HTMLElement | null {
   const frame = document.getElementById('user-starred-repos');
   if (!frame) return null;
-  return frame.querySelector<HTMLElement>('.col-lg-9') ||
-    frame.querySelector<HTMLElement>('div[class*="col-lg-9"]');
+  return frame.querySelector<HTMLElement>('.col-lg-9');
 }
 
 /** 排掉我们自己生成的卡片和已隐藏的原始条目 */
@@ -69,10 +69,10 @@ export function getNativeFilterRow(): HTMLElement | null {
   const row = langBtn ? langBtn.closest('div.d-flex') : null;
   if (row instanceof HTMLElement) return row;
 
-  return document.querySelector<HTMLElement>(
-    '.Layout-main .d-flex.flex-column.flex-lg-row.flex-items-center.tmp-mt-5 .d-flex.flex-justify-end,' +
-    '.Layout-main .d-flex.flex-column.flex-lg-row.flex-items-center.mt-5 .d-flex.flex-justify-end'
-  );
+  // 4.9.1：原来这里还有一条「两代工具类名（mt-5 / tmp-mt-5）都写进选择器」的长链兜底，
+  // 已删除 —— 它从未有过命中记录，而 Language 按钮 ID 在改版中一直保留。改版时按
+  // 「结构特征 + 语义属性」重新锚定即可（本文件的通用原则）。
+  return null;
 }
 
 
@@ -80,9 +80,10 @@ export function getNativeFilterRow(): HTMLElement | null {
 export function getNativeFilterBar(container: ParentNode): HTMLElement | null {
   const bar = container.querySelector<HTMLElement>('.TableObject.border-bottom:not(.stars-tag-info-bar)');
   if (bar) return bar;
-  const reset = container.querySelector('.issues-reset-query');
-  const viaReset = reset ? reset.closest('.TableObject') : null;
-  return viaReset instanceof HTMLElement ? viaReset : null;
+  // 4.9.1：原来还有一条「.issues-reset-query → closest('.TableObject')」的回溯兜底，已删除
+  // （无命中记录）。注意 index.ts 里拦截原生 Clear filter 点击用的仍是 `.issues-reset-query`
+  // 类名本身 —— 那是 GitHub 原生节点上的类，与本函数无关。
+  return null;
 }
 
 /* ================================================================
@@ -90,7 +91,7 @@ export function getNativeFilterBar(container: ParentNode): HTMLElement | null {
  * ================================================================ */
 
 /** 打上这个类就会被隐藏（对应 styles/base.css 第 4 节） */
-export const LISTS_HIDDEN_CLASS = 'stars-lists-hidden';
+const LISTS_HIDDEN_CLASS = 'stars-lists-hidden';
 
 /**
  * Hide Lists 开关读取（4.5.0）：TM 菜单「隐藏 Lists 区块」的持久偏好。
@@ -103,7 +104,9 @@ export function isHideListsEnabled(): boolean {
 
 /** 把 Lists 隐藏 CSS 规则的门控类挂/摘到 <html> 上（document-start 与菜单切换共用） */
 export function applyHideListsGate(): void {
-  document.documentElement.classList.toggle('gsm-hide-lists', isHideListsEnabled());
+  // 窄视口不挂门控类（4.9.1）：规则本身在媒体查询里不生效，但类实打实留在 <html> 上，
+  // 属于"脚本在手机上留下的痕迹"。回到桌面视图时 ensureStarsSetup() 会重新调用本函数。
+  document.documentElement.classList.toggle('gsm-hide-lists', isDesktop() && isHideListsEnabled());
 }
 
 /** 清除此前 hideListsSection 打的隐藏标记（4.5.0 运行中从开切到关时让 Lists 立即显形） */
@@ -128,6 +131,12 @@ export function clearListsHiddenMarks(): void {
  * 关闭时改由 clearListsHiddenMarks() 清理残留标记（两个既有调用点无需感知开关）。
  */
 export function hideListsSection(): void {
+  // 窄视口（4.9.1）：一行都不该动 GitHub 的 DOM。这里必须显式清残留 —— 从桌面收窄过来时，
+  // 之前写下的**内联** display:none !important 不受媒体查询门控，会一直让 Lists 消失。
+  if (!isDesktop()) {
+    clearListsHiddenMarks();
+    return;
+  }
   if (!isHideListsEnabled()) {
     // 4.5.0 开关关闭：不打隐藏标记，并清掉此前残留的标记（运行中切换 / turbo 重渲染均幂等）
     clearListsHiddenMarks();

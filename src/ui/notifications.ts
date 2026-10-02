@@ -12,9 +12,10 @@
 // 用户 2026-10-02 判定过中间的 Primer `Toast` 版「与卡片格格不入」，**不要**回退到那一族。
 // 样式**全内联 + transition**（不用 keyframes、不依赖只有 Stars 视图才注入的样式表）：
 // 同步简报可能出现在任意 github.com 页面（如详情页手动同步）。
-export type NoticeKind = 'info' | 'warn' | 'success' | 'danger';
+import { createScope, type LifecycleScope } from '../lifecycle';
+type NoticeKind = 'info' | 'warn' | 'success' | 'danger';
 
-export interface NoticeOptions {
+interface NoticeOptions {
   kind?: NoticeKind;
   /** 动作按钮文案（给了才渲染按钮），如「恢复」 */
   actionLabel?: string;
@@ -32,7 +33,7 @@ export interface NoticeHandle {
 }
 
 /** 自动消失时长（ADR 0003） */
-export const NOTICE_LIFETIME_MS = 3000;
+const NOTICE_LIFETIME_MS = 3000;
 const TICK_MS = 100;
 /** 入场/离场时长与缓动：`.Toast--animateIn/Out` 的 0.18s + 官方 cubic-bezier */
 const SLIDE_MS = 180;
@@ -159,26 +160,42 @@ function syncStackTop(el: HTMLElement): void {
   const bottom = hdr ? hdr.getBoundingClientRect().bottom : 0;
   el.style.top = `${Math.max(bottom + HEADER_GAP_PX, HEADER_GAP_PX)}px`;
 }
-
 let positionRaf = 0;
-let positionTrackingReady = false;
+/** 通知栈的位置跟踪作用域（4.9.1）：受管监听，随容器一起释放（见 disposeNotificationStack） */
+let stackScope: LifecycleScope | null = null;
 
 /** 滚动 / 改窗口时重算锚点（rAF 合帧，避免每个 scroll 都强制布局）。只注册一次，随容器存亡自愈。 */
 function ensureStackPositionTracking(): void {
-  if (positionTrackingReady) return;
-  positionTrackingReady = true;
+  if (stackScope) return;
+  const scope = createScope('gsm-notify-position');
+  stackScope = scope;
   const resync = (): void => {
     if (positionRaf) return;
-    positionRaf = window.requestAnimationFrame(() => {
+    positionRaf = scope.raf(() => {
       positionRaf = 0;
       if (container && container.isConnected) syncStackTop(container);
     });
   };
   // capture：页面内层滚动容器也能捕获
-  window.addEventListener('scroll', resync, { capture: true, passive: true });
-  window.addEventListener('resize', resync, { passive: true });
+  scope.addListener(window, 'scroll', resync, { capture: true, passive: true });
+  scope.addListener(window, 'resize', resync, { passive: true });
   // 后台标签页里 scroll 事件与 rAF 都被冻结（实测：hidden 时 scrollEvents 恒为 0）→ 回前台补一次
-  document.addEventListener('visibilitychange', resync);
+  scope.addListener(document, 'visibilitychange', resync);
+}
+
+/**
+ * 释放整座通知栈（4.9.1 teardown）：丢弃全部条目、移除容器、解绑 3 个全局位置监听。
+ * 下次再弹通知时 ensureContainer 会重建（含重新注册监听）—— 所以回滚不是「永久关闭通知」。
+ */
+export function disposeNotificationStack(): void {
+  for (const item of [...items]) items.delete(item);
+  stopTicker();
+  hovering = false;
+  positionRaf = 0;
+  container?.remove();
+  container = null;
+  stackScope?.dispose();
+  stackScope = null;
 }
 
 function ensureContainer(): HTMLElement {

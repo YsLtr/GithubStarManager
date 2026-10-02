@@ -40,9 +40,6 @@ export function saveRepoCache(all: RepoCache): void {
 }
 
 /** 读取单个仓库缓存，未命中返回 null */
-export function getRepoData(repoId: string): RepoData | null {
-  return loadRepoCache()[repoId] || null;
-}
 
 /** 合并写入单个仓库缓存，并刷新 ts */
 export function saveRepoData(repoId: string, data: Partial<RepoData>): void {

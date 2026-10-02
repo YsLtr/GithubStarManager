@@ -35,15 +35,6 @@ export function getTags(repoId: string): string[] {
   return loadAllTags()[repoId] || [];
 }
 
-/** 当前用户所有标签名，去重并按本地化规则排序 */
-export function getAllUniqueTags(): string[] {
-  const all = loadAllTags();
-  const set = new Set<string>();
-  for (const repoId in all) {
-    all[repoId].forEach((t) => set.add(t));
-  }
-  return Array.from(set).sort((a, b) => a.localeCompare(b));
-}
 
 /** 把旧版无用户隔离的标签迁移到当前用户的键下（仅当新键为空时） */
 export function migrateTagsIfNeeded(): void {

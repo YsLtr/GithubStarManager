@@ -3,7 +3,8 @@
 // 起因(2026-09-22 真机复现):@run-at document-start 时,vite-plugin-monkey 对
 // `$` 导入的 GM_* 会在 bundle 顶部做一次性 typeof 捕获,而部分 Tampermonkey
 // 环境此时 GM_* 尚未就绪,捕获结果被永久固化为 undefined,DOMContentLoaded
-// 后调用即 "TypeError: GM_addStyle is not a function"。
+// 后调用即 "TypeError: GM_addStyle is not a function"（GM_addStyle 后来整条撤掉，
+// 样式改由 gmAddStyle 用原生 DOM 插入 —— 它不需要任何 @grant，见本文件末尾）。
 //
 // 这里改为**调用时**判定:GM 可用就用 GM(与历史数据同一存储位置),不可用就
 // 退到 localStorage 并双写;GM 恢复可用时,读取发现 GM 为默认值而 localStorage
@@ -14,19 +15,8 @@
 declare const GM_getValue: (<T>(key: string, defaultValue: T) => T) | undefined;
 declare const GM_setValue: ((key: string, value: unknown) => void) | undefined;
 declare const GM_registerMenuCommand: ((name: string, fn: () => void, options?: { id?: unknown }) => unknown) | undefined;
-/** TM 5.x 返回菜单命令 id（number|string），传入可移除后重注册以刷新菜单标签（4.5.0 Hide Lists 开关用） */
-declare const GM_unregisterMenuCommand: ((id: unknown) => void) | undefined;
 declare const GM_openInTab: ((url: string, options?: { active?: boolean }) => unknown) | undefined;
 
-declare const GM_deleteValue: ((key: string) => void) | undefined;
-declare const GM_xmlHttpRequest: ((details: {
-  method?: string;
-  url: string;
-  timeout?: number;
-  onload?: (res: { status: number; responseText: string }) => void;
-  onerror?: () => void;
-  ontimeout?: () => void;
-}) => unknown) | undefined;
 /** GM_download（调用时判定）：TM 侧要求下载功能开启且文件扩展名在白名单内，
  *  失败原因经 onerror 的 download.error 回传（not_enabled/not_whitelisted/not_permitted/not_succeeded）。
  *  文档：https://www.tampermonkey.net/documentation.php?q=api:GM_download */
@@ -113,25 +103,6 @@ export function gmSet(key: string, value: unknown): void {
   lsWrite(key, value);
 }
 
-/** 删除键（调用时判定；GM 与 localStorage 镜像一起清）——4.0.10 历史死键一次性清理用 */
-export function gmRemove(key: string): void {
-  if (typeof GM_deleteValue === 'function') {
-    try {
-      GM_deleteValue(key);
-    } catch (e) {
-      console.error('[github-star-manager] GM_deleteValue 失败', e);
-    }
-  }
-  try {
-    localStorage.removeItem(LS_PREFIX + key);
-  } catch {
-    /* 忽略 */
-  }
-}
-
-
-
-/** 原生 DOM 插入样式(不依赖 GM_addStyle;document.head 未就绪时挂到 html 上) */
 /** 原生 DOM 插入样式(不依赖 GM_addStyle;document.head 未就绪时挂到 html 上)。返回节点供调用方持有句柄。 */
 export function gmAddStyle(css: string): HTMLStyleElement {
   const style = document.createElement('style');
@@ -173,14 +144,14 @@ function warnMissingGmApi(missing: string): void {
   console.warn(
     `[github-star-manager] GM API 不可用（首个缺失的调用：${missing}）：${missingGmApiReason()}\n` +
       '· 后果：TM 菜单项消失；PAT 读不到（安全设计上 PAT 不写 localStorage 镜像）；' +
-      'GM_openInTab / GM_xmlhttpRequest / GM_download 退化为本地回退或失效。\n' +
+      'GM_openInTab / GM_download 退化为本地回退或失效。\n' +
       '· 页面渲染不受影响：缓存等非敏感数据仍经 localStorage 镜像可用。'
   );
 }
 
 /** 注册/更新 Tampermonkey 菜单命令（调用时判定；dev/非 TM 环境静默降级为日志）。
- *  options.id（TM 4.20+）传入既有 id = 原地更新该菜单项的标签（刷新开关态用，避免 unregister+register 的
-  *  历史缺陷面）；不传 = 新建，返回值 = 菜单项 id。 */
+ *  options.id（TM **5.0**+）传入既有 id = 原地更新该菜单项的标签（刷新开关态用，避免 unregister+register 的
+ *  历史缺陷面；同一 id 找不到时 TM 会**新建**一条而非报错）；不传 = 新建，返回值 = 菜单项 id。 */
 export function gmRegisterMenuCommand(name: string, fn: () => void, options?: { id?: unknown }): unknown {
   if (typeof GM_registerMenuCommand === 'function') {
     try {
@@ -195,18 +166,6 @@ export function gmRegisterMenuCommand(name: string, fn: () => void, options?: { 
   return undefined;
 }
 
-/** 移除菜单命令（4.5.0：与 gmRegisterMenuCommand 返回的 id 配对；仅作 options.id 更新不可用时的回退） */
-export function gmUnregisterMenuCommand(id: unknown): void {
-  if (typeof GM_unregisterMenuCommand !== 'function') {
-    warnMissingGmApi('GM_unregisterMenuCommand');
-    return;
-  }
-  try {
-    GM_unregisterMenuCommand(id);
-  } catch (e) {
-    console.error('[github-star-manager] GM_unregisterMenuCommand 失败', e);
-  }
-}
 
 /** 打开新标签页（调用时判定）：TM 菜单回调没有用户激活，window.open 会被弹窗拦截器
  *  静默吞掉（无报错无跳转）；GM_openInTab 不走弹窗拦截。非 TM 环境回退 window.open。 */
@@ -220,33 +179,6 @@ export function gmOpenInTab(url: string): void {
     }
   }
   window.open(url, '_blank', 'noopener');
-}
-
-/** 跨域文本获取（调用时判定）：GM_xmlHttpRequest 不受页面 CSP/CORS 限制；非 TM 环境回退 fetch */
-export function gmFetchText(url: string): Promise<string> {
-  if (typeof GM_xmlHttpRequest === 'function') {
-    return new Promise((resolve, reject) => {
-      try {
-        GM_xmlHttpRequest({
-          method: 'GET',
-          url,
-          timeout: 20000,
-          onload: (res) => {
-            if (res.status >= 200 && res.status < 300) resolve(res.responseText);
-            else reject(new Error(`HTTP ${res.status}`));
-          },
-          onerror: () => reject(new Error('网络错误')),
-          ontimeout: () => reject(new Error('超时')),
-        });
-      } catch (e) {
-        reject(e);
-      }
-    });
-  }
-  return fetch(url, { cache: 'no-cache' }).then((r) => {
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return r.text();
-  });
 }
 
 /** 触发文件下载（调用时判定）：**只用 GM_download，不做原生兜底**。

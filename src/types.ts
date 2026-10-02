@@ -26,7 +26,7 @@ export interface RepoData {
 }
 
 /** 待删除区条目：unstar 宽限期内保留的数据 + 标签/备注备份 */
-export interface PendingDeleteEntry extends RepoData {
+interface PendingDeleteEntry extends RepoData {
   unstarredAt?: number;
   _tags?: string[];
   _note?: string;
@@ -57,8 +57,6 @@ export type TypeFilter = '' | 'public' | 'private' | 'source' | 'fork' | 'mirror
 
 /** P4 全量同步元数据（4.0.0 API 主模式：ETag 条件快筛 + TTL 兜底 + 本地分页总数） */
 export interface FullSyncMeta {
-  /** 整表首页（per_page=100&page=1）响应的 ETag（强校验规范形 "hex"，4.0.5 起剥 W/ 前缀） */
-  etag?: string;
   /** 逐页 ETag 基线（4.0.4 快筛）：强校验规范形（4.0.5 剥 W/），全部 304 才算无变化；含空值则下次直接整表重建 */
   etags?: string[];
   /** 尾页（内容页数 +1）的越界空页 ETag（4.0.9 条件探尾：304=仍空免额度；200 空=刷新；尾页转正/整表兜底后清空） */

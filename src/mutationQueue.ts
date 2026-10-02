@@ -18,7 +18,7 @@
 export const MUTATION_GAP_MS = 1000;
 
 /** 队列条目的执行结果由调用方定义（本模块只透传） */
-export interface QueuedMutation<T> {
+interface QueuedMutation<T> {
   /** 展示用标识（如 `owner/repo`），用于「同一仓库最多一条」判断与进度显示 */
   label: string;
   run: () => Promise<T>;
@@ -92,9 +92,6 @@ export function isMutationQueued(label: string): boolean {
 }
 
 /** 未执行的排队条目数（不含正在执行的那条） */
-export function queuedMutationCount(): number {
-  return queue.filter((it) => !it.started && !it.cancelled).length;
-}
 
 async function drain(): Promise<void> {
   draining = true;

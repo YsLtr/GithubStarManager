@@ -43,7 +43,7 @@ export interface ImportReport {
 }
 
 /** 校验失败原因（UI 直接展示；文案面向用户，不含内部术语） */
-export type ValidateResult = { ok: true; pkg: ExportPackage } | { ok: false; reason: string };
+type ValidateResult = { ok: true; pkg: ExportPackage } | { ok: false; reason: string };
 
 /** 判空统一判据：**trim 后为空**（导出清洗、导入合并、saveNote 三处一致） */
 function isEmptyText(s: string): boolean {

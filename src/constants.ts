@@ -2,8 +2,6 @@ import type { SortKey, TypeFilter } from './types';
 
 /** 视口宽度 >= 此值时启用桌面端布局（与 styles/base.css 中的 @media 断点保持一致） */
 export const MOBILE_BREAKPOINT = 768;
-/** 视口宽度 >= 此值时启用三栏布局（与 styles/wide.css 中的 @media 断点保持一致） */
-export const WIDE_BREAKPOINT = 1200;
 /** unstar 后数据的宽限期：24 小时 */
 export const GRACE_PERIOD = 24 * 60 * 60 * 1000;
 
@@ -43,7 +41,7 @@ export const STORAGE_KEYS = {
   notesPrefix: 'stars_notes_',
   /** GitHub PAT（classic ghp_ / fine-grained github_pat_），外部 unstar 核对用 */
   githubPat: 'github_pat',
-  /** P4 全量同步元数据：{etag, lastFullSyncAt, count}（ETag 快筛 + API 模式判定 + 本地分页总数） */
+  /** P4 全量同步元数据：{etags, tailEtag, lastFullSyncAt, count, dataRev}（ETag 快筛 + API 模式判定 + 本地分页总数） */
   fullSyncMeta: 'stars_full_sync_meta',
   /** 语言色全局映射缓存（4.3.0：运行时从 linguist languages.yml 获取并缓存，不按仓库存色、不硬编码） */
   langColors: 'stars_lang_colors',
@@ -51,8 +49,14 @@ export const STORAGE_KEYS = {
   hideLists: 'stars_hide_lists',
 } as const;
 
-/** 4.0.10 起只清不写的历史键（3.0.9–4.0.9 的到货快照/裁决/位移管线已删）：init 一次性删除 GM + localStorage 镜像 */
-export const LEGACY_STORAGE_KEYS = ['stars_page_snapshots', 'stars_star_verdicts', 'stars_shift_pending'] as const;
+/** 脚本给「被自己改过 display 的原生节点」打的标记（4.9.1）。teardown 只按这个标记回滚，
+ *  绝不靠启发式猜测哪个 inline display 是自己写的（见 viewTeardown.ts 的铁律）。 */
+export const GSM_HIDDEN_ATTR = 'data-gsm-hidden';
+
+/** 脚本把 Starred topics 从哪个 `.col-lg-3` 搬走的（4.9.2 审查补）：teardown 只还回打了此标记的那个节点。
+ *  单靠 `isConnected` 不够 —— Turbo 原位重渲染 `#user-starred-repos` 会换出**新的** `.col-lg-3`，
+ *  把右栏里的陈旧内容倒进去就是重复的 topics（见 transform.ts 的搬运点与 viewTeardown.ts 的回填点）。 */
+export const GSM_TOPICS_SRC_ATTR = 'data-gsm-topics-src';
 
 /* ---------------- 导出包（4.7.0 导入导出） ---------------- */
 

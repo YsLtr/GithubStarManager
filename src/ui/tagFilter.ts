@@ -5,7 +5,7 @@ import { applyFilters, computeTagCandidates, hasAnyTags } from '../filters';
 import { getTags, saveTags } from '../storage/tags';
 
 /** 同步 Tags 筛选按钮的文案与高亮态 */
-export function updateTagFilterButton(): void {
+function updateTagFilterButton(): void {
   const btn = document.querySelector('.stars-tag-filter .Button');
   if (!btn) return;
   const label = btn.querySelector('.Button-label');
@@ -93,7 +93,7 @@ function renderTagFilterBar(): void {
  * 菜单列表级重绘（R3）：候选随约束动态收窄 + 勾选态同步。
  * 勾选是多选场景，必须**原位更新**（整体重建会把开着的 popover 拆掉）。
  */
-export function renderTagFilterList(menuList: HTMLUListElement): void {
+function renderTagFilterList(menuList: HTMLUListElement): void {
   menuList.innerHTML = '';
 
   const candidates = computeTagCandidates();

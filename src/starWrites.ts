@@ -24,9 +24,9 @@
 
 import { isClassicCredential } from './tokenConfig';
 
-export type StarWriteVia = 'rest' | 'web';
+type StarWriteVia = 'rest' | 'web';
 
-export type StarWriteFailure =
+type StarWriteFailure =
   | 'no-credential' // 既无 classic/OAuth token，也无登录会话
   | 'unauthorized' // 401：token 失效
   | 'permission-denied' // 403 非限速：权限不足
@@ -37,12 +37,12 @@ export type StarWriteFailure =
   | 'network' // 网络层错误
   | 'unknown';
 
-export interface StarWriteOk {
+interface StarWriteOk {
   ok: true;
   via: StarWriteVia;
 }
 
-export interface StarWriteErr {
+interface StarWriteErr {
   ok: false;
   reason: StarWriteFailure;
   /** HTTP 状态码（网络错误时为 0） */
@@ -90,7 +90,7 @@ export function writeFailureMessage(reason: StarWriteFailure, status: number): s
  * `body.logged-in` 且 `meta[name="user-login"]` 的 content 非空串。
  * `form[action$="/unstar"]` 不能当登录判据（它只说明该仓库已 star）。
  */
-export function hasWebSession(): boolean {
+function hasWebSession(): boolean {
   const body = document.body;
   if (!body || !body.classList.contains('logged-in')) return false;
   const meta = document.querySelector('meta[name="user-login"]');

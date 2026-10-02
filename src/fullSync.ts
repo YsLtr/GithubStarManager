@@ -38,6 +38,8 @@ import { loadPendingDelete, markRepoStarred } from './storage/pendingDelete';
 import { pushNotice } from './ui/notifications';
 import { loadRepoCache, saveRepoCache, saveRepoData } from './storage/repoCache';
 import type { FullSyncMeta, RepoCache, RepoData } from './types';
+import { currentGeneration, ifCurrent } from './lifecycle';
+import { isDesktop } from './utils';
 
 interface RemoteStar {
   repoId: string;
@@ -46,7 +48,7 @@ interface RemoteStar {
   meta: Partial<RepoData>;
 }
 
-export interface SyncSummary {
+interface SyncSummary {
   pages: number;
   total: number;
   added: number;
@@ -242,7 +244,6 @@ interface ScanSynced {
   kind: 'synced';
   items: RemoteStar[];
   pages: number;
-  etag: string | undefined;
   etags: string[];
   /** true=304 页用了本地切片（local-only 嫌疑须逐条 API 核对后才判外部 unstar）；false=全正文权威 */
   hybrid: boolean;
@@ -307,7 +308,7 @@ async function checkStarredGone(tok: string, path: string): Promise<boolean | nu
  * 无条件整表兜底（无基线 / 超 48h TTL / 切片阀门失守共用）：第 1 页先行拿 Link 头预知总页 →
  * 页 2..N 波次并发 → 按页序组装校验；任何不完整信号都抛错（红线：不落地半张表）。
  */
-async function pullAllUnconditional(tok: string): Promise<{ items: RemoteStar[]; pages: number; etag: string | undefined; etags: string[] }> {
+async function pullAllUnconditional(tok: string): Promise<{ items: RemoteStar[]; pages: number; etags: string[] }> {
   const ctrl = new AbortController();
   const first = await fetchStarredPage(tok, 1, ctrl.signal);
   if (first.notModified) throw new Error('无条件拉取收到 304（不应发生）');
@@ -345,7 +346,7 @@ async function pullAllUnconditional(tok: string): Promise<{ items: RemoteStar[];
   if (rawSeen > 0 && items.length === 0) {
     throw new Error(`拉到 ${rawSeen} 条但解析为 0（响应形态不符），整体放弃`);
   }
-  return { items, pages: totalPages, etag: etags[0] || undefined, etags };
+  return { items, pages: totalPages, etags };
 }
 
 /** 无条件兜底结果打包（hybrid=false：全正文权威，local-only 不需核对） */
@@ -355,7 +356,6 @@ async function fullPullOutcome(tok: string): Promise<ScanOutcome> {
     kind: 'synced',
     items: full.items,
     pages: full.pages,
-    etag: full.etag,
     etags: full.etags,
     hybrid: false,
     freshIds: new Set(full.items.map((it) => it.repoId)),
@@ -503,7 +503,6 @@ async function scanStarred(tok: string, meta: FullSyncMeta): Promise<ScanOutcome
     kind: 'synced',
     items,
     pages: contentPages,
-    etag: etags[0] || undefined,
     etags,
     hybrid: slicePages > 0,
     freshIds,
@@ -718,8 +717,8 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
     });
     // 有增删差异或可见元数据更新 → **立即重绘**网格（不问「是否刷新」）
     rerenderAfterSync(added + restored + unstarred + backfilled + refreshed);
-    // 写元数据：逐页 ETag 基线（304 页沿用旧校验值、正文页用响应值，剥 W/ 规范形）+ 首页 etag（兼容旧字段）+ lastFullSyncAt + 总数
-    const outMeta: FullSyncMeta = { etag: scan.etag, etags: scan.etags, lastFullSyncAt: Date.now(), count: scan.items.length, dataRev: DATA_REV };
+    // 写元数据：逐页 ETag 基线（304 页沿用旧校验值、正文页用响应值，剥 W/ 规范形）+ lastFullSyncAt + 总数
+    const outMeta: FullSyncMeta = { etags: scan.etags, lastFullSyncAt: Date.now(), count: scan.items.length, dataRev: DATA_REV };
     if (scan.nextTailEtag) outMeta.tailEtag = scan.nextTailEtag; // 尾页越界 etag（缺省=清空：尾页转正或整表兜底后新越界页待首探）
     gmSet(STORAGE_KEYS.fullSyncMeta, outMeta);
     const noEtag = scan.etags.filter((e) => !e).length;
@@ -786,8 +785,19 @@ export function hasApiData(): boolean {
 
 /** 进页自动同步（transform 成功后触发）：延迟 2s 让首屏渲染先完成 */
 export function scheduleProbeSync(): void {
+  // 窄视口（4.9.1）：不发起进页自动同步。手机上既没有网格呈现同步结果，用户也看不到
+  // 任何提示（配置横幅在窄视口同样不显示），只会白耗一次网络与额度。手动入口不受影响。
+  if (!isDesktop()) return;
+  // 世代 + 视口双守卫（4.9.2 审查修正）：这 2s 内若发生回滚（同一世代被推进）或新一轮转换，
+  // 本次自动同步必须作废 —— 否则页面已退回 GitHub 原生视图，脚本仍在拉整表 API：
+  // 白耗 60/h 额度，且一旦检出变化，emitSyncReport 会在窄视口上把通知栈重建出来（pushNotice
+  // 懒重建，disposeNotificationStack 挡不住），与「窄视口不弹任何 UI」正面冲突。
+  const gen = currentGeneration();
   window.setTimeout(() => {
-    void probeAndSync();
+    ifCurrent(gen, () => {
+      if (!isDesktop()) return;
+      void probeAndSync();
+    });
   }, 2000);
 }
 

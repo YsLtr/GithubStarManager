@@ -88,18 +88,21 @@ gm.api.js（每次现拉）  monkeyWindow = document["__monkeyWindow-<K>"]  // �
 ```
 src/
   index.ts            入口：document-start 引导、页面类型分流、样式生命周期、Turbo 导航监听、配置横幅
-  constants.ts        断点、宽限期、NATIVE_PAGE_SIZE、存储键（STORAGE_KEYS / LEGACY_STORAGE_KEYS）、SVG、SORT/TYPE 菜单项
+  constants.ts        断点、宽限期、NATIVE_PAGE_SIZE、存储键（STORAGE_KEYS / GSM_HIDDEN_ATTR）、SVG、SORT/TYPE 菜单项
   types.ts            存储模型与筛选类型（RepoData / PendingDeleteEntry / TagMap / NoteMap / FullSyncMeta / SortKey / TypeFilter ...）
   state.ts            筛选状态对象 filterState + hasActiveFilter() 派生判断（唯一可变全局状态）
-  utils.ts            escapeHtml / isDesktop / formatRelative
+  utils.ts            escapeHtml / isDesktop（matchMedia 单一真相）/ subscribeBreakpointChange / formatRelative
   gm.ts               GM API 兼容层（调用时判定；localStorage 兜底与迁移；PAT 不写镜像）
   boot.ts             document-start 防闪烁隐藏生命周期（FOUC）
   dom.ts              DOM 查询工具 + Hide Lists 开关引擎（isHideListsEnabled / applyHideListsGate / hideListsSection / clearListsHiddenMarks）
   transform.ts        列表 → 卡片网格转换（藏原生列表与分页器、挂顶部分页器与 Sync 按钮、Starred Topics 迁右栏）
+  lifecycle.ts        生命周期层（4.9.1；4.9.2 审查删掉零消费者的 interval / clearTimer）：受管监听/定时器作用域（createScope）+ 世代号（beginGeneration / guardedTimeout / ifCurrent）
+                      —— 回滚后旧回调在动手前自我作废，解决「teardown 被自己排的队撤销」
+  viewTeardown.ts     窄视口回滚 / 离开 Stars 收尾（4.9.1；4.9.2 审查加第 10 项「解绑原生搜索监听」并把 Lists 隐藏改为仅在窄视口清）：按痕迹逐项撤销脚本对 GitHub DOM 的写入（幂等；见 §6「窄视口完全惰性」）
   filters.ts          筛选引擎：queryRepos 统一查询管线、4 排序键×双向、facet 候选收窄、renderBrowsePage 本地分页、applyFilters、exitCustomMode、initFiltersFromUrl
   search.ts           搜索表单拦截（纯本地）
   pagination.ts       本地分页拦截（只拦自造 data-gsm-page，零网络零 Turbo）
-  langColors.ts       语言色引擎：linguist languages.yml 运行时拉取 + 行扫描提取 + GM 缓存 + 未命中补拉/回退重检 + 色点原地重涂
+  langColors.ts       语言色引擎：linguist languages.yml 运行时拉取（**原生 fetch**，4.9.1 起不用 GM_xmlhttpRequest）+ 行扫描提取 + GM 缓存 + 未命中补拉/回退重检 + 色点原地重涂
   starCheck.ts        PAT 读写/前缀校验/菜单、外部 unstar 宽限管线（applyExternalUnstar）、卡片星标态刷新（syncCardAfterStarChange）
   tokenConfig.ts      凭据单一来源：getToken / detectTokenKind（ghp_·gho_=classic，github_pat_=fine-grained）/ isClassicCredential、
                       **两条**预填深链（classic `scopes=repo` + fine-grained `starring=write`）与差异文案、剪贴板粘贴、401/403(非限速) 上报
@@ -244,7 +247,6 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
 
 ```jsonc
 {
-  "etag": "\"...\"",        // 首页响应 ETag（规范形，已剥 W/ 前缀）
   "etags": ["...", "..."],  // 逐页 ETag 基线（全部 304 才算无变化；含空值则下次整表重建）
   "tailEtag": "\"...\"",    // 越界空页 ETag（条件探尾：304=仍空免额度）
   "lastFullSyncAt": 1780000000000,
@@ -261,11 +263,27 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
 
 布尔，默认 `true`（隐藏 Lists 区块）。TM 菜单「🙈 隐藏 Lists 区块」切换，见 §6。
 
-### `LEGACY_STORAGE_KEYS`（只清不写）
-
-`['stars_page_snapshots', 'stars_star_verdicts', 'stars_shift_pending']` —— 历史到货快照 / 裁决缓存 / 位移管线（均已删除）。`init()` 一次性 `gmRemove`（GM + localStorage 镜像同删，幂等）。
-
+> 4.9.1 删掉了只写不读的单数 `etag` 字段：基线一律用逐页 `etags`（`scanStarred` 的 304 判定只认它），
+> 单数那份是 4.0.4 时代留下的兼容字段，没有任何读取点。
+>
+> `LEGACY_STORAGE_KEYS`（`stars_page_snapshots` / `stars_star_verdicts` / `stars_shift_pending`）
+> 与它的 `init()` 一次性 `gmRemove` 清理同样在 4.9.1 删除（含 `GM_deleteValue` 授权）——
+> 该清理属于 4.0.10 的存量迁移，已跨 9 个版本，残留死键无任何功能影响。
 ## 6. 核心机制
+
+### 窄视口完全惰性（4.9.1 引入 / 4.9.2 审查补全）
+
+脚本只对桌面端有意义，但「窄视口」不等于「脚本不生效」—— 那正是 4.9.1 修的 bug：
+
+- **CSS 会自动失效，JS 不会。** 全部布局样式（`base.css` / `wide.css` / `persistent.css`）都包在 `@media` 里，缩到手机宽度时自动退出；但脚本写进页面的东西 —— 自造节点、class、**内联样式**、被搬走的原生节点 —— 一样都不会自己回退。旧版本因此留下一地半吊子 DOM（网格容器、顶部翻页器、原生列表项的 `.stars-original-hidden`、被搬进右栏的 Starred topics、被内联 `display:none !important` 永久藏起来的 Lists 区块）。**内联样式尤其致命：它不受任何媒体查询门控。**
+- **入口门先于一切注入。** `transformAndReveal()` 的第一件事就是 `isDesktop()` 判定，**早于** `ensureStarsSetup()` / `ensureStyles()` / `showSetupBanner()`；其余的门分散在 `applyHideListsGate`、`hideListsSection`（并用 `clearListsHiddenMarks()` 清残留）、`applyFilters`（兜底：拦住回滚前排队的异步回调）、`scheduleProbeSync`（**排队时与 2s 回调内各判一次**，见下条）、`turbo:load` / `turbo:before-visit` / `turbo:before-render` / `turbo:before-frame-render`、原生 Clear filter 点击拦截、`search.ts` 的两个拦截回调。**门的具体数量以 `grep -rn 'isDesktop()' src/` 为准**，别在文档里维护计数（曾写「6 处」，实测 12 处）。
+- **监听也是「JS 写入」，且它连 teardown 都躲得过。** 样式表靠 `@media` 自动失效、节点靠 teardown 删除，但**事件监听两个都不会**。因此挂在 GitHub 原生 form/input 上的监听必须由 `lifecycle` 作用域持有（`search.ts` 的 `searchScope` + `disposeSearchInterception()`，teardown 第 10 项），**不要**用 `data-*` 标记串防重复挂载 —— 标记串防得住重复，却摘不掉已挂的监听（真机上表现为：缩窄后原生搜索框按回车什么都不发生），而且标记本身就是回滚后不该留的痕迹。
+- **世代号 + 回调内复判视口，缺一不可。** 只在「排队的时刻」判视口不够：`scheduleProbeSync()` 的 2s 定时器必须在触发时用 `ifCurrent(gen)` 作废（世代被回滚推进）**并**再判一次 `isDesktop()`，否则「桌面打开 → 2s 内缩窄」会让页面已退回原生视图却仍在拉整表 API（白耗 60/h 额度），且一旦检出变化会把通知栈在窄视口重建出来。
+- **回滚边界：视图级 vs 页面级。「隐藏 Lists」是页面级偏好**（`applyHideListsGate()` 在 document-start 就对任意匹配页挂上，门控 CSS 指向 `#profile-lists-container` / `blankslate` 等非 Stars 专属节点），所以 `clearListsHiddenMarks()` 与摘 `gsm-hide-lists` **只在 `!isDesktop()` 时执行**；离开 Stars 去别的 profile 标签必须原样保留，否则切到 Repositories 后 Lists 会与开关状态相反地冒出来。反向理由同样成立：窄视口必须清干净，那个 `display:none` 是内联的。
+- **回滚 = `viewTeardown.ts`。** 幂等，由 `exitStarsView()` 调用（离开 Stars / 转换失败回退 / 跨断点收窄 三条路径共用）。**按痕迹回滚**：只认脚本自有 class（`gsm-*` / `stars-*`）与 `data-gsm-hidden` 标记，绝不猜「这个 inline display 大概是我们设的」—— 裸的内联样式无法与 GitHub 自己的样式区分。因此**凡是把原生节点设成 `display:none`，都必须同时打 `GSM_HIDDEN_ATTR` 标记**（现成做法：`filters.ts` 的 `hideNativeNode` / `showNativeNode`）。
+- **跨断点双向切换。** `subscribeBreakpointChange()`（`matchMedia` + 150ms debounce）→ 变窄走完整 `teardownStarsView()`，变宽重新 `transformAndReveal(false)`。断点判定**只认 `matchMedia`**（理由见 §9）。
+- **世代号解决「回滚被自己排的队撤销」。** 转换重试链（150ms × 12）、`turbo:*` 的 100/200ms 延迟、进页同步的 2s —— 旧代码这些全是无句柄定时器，回滚后照样执行，把刚拆掉的样式表重新装回去。`lifecycle.ts` 的 `createScope()` 登记 + `beginGeneration()` / `guardedTimeout()` 让过期回调自我作废（同 `mutationQueue` 的 handle 身份校验思路）。
+- **已知取舍**：窄视口下**不显示配置横幅**（它的样式在 `base.css` 的媒体查询之外，手机上会以完整样式出现，是最刺眼的一件残留）；需要配置 Token 的窄视口用户走 TM 菜单「⭐ 设置 GitHub Token」。窄视口也**不发进页自动同步**（TM 菜单的手动入口保留）。
 
 ### 待删除区宽限期
 
@@ -492,7 +510,8 @@ filterState.totalPages    // ceil(count / NATIVE_PAGE_SIZE)
 
 - 样式写在 `src/styles/*.css`，由 `index.ts` 以 `?inline` 导入，再在 **Stars 页面** 通过 `gmAddStyle()` 注入。
 - 布局样式（base + wide）只在 Stars 视图存在：离开时整表移除，原生布局立即恢复；`persistent.css` 是常驻小表（注入后不移除）。注入顺序恒为「常驻表 → 主表」。
-- 断点常量（`MOBILE_BREAKPOINT = 768`、`WIDE_BREAKPOINT = 1200`）在 `constants.ts`，**CSS 中的 `@media` 数字是手写同步的**，改断点要同时改两处。
+- 断点常量只有 `MOBILE_BREAKPOINT = 768`（`WIDE_BREAKPOINT` 4.9.1 删除——零消费者，`wide.css` 的 1200 是手写的）。**CSS 中的 `@media` 数字是手写同步的**，改断点要同时改 `base.css` / `persistent.css` / `wide.css` 三处。
+- **JS 侧断点判定只用 `window.matchMedia('(min-width: 768px)').matches`**（`utils.isDesktop()`），**不要**用 `window.innerWidth`：两者在 Safari/WebKit 上口径不同（媒体查询宽度 = `clientWidth`，不含经典滚动条，WebKit bug 52653 至今 OPEN），会出现「JS 认为桌面、CSS 认为手机」的错位窗口 —— 那会让脚本在手机宽度上留下一半桌面布局。跨断点时 `subscribeBreakpointChange()`（150ms debounce）负责双向切换，见 §6「窄视口完全惰性」。
 - 样式必须只在 Stars 页注入：规则会改写 GitHub 的 `.Layout`（侧边栏压到 180px），在仓库详情页注入会误伤布局。
 - `vite.config.ts` 显式设置了 `build.cssTarget`：esbuild 默认会按现代 baseline 把 `@media (min-width: 768px)` 压成区间语法 `(width>=768px)`（Safari 16.4+ 才支持），降低 css target 可保留 `min-width`。
 - **隐藏 GitHub 原生区块的两个坑**：① GitHub 工具类带 `!important`（如 `.d-flex { display: flex !important }`），JS 里 `el.style.display = 'none'` 会被压过，必须 `el.style.setProperty('display', 'none', 'important')`；② 间距工具类加了 `tmp-` 前缀（`my-3` → `tmp-my-3`），纯类名选择器会静默失配。现成做法见 `dom.ts` 的 `hideListsSection()`：用语义特征（`h2.f3-light` + 文案）定位，打 `.stars-lists-hidden` 标记类，隐藏规则写在 `base.css` 第 4 节。
@@ -501,9 +520,10 @@ filterState.totalPages    // ceil(count / NATIVE_PAGE_SIZE)
 
 - **产物单文件**：构建产物必须是单个 `.user.js`，不得使用 `@require` 拉外部运行时。
 - **无运行时依赖**：只用浏览器原生 API + GM API。`package.json` 里的依赖全部是 devDependencies。
-- **仅桌面端**：`transformStarsList()` 首先检查 `isDesktop()`；所有 CSS 包在 `@media (min-width: 768px)` 内。
+- **仅桌面端，且窄视口必须完全惰性**（4.9.1，4.9.2 审查补全）：`<768px` 下脚本**什么都不做** —— 不注入样式表、不建节点、不改 GitHub DOM、不弹任何 UI、不发进页自动同步、**不拦截原生交互**（搜索框的 submit/Enter 必须放行）。所有入口都有视口门（`ensureStyles` / `showSetupBanner` / `applyHideListsGate` / `hideListsSection` / `applyFilters` / `scheduleProbeSync` / turbo 各回调 / `search.ts` 两个回调；**数量以 `grep -rn 'isDesktop()' src/` 为准**），回滚走 `viewTeardown.ts`。**新增任何写 DOM 或挂监听的代码都要自带这道门，且监听要能随 teardown 释放**，否则就是在手机上制造"残次内容"。
 - **三栏响应式布局**：768–1199px 隐藏左右侧边栏只留主内容区；≥1200px 为左侧资料栏（180px）+ 中间卡片网格 + 右侧 Starred Topics（220px）。
-- **GM API 用法**：一律走 `src/gm.ts` 的 `gmGet / gmSet / gmRemove / gmAddStyle / gmRegisterMenuCommand / gmUnregisterMenuCommand / gmOpenInTab / gmFetchText`（**调用时**判定可用性，document-start 时晚到/缺席都安全，附 localStorage 兜底与迁移）；**禁止** `import { GM_* } from '$'`（bundle 顶部一次性捕获会在 document-start 固化成 undefined）。`@grant` 在 `vite.config.ts` **显式声明**，不要依赖插件自动推断。
+- **GM API 用法**：一律走 `src/gm.ts` 的 `gmGet / gmSet / gmAddStyle / gmRegisterMenuCommand / gmOpenInTab / gmDownloadFile`（**调用时**判定可用性，document-start 时晚到/缺席都安全，附 localStorage 兜底与迁移）；**禁止** `import { GM_* } from '$'`（bundle 顶部一次性捕获会在 document-start 固化成 undefined）。`@grant` 在 `vite.config.ts` **显式声明**，不要依赖插件自动推断。
+  - 4.9.1 起 `@grant` 只有 5 项（`GM_getValue` / `GM_setValue` / `GM_registerMenuCommand` / `GM_openInTab` / `GM_download`）。**TM 的能力徽标是按声明的 `@grant` 数组生成的（不做调用分析）**，所以「能少声明就少声明」是用户可见的收益，不是洁癖：能走原生 `fetch` 就别要 `GM_xmlhttpRequest`，能用 `GM_registerMenuCommand` 的 `{ id }` 原地更新就别要 `GM_unregisterMenuCommand`（`id` 是 **TM 5.0**+ 的参数，VM 2.15.9+ 同语义；老版 TM 忽略它却仍返回 id，会累积重复菜单项 —— 功能不受影响）。新增授权前先问「有没有不依赖授权的通道」。
 - **敏感键不入镜像**：新增敏感存储键必须同步加进 `gm.ts` 的 `SENSITIVE_KEYS`。
 - **改名类改动必须做模糊扫描**（4.6.0 教训）：机械替换只覆盖它认识的精确串（如 `github-stars-grid`）。用户可见文案与 URL 深链里常是**空格分词**的形态（`Stars Grid`、`?name=GithubStarsGrid`），精确串 grep 扫不到。改名后必须补一轮模糊扫描（`Stars Grid` / `StarsGrid` / `stars-grid` / 空格变体）并 grep 产物本身，而不只是 grep 源码。
 - **名字单源**：脚本名/产物名只写在 `vite.config.ts` 的 `SCRIPT_SLUG` / `SCRIPT_NAME`；需要给源码用时经 `define` 注入 `__SCRIPT_SLUG__`（`src/vite-env.d.ts` 声明）。

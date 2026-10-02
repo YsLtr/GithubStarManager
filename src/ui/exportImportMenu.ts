@@ -21,7 +21,7 @@ import {
 } from '../storage/exportImport';
 
 /** 导入完成后的收尾动作（index.ts 注入：重渲染 + 触发同步）。放在注入里避免菜单↔fullSync 循环导入 */
-export type AfterImportHandler = (report: ImportReport) => void;
+type AfterImportHandler = (report: ImportReport) => void;
 let afterImport: AfterImportHandler | null = null;
 
 /** index.ts 注册：导入落盘成功后的收尾（重渲染 + 同步 + 结果提示） */

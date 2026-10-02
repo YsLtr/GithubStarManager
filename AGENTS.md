@@ -8,48 +8,71 @@
 
 ## 当前状态
 
-版本 **4.9.1**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
+版本 **4.9.2**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
 
-> 交接时间：**2026-10-02 17:10 +0800**。
+> 交接时间：**2026-10-02 19:25 +0800**。
 
-**4.9.1（未提交时的工作树，本次交接一起提交）**：三处通知栈/同步收尾的行为与观感修订，
-细节见 `DEVELOPER.md` §「变化简报与恢复」、`docs/adr/0003` 的「位置与观感」条与 D11/D12：
+**4.9.2（已提交；`git log` 里标题为「窄视口(<768px)完全惰性…」的那一条）**：三组改动 + 一轮独立审查修正，规划与验收标准见
+`docs/plans/archive/2026/2026-10-02-优化手机端-窄视口-脚本行为-…-精简-gm-权限.md`：
 
-1. **通知栈定位**：从「视口右上角固定 `top:16px`」改为**锚在全局头部下方**（`header-wrapper` 底边 +8px，
-   滚动/改窗口 rAF 重算，头部滚出视口后回落视口顶部 8px）。容器仍挂 `document.body`，**不是** header 子节点。
-2. **同步后立即重渲染**：删掉「自动来源 + 最近 10s 有交互 → 弹『点击刷新』」整条分支（含交互追踪三监听），
-   手动/自动一视同仁直接 `applyFilters({keepPage:true})`（用户裁定）。
-3. **观感换成 GitHub `.flash`**（内联消息族）：语义浅色底 + `borderColor-*-muted` 细描边 + 16px 细线 octicon，
-   尺度对齐脚本既有卡片/横幅。**不要**回退到 Primer `Toast` 族（48px 满饱和色条 + 三层悬浮投影，与卡片不同族）。
+1. **窄视口（<768px）完全惰性** —— 修「缩到手机尺寸后脚本没失效、留下一地残次内容」：
+   `transformAndReveal()` 的视口判定挪到**一切注入之前**；其余入口门分散在各处（**数量以
+   `grep -rn 'isDesktop()' src/` 为准**，别在此维护计数）。新增 `src/viewTeardown.ts`（幂等回滚）
+   + 断点双向切换（`subscribeBreakpointChange`）。
+2. **回滚可靠性的两个新机制**：`src/lifecycle.ts`（受管监听/定时器作用域 + 世代号，杀掉「回滚被自己排的队
+   撤销」）；所有对原生节点的 `display:none` 写入必须带 `data-gsm-hidden` 标记（按痕迹回滚）。
+3. **GM 权限 8 → 5**（`GM_getValue` / `GM_setValue` / `GM_registerMenuCommand` / `GM_openInTab` / `GM_download`）
+   + 一批死码/冗余兜底清理。TM 的能力徽标按 `@grant` 数组生成（不做调用分析），删掉「用别的通道实现」的
+   授权才真的让用户看到的能力清单变短。
 
-**4.9.0 已实现并提交**，四组改动：
+**独立审查轮（2026-10-02，2 个 code-reviewer 并行 + 本人复核）**：29 个改动文件、~620 行，切两个互不重叠的
+范围审（视口/回滚/生命周期 vs 写路径/权限/存储/文档）。查出 **5 处真缺陷（3🔴 + 2🟡），全部已修并逐条实测复现**：
 
-1. **写路径两条通道 + 静默分派**（`docs/adr/0006-web-endpoint-write-fallback.md`，新增）：`src/starWrites.ts`
-   的 `setStarState()` 在「classic/OAuth token（`ghp_`/`gho_`）」与「浏览器登录会话走网页端点」之间自动选择。
-   `docs/adr/0004` 的「只支持 classic token」因此收窄为「**REST** 写路径只支持 classic token」。
-2. **全局串行变异队列**（`docs/adr/0003`，新增 `src/mutationQueue.ts`）：卡片星按钮与恢复共用一个队列，
-   相邻请求**开始时刻**差 ≥1000ms，**排队中再次点击 = 撤销排队**。
-3. **变化简报 + 恢复**（`docs/adr/0003`，新增 `src/restore.ts` / `src/ui/notifications.ts` / `src/ui/restoreMenu.ts`）：
-   同步收尾弹简报（口径 = 取消 star / 新增 / 恢复，元数据刷新只进控制台；无变化也弹；**不判重**），
-   每条外部取关各弹一条带「恢复」按钮的通知；TM 菜单「♻️ 恢复已取消的 star（24h 内）」= 可勾选 +
-   一键「恢复选中」+ **每行一个 ☆ 恢复 按钮**（用户裁定：必须实现一键恢复）。失败一律 `alert` 一行文字。
-4. **导入后不自动同步**（`docs/adr/0005`）+ 删除详情页 star/unstar 监听（决策 D17）+ 配置横幅改为
-   **两条 Token 深链 + 差异说明**（用户裁定：classic 与 fine-grained 都给，并说明区别）。
+1. **🔴 原生搜索被吞**（两位审查员独立复现）：`search.ts` 用 `data-gsm-search-bound` 标记串防重复挂载，
+   但**摘不掉**已挂的 `submit`/`keydown` 监听 ⇒ 桌面收窄后原生搜索仍被 `preventDefault`，而本地搜索已被
+   视口门挡住 ⇒ 按回车「什么都不发生」，且标记本身是残留痕迹。改为 `lifecycle` 作用域持有 +
+   `disposeSearchInterception()`（teardown 第 10 项）。
+2. **🔴 回滚后仍发整表 API**：`scheduleProbeSync` 的 2s 定时器只在排队时判视口 ⇒ 「桌面打开 → 2s 内收窄」
+   时页面已退回原生视图却仍在拉 API，且检出变化会在窄视口重建通知栈。改为 `ifCurrent(gen)` + 回调内复判视口。
+3. **🔴 桌面 Hide Lists 回归**：teardown 无条件清 `gsm-hide-lists` + Lists 标记 ⇒ 离开 Stars 去别的
+   profile 标签后 Lists 会与开关状态相反地冒出来。改为**只在 `!isDesktop()` 时清**（见 D20 的「视图级 vs 页面级」）。
+4. **🟡 首次安装路径 Lists 标题行外露**：`.my-3` CSS-only 兜底删掉后，`!hasApiData()` 分支不跑 transform
+   ⇒ 容器被门控 CSS 藏住但标题行（54px）露在配置横幅上方。已在该分支补 `hideListsSection()`。
+5. **🟡 Starred topics 回填无身份校验**：teardown 只判 `colLg3.isConnected` ⇒ Turbo 原位重渲染换出**新的**
+   `.col-lg-3` 时会把陈旧内容倒进去（重复 topics）。改为痕迹标记 `GSM_TOPICS_SRC_ATTR`（见 D20）。
+   （另有 🟢 一条已采纳：teardown 补一行 `console.log` 留痕；4 条 🟢/🟡 判定为低价值或需用户裁定、本轮未改，
+   清单见归档方案 §11。）
 
-**未执行的一项（非阻塞）**：`scripts/ratelimit-probe.cjs` 是 REST 变异请求限流的实测探针（默认 `--dry-run`
-零网络请求），**尚未真机跑过**——队列的 1000ms 间隔目前只有官方 best-practices 与 Octokit 默认值两个外部
-来源支持，没有本地实测数据。执行前置与协议见 `DEVELOPER.md` §6「REST 限流实测」与
-`docs/research-ratelimit-protocol.md`。结论落 `docs/research-ratelimit-measurement.md`（尚未创建）。
+另外修掉 3 处**注释与事实不符**（`gm.ts` 把 `{ id }` 写成 TM 4.20+ —— 实为 5.0，同一提交内自相矛盾；
+`hideListsMenu.ts` 对旧版 TM 退化的描述不准；`constants.ts` / `wide.css` 的陈旧引用与悬空 JSDoc），
+并删掉 `lifecycle` 里零消费者的 `interval` / `clearTimer`。审查证据见下「验证」条。
 
-**2026-10-01 真机复核结果**（`docs/research-web-star-endpoints.md` 附录 A，出厂代码路径、双向、含远端 API 复核）：
+> **审查员判错的一条（勿照抄）**：`gm.ts` 注释「菜单有 8 项」被报为陈旧 —— 实为 8 处注册
+> （同步 1 + Token 3 + 导入导出 2 + Hide Lists 1 + 恢复 1），**是对的**。
 
-| 事项 | 结论 |
-|---|---|
-| 离页仓库 + 仅 VF 头 + 86 字符占位 token | ✅ **成立、双向**：`POST /star` 200 → API 复核 204；`POST /unstar` 200 → 复核 404。基线已复原。 |
-| 422 回退的前提 | ❌ **被推翻**：`GET /{o}/{r}` 原始 HTML（200 / 339 KB）**0 个 `<form>`**（纯客户端渲染）⇒ 回退是死码，**已从 `starWrites.ts` 删除**，降级由三段变两段。per-form token 只在**原生 stars 列表页**有（实测 64 表单 = 30 star + 30 unstar，仅覆盖当页仓库），而恢复场景的仓库不在列表里，故不改为 fetch 列表页。 |
-| classic 创建页 `?scopes=repo` 预填 | ⚠️ **无法判定**：`settings/tokens/new` 被 sudo 门（"Confirm access" + passkey）拦住，勾选状态不可观测。`description=` 预填**已确认生效**。**不得**声称可用或不可用。 |
-| `context=user_stars` 用于 repo 作用域端点 | 不报错（200），但服务端是否据其分支仍不可知 → 继续只作原样携带。 |
-| **4.9.0 写路径端到端**（真实触发脚本代码，非手搓请求） | ✅ **通过**：卡片星按钮点击 → 乐观翻转 → 通知栈出现 `已取消 star：…｜撤销` → API 复核 404（远端真取消了）→ 点「撤销」→ 通知原地变 `✓ … 已恢复` → **API 复核 204（零残留）**。目标用自有仓库 + 用户已 star 的三方仓库各一，结束后状态与初始一致。跑的是 dev 服务的**当前源码**；打包产物仅经 `pnpm check`。 |
+**更早的版本**（改动细节查 `git log` 与对应 ADR；此处只保留仍生效的口径）
+
+- **4.9.1**：通知栈锚在全局头部下方（`header-wrapper` 底边 +8px）；观感 = GitHub 自己的 `.flash` 内联消息族
+  （**不要**回退 Primer `Toast` 族）；同步后立即重渲染、删掉「点击刷新」提示。现行口径见 **D11 / D12**。
+- **4.9.0**：写路径两条通道（REST / 网页端点）静默分派；全局串行变异队列（≥1s，排队中再点 = 撤销）；
+  变化简报 + 恢复菜单；导入后不自动同步；配置横幅两条 Token 深链。见 `docs/adr/0003`–`0006` 与 **D3 / D9 / D10**。
+
+**限流实测已完成**（2026-10-01 真机执行；`docs/research-ratelimit-measurement.md` + 原始 `.jsonl`）：判定 **D1** ——
+`used` 每请求 +1、primary 按请求数计，官方「5 点/次」表**不作用于 primary**；仓库自有的写入成本 = **1 点/请求**，
+1s 间隔（60 写/分钟）距文档化的 900 点/分钟有 15× 余量。**结论不据此改动 1000ms 默认值**（实测规模不足以
+推翻官方 best-practices；1s 同时满足「串行」与「≥1s」两条独立要求）。L2 按协议**有意未跑**（理由见该文 §5）。
+两条写通道的限流**可观测性不对称**：API 侧完全可观测（1 点/次，两次独立确认），网页端点**零限流响应头**。
+
+**网页写端点通道的关键实测结论**（全量证据见 `docs/research-web-star-endpoints.md` 附录 A）
+
+- 离页仓库 + 仅 `GitHub-Verified-Fetch` 头 + 86 字符占位 token → `POST /star` 200（API 复核 204）/
+  `POST /unstar` 200（复核 404）：**双向成立**，基线可复原。
+- 「422 → 取仓库页表单 token 重发」的前提**被推翻**（仓库页纯客户端渲染、0 个 `<form>`；per-form token 只在
+  原生 stars 列表页有，覆盖不到恢复场景的仓库）⇒ 该回退段已删，降级只有两段。
+- classic 创建页 `?scopes=repo` 预填**无法判定**（被 sudo + passkey 门拦住）—— **不得**声称可用或不可用。
+- `context=user_stars` 用于 repo 作用域端点：200 无报错，服务端是否据其分支不可知 → 只作原样携带。
+- 端到端（真机跑脚本代码、非手搓请求）：卡片星按钮 → 乐观翻转 → 通知栈「撤销」→ API 复核 404 →
+  点撤销 → API 复核 **204 零残留**，目标仓库状态与初始一致。
 
 **顺带修掉的一个真问题**：`fullSync` 在「点 Sync 但没配 token」时调 `promptForToken` → **原生 `window.prompt`
 阻塞整个页面主线程**（实测：页面 JS 通道整体失去响应，重载才恢复；原生对话框属浏览器 chrome 层，
@@ -67,6 +90,8 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
 ## 仍生效的设计决策
 
 历史决策 D1（到货快照 diff）/ D2（双 404 逐条核对）/ D4（位移挂起）**已作废**——随 4.0.0 API 主模式与
+> 编号**不连续**：D13–D16 在本文件与 `DEVELOPER.md` 中**都无定义**，D17 只在正文被引用（无独立条目）。
+> 需要时查 `git log` 与 `docs/adr/`。**新增决策请从 D22 起编。**
 4.0.10 死码清理整体删除，星状态真相改由整表 diff 权威判定。以下为现行决策。
 
 **D3 · 写路径凭证（REST 只支持 classic；另有网页端点通道）**
@@ -161,6 +186,84 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
 - 4.9.0 的 `INTERACTION_QUIET_MS` / `lastInteractionAt` / `ensureInteractionTracking()` 三监听已整段删除；
   **不要**恢复「弹一条可点击的刷新提示」——那是被明确否决的口径。
 - 已知代价（用户裁定接受）：进页自动同步时列表会在用户眼前重排；换来的是「简报说什么，列表就是什么」，不再有「提示与数据不一致」的中间态。
+
+**D18 · 窄视口（<768px）完全惰性（4.9.2）**
+
+- **语义 = 「脚本没装过」**：不注入任何样式表、不建任何节点、不改 GitHub DOM、不弹任何 UI、不发进页自动同步。
+  **不做**移动端卡片降级布局（移动端体验交回 GitHub 原生）。
+- **CSS 会自动失效，JS 不会** —— 这是「脚本没直接失效、而是留下残次内容」的根因：布局 CSS 全在 `@media` 里，
+  但脚本写的节点 / class / **内联样式** / 被搬走的原生节点都不会自己回退，且**内联 `display:none !important`
+  不受任何媒体查询门控**（曾让 Lists 区块在手机上永久消失）。
+- **门必须开在注入之前**：`transformAndReveal()` 首行判定视口（早于 `ensureStarsSetup` / `ensureStyles` /
+  `showSetupBanner`）。其余的门分散在 `applyHideListsGate`、`hideListsSection`（+ `clearListsHiddenMarks()`
+  清残留）、`applyFilters`（兜底拦回滚前排队的异步回调）、`scheduleProbeSync`（**排队时与 2s 回调内各判一次**）、
+  `turbo:load` / `turbo:before-visit` / `turbo:before-render` / `turbo:before-frame-render`、
+  原生 Clear filter 点击拦截（不拦的话会经 `exitCustomMode → applyFilters → hideNativeFilterMenus`
+  把原生 Type/Language/Sort 三个菜单设成 `display:none`）、`search.ts` 的两个拦截回调。
+  **以 `grep -rn 'isDesktop()' src/` 为准，不要在此维护数量**（曾写「6 处」，审查实测 12 处，计数版必有偏差）。
+- **挂在原生节点上的监听也是「JS 写入」**（4.9.2 审查补）：样式表能靠 `@media` 自动失效、节点能靠 teardown 删掉，
+  但**事件监听两个都不会**。故原生 form/input 上的监听必须由 `lifecycle` 作用域持有（`search.ts` 的
+  `searchScope` + `disposeSearchInterception()`），teardown 时解绑。**禁止**用「data 标记串防重复挂载」代替：
+  标记串能防重复，但**摘不掉**已挂的监听，而且标记本身就是回滚后不该留的痕迹。
+- **窄视口不显示配置横幅**（用户裁定 V1）：横幅样式在 `base.css` 的媒体查询**之外**，手机上会以完整样式出现，
+  是最刺眼的一件残留；需要配置 Token 的窄视口用户走 TM 菜单「⭐ 设置 GitHub Token」。
+- **窄视口不发进页自动同步**（用户裁定 V2）：手机上没有网格呈现结果，纯耗额度；TM 菜单手动入口保留。
+  该 2s 定时器除排队时判视口外，还挂了**世代号**（`scheduleProbeSync` 的 `ifCurrent`）—— 否则「桌面打开 →
+  2s 内收窄」会让页面已退回原生视图却仍在拉整表 API，且检出变化时会把通知栈在窄视口重建出来。
+- **TM 菜单项在任何视口都注册**（用户裁定 V6）：菜单不写页面 DOM，且用户可能只是临时缩小窗口。
+
+**D19 · 断点单一真相 + 运行中双向切换（4.9.2）**
+
+- 判定**只用** `window.matchMedia('(min-width: 768px)').matches`（`utils.isDesktop()`），**禁止** `window.innerWidth`：
+  Safari/WebKit 的媒体查询宽度 = `clientWidth`（不含经典滚动条，WebKit bug 52653 至今 OPEN），
+  用 innerWidth 会出现「JS 认为桌面、CSS 认为手机」的错位窗口。
+- 跨断点实时双向切换（`subscribeBreakpointChange`，150ms debounce）：变窄 → 完整 teardown；变宽 → 重新
+  `transformAndReveal(false)`。**不要**退回「只在导航时判定」或「reload」两种方案（前者等于没修，后者丢滚动/筛选状态）。
+- `WIDE_BREAKPOINT` 常量已删（零消费者）；CSS 侧断点数字仍是手写，改一处要同步 `base.css` / `persistent.css` / `wide.css`。
+
+**D20 · 回滚 = 按痕迹 + 世代号（4.9.2）**
+
+- `src/viewTeardown.ts` 是唯一回滚点，幂等，由 `exitStarsView()` 调用（离开 Stars / 转换失败 / 跨断点收窄共用）。
+  **按痕迹回滚**：只认脚本自有 class（`gsm-*` / `stars-*`）与两类 `data-gsm-*` 标记
+  （`GSM_HIDDEN_ATTR` = 我们改过它的 display；`GSM_TOPICS_SRC_ATTR` = topics 是从这个节点搬走的，
+  回填**只认标记不认 `isConnected`** —— Turbo 原位重渲染会换出一个新的 `.col-lg-3`，倒进去就是重复 topics）；
+  **禁止**启发式猜测
+  「这个 inline display 大概是我们设的」。
+- **凡是把 GitHub 原生节点设成 `display:none`，必须同时打 `GSM_HIDDEN_ATTR` 标记**（现成做法：`filters.ts`
+  的 `hideNativeNode` / `showNativeNode`）。裸写 `el.style.display` 是回滚不掉的。
+- `src/lifecycle.ts` 提供受管监听/定时器作用域 + **世代号**：`beginGeneration()` 在每次转换与回滚时递增，
+  `guardedTimeout()` / `ifCurrent()` 让过期回调自我作废。**没有它，回滚会被自己排的队撤销**
+  （150ms×12 的重试链会把刚摘掉的样式表重新装回去）。同 `mutationQueue` 的 handle 身份校验思路。
+- 数据层不随视口回滚：存储迁移、超期备份清理、缓存写入与窗口大小无关。
+- **回滚边界：视图级 vs 页面级**（4.9.2 审查补）。teardown 只回滚「Stars 视图的产物」，**不得回滚页面级偏好**。
+  「隐藏 Lists」属页面级：`applyHideListsGate()` 在 document-start 就对任意匹配页挂上，门控 CSS 的选择器指向
+  `#profile-lists-container` / `blankslate` 等**非 Stars 专属**节点。⇒ `clearListsHiddenMarks()` 与摘
+  `gsm-hide-lists` **只在 `!isDesktop()` 时做**；离开 Stars 去别的 profile 标签时必须原样保留，否则切到
+  Repositories 后 Lists 会与开关状态相反地冒出来（4.9.2 首版真踩过）。反过来窄视口必须清干净：
+  那个 `display:none` 是**内联**且带 `!important` 的，不受媒体查询门控。
+- 回滚清单第 10 项 = 原生搜索框上的 `submit` / `keydown` 监听（`disposeSearchInterception()`）。
+
+**D21 · 清理判据与 GM 权限最小化（4.9.2）**
+
+- **删兜底的判据**：有没有实测/官方文档证明它曾经救回过场景；没有就删，并在原地留一句「曾用过什么」。
+  保留的 6 类各有硬理由（`:has()` 退路有 `cssTarget=safari15` 背书；12×150ms 重试 + 双 4s 兜底防白屏；
+  GM↔localStorage 镜像层是 dev/非 TM 的唯一数据通道；`tags`/`notes` 旧键迁移删了会丢用户数据；
+  `starWrites` 两段式与 `fullSync` 完整性阀门有真机实测/ADR 红线）。
+- **@grant 只剩 5 项**：`GM_getValue` / `GM_setValue` / `GM_registerMenuCommand` / `GM_openInTab` / `GM_download`。
+  **TM 的能力徽标按声明的 `@grant` 数组生成，不做调用分析** ⇒「声明了却走别的通道」照样进用户看到的能力清单，
+  要真变短就得删授权：linguist 色表改走**原生 `fetch`**（+ AbortController 手搓超时，不用 `AbortSignal.timeout`
+  ——它要 Safari 16+），菜单标签改走 `GM_registerMenuCommand` 的 `{ id }` 原地更新（TM **5.0**+；
+  4.20 引入的是 `options` 对象本身，`id` 是 5.0 —— 官方文档 <https://www.tampermonkey.net/documentation.php?q=GM_registerMenuCommand>。
+  VM 2.15.9+ 同语义；**老版 TM 忽略 `{ id }` 但照旧返回 id ⇒ 每次切换累积一条重复菜单项**（功能不受影响，仅菜单变长），
+  且 HEAD 在同样路径上已有此行为，非 4.9.2 引入），
+  历史死键清理（含 `GM_deleteValue`）整条删除。
+- 已删：4 个零引用符号、3 处旧选择器退路、上一代 `.my-3` CSS-only 兜底、`LEGACY_STORAGE_KEYS` 与它的
+  `init()` 清理、只写不读的 `FullSyncMeta.etag`（单数；**复数** `etags`/`tailEtag` 才是 304 快筛基线，它们的读取点
+  一处未动）、35 处多余 `export` 关键字，以及 `lifecycle` 里零消费者的 `interval` / `clearTimer`
+  （`ifCurrent` / `currentGeneration` 反而在审查后**补上了消费者**：`scheduleProbeSync` 的 2s 定时器）。
+- **首次安装路径要自己补一次 `hideListsSection()`**（4.9.2 审查补）：`.my-3` CSS-only 兜底删掉后，
+  无缓存分支（`!hasApiData()` → 配置横幅，不走 transform）只剩门控 CSS 藏容器，**标题行会露出来**，
+  所以 `transformAndReveal` 的 `!hasApiData()` 分支里必须显式调一次。
 ---
 
 ## dev 模式必须知道的四件事
@@ -204,6 +307,10 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
   可靠写法是 `{"method":"Page.bringToFront","params":{},"allowFocus":true}`，并在每次量测前回读 `document.visibilityState`。
 - **恢复被覆盖的 `console.log`**：注入工装若改过它，用 `iframe.contentWindow.console.log` 取原生实现再赋回
   （`delete console.log` 会把 `console` 打残）。
+- **仿真页工装的两个坑**（4.9.2 审查轮踩到）：① 构造 URL **必须带 `?tab=stars`**，否则 `isStarsPage()` 为假、
+  脚本根本不转换，`grid: 0` 会被**误读成「窄视口全绿」**；② 把 bundle 内联进 `tests/smoke/fixture.html` 时，
+  `html.replace(needle, text)` 要写成**函数形式** —— `html.replace(needle, () => text)`；产物里有 `$&` 字面量
+  （`escapeRegExp` 的替换模板），字符串替换会把它当反向引用展开、把 bundle 改坏。
 
 ```bash
 # 真机注入（.diag/ 已在 .gitignore）
@@ -233,7 +340,7 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
 3. **`GitHub-Verified-Fetch: true` 是玻璃地板**：无文档、无契约（公开来源仅 2 次观测），GitHub 随时可收紧。
    已从 `starWrites.ts` 删除（实测该页纯客户端渲染、0 个 `<form>`），**降级只剩两段**：页面有该仓库表单 → 真实 token；否则仅 VF；都失败即报错。此条风险因此不做缓解，只作观察项：若批量下开始返回 422，说明 GitHub 收紧了 VF 地板。
 4. **网页通道的成功判定在网格/离页场景无法复核方向**（页面上没有该仓库表单），只能以 HTTP 200 为准 —— 已知弱点。
-5. **TM 菜单标签不跨标签页同步**；窄视口下 frame-render 分支的 `hideListsSection()` 无 `isDesktop()` 门（既有行为）。
+5. **TM 菜单标签不跨标签页同步**。（原「窄视口下 frame-render 分支的 `hideListsSection()` 无 `isDesktop()` 门」已在 4.9.2 修掉，见 D18。）
 6. **一键批量恢复会代发请求**，技术上落在 AUP §4「automated starring / large volume in a short period」的邻域；
    用户 2026-10-01 知情后要求实现。缓解：严格串行 ≥1s、进度可见、可取消、不自动重试、确认弹窗显示条数与预估耗时。
    同样地，「写通道不向用户披露」与 RDA §4(v) 的披露要求存在偏差，两者都记在 `docs/adr/0006`。
@@ -241,26 +348,54 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
    不判重）→ 通知可能成列盖住列表右上半屏。缓解只有 3s 自动消失与关闭按钮；若用户反馈碍事，可考虑「同类合并计数」。
 8. **通知栈兜底值是浅色硬编码**：正常走 GitHub 的 `--bgColor-*-muted` 等变量（自动适配 dark/dimmed），
    但变量一旦被 GitHub 移除就回落到浅色兜底值 → 暗色主题下会变刺眼（低风险，仅影响兜底路径）。
+9. **老版 Tampermonkey（< 5.0）下「隐藏 Lists」菜单项会累积重复**（4.9.2 审查发现，**既有行为非新引入**）：
+   旧版忽略 `GM_registerMenuCommand` 的 `{ id }` 却仍返回 id，于是每次切换都新建一条菜单项。功能不受影响，
+   只是菜单条数变长；重进页面即恢复单条。VM 2.15.9+ 与 TM 5.0+ 行为正常（见 D21）。
+10. **通知栈没有「窄视口不弹」的硬保证**：`disposeNotificationStack()` 之后，任何仍在跑的 `pushNotice()`
+   都会经 `ensureContainer()` 懒重建整座栈。`scheduleProbeSync` 的 2s 定时器已用世代号 + 视口复判堵住
+   （见 D18），但**将来新增的任何异步通知路径都要自己带这道门**。
 
 ---
 
 ## 下一步
 
-1. **@version 已升到 4.9.1 → 若你在用 dev 脚本，必须重装 dev loader**：重开
+1. **@version 已升到 4.9.2 → 若你在用 dev 脚本，必须重装 dev loader**：重开
    <http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js> 让 TM 原地更新，否则 TM 菜单会整体消失
    （机制见「dev 模式必须知道的四件事」第 4 条：`@version` 变了 → 脚本头变了 → mountGmApi 的 key 对不上）。
    正式版不受影响；`@version` 变了却没重装，表现是「TM 菜单空了」+「同步说未配置 token」。
-2. **跑限流实测（阶段 A）**：`node scripts/ratelimit-probe.cjs --run --repo <自有仓库>`，产
-   `docs/research-ratelimit-measurement.md`。前置（任一不满足就跳过）：自有仓库、classic PAT（scope `repo`）、
-   能关闭脚本自动同步、出口非共享/VPN（走 VPN 只做 L1）。结论只作验证与文档，**不自动改 1s 默认值**。
-3. **`docs/adr/0006` 剩余两项不可观测项**：`?scopes=repo` 预填是否真的勾上（被 sudo/passkey 门拦住，
+2. **`docs/adr/0006` 剩余两项不可观测项**：`?scopes=repo` 预填是否真的勾上（被 sudo/passkey 门拦住，
    **不得**声称可用或不可用）、`context=user_stars` 服务端是否据其分支（实测 200 但不可知）。
-   离页仓库 + 仅 VF 头**已实测成立**（见「当前状态」表），不必重复验。
-4. 后续阶段（详见 `todo` 与 `DEVELOPER.md` §13）：GraphQL 分页调研、周期自动同步、非本人 star 页
+   离页仓库 + 仅 VF 头**已实测成立**（见「当前状态」的实测结论），不必重复验。
+3. 后续阶段（详见 `todo` 与 `DEVELOPER.md` §13）：GraphQL 分页调研、周期自动同步、非本人 star 页
    `GET /users/{u}/starred` 接入、分页按钮可跳页。
-5. 未消化的架构建议：单遍 facet 计算、响应式漏斗（见 `starmgr-arch-review-report.md`）。
-6. fine-grained PAT 写他人公开仓库的能力缺口由 GitHub 控制（roadmap#600 NOT_PLANNED、#601 OPEN）——将来若补齐，
+4. 未消化的架构建议：单遍 facet 计算、响应式漏斗（见 `starmgr-arch-review-report.md`）。
+5. fine-grained PAT 写他人公开仓库的能力缺口由 GitHub 控制（roadmap#600 NOT_PLANNED、#601 OPEN）——将来若补齐，
    可回头简化 `docs/adr/0006` 的网页端点通道。
+6. **4.9.2 的真机验证部分完成**（`pnpm check` + 51 项导入导出断言 + CSS 等价性全过；dist 头部 `@grant` 恰 5 项）。
+   **已在真浏览器跑过仿真页**（`.diag/viewport-harness.html` = GitHub 仿真 DOM + 内联 dist + matchMedia 仿真，
+   断言脚本 `.diag/assert-viewport.js`；两者都在 gitignore 的 `.diag/` 下，可重跑）：窄视口载入**零痕迹**
+   （无自造节点/无 `gsm-*` 类/无内联 display/无标记，Lists 行与原生三个菜单未被动过）；桌面载入网格/顶部翻页器/
+   同步按钮/右栏照旧；运行中收窄 → 痕迹全清且 layout 样式表归零（persistent 表按设计常驻，规则全在 `@media` 内）、
+   Starred topics 回到原生列、原生菜单 display 复原；再拖回桌面 → 网格重建且无重复节点；收窄后挂机 10s 无新
+   `<style>` 注入（世代号生效）；语言色经**原生 fetch** 拿到 694 语言（验证 `GM_xmlhttpRequest` 可删）。
+
+   **审查轮的 5 个修复各自实测**（工装 `.pi/tmp/gen-harness.cjs` → `viewport-harness.html?tab=stars`
+   + `.pi/tmp/assert-fixes.js` / `assert-cycle.js`，均在 gitignore 下，可重跑；注意 URL 必须带 `?tab=stars`，
+   否则 `isStarsPage()` 为假、脚本根本不转换，会误读成「全绿」）：
+
+   | 修复 | 实测证据 |
+   |---|---|
+   | R1 搜索监听 | 桌面 `enterPrevented/submitPrevented = true`（拦截有效，无回归）→ 收窄后**双双 false**（原生行为放行）；`data-gsm-search-bound` 计数 0 |
+   | R2 2s 自动同步 | `#autoshrink`（700ms 收窄）时间线：收窄前 grid=1（说明确实排过队），此后到 t=6.7s 抓包数**恒为 1**（仅 linguist 色表），无任何 `api.github.com` 请求；审查员修复前实测在同场景有 `2120ms → /user/starred?per_page=100&page=1` |
+   | R3 Lists 偏好 | 桌面进 Stars：门控类 true / 标记 2 / 标题行 `display:none` → 触发 `turbo:load` 离开 Stars：门控类**仍 true** / 标记**仍 2**（不再被误清）→ 再收窄：双双清零 |
+   | R4 首次安装 | `#nocache`：横幅出现、`listsMarks:2`、标题行 `display:none` 且高度 0（修复前 `flex` / 54px） |
+   | 幂等回归 | 桌面→窄→桌面→窄→桌面两轮：`grid/topPager/rightSidebar` 恒为 1、topics 只被搬走一次、搜索拦截每轮都恢复、`__errors` 空 |
+   | topics 痕迹标记 | 桌面转换后 `[data-gsm-topics-src]` = 1 → 收窄后 = 0（标记被摘且内容确实回到原生列） |
+
+   **仍需真机确认（只能在真 github.com + TM 上做）**：真·窄窗口下的实际观感、Turbo 导航路径、
+   安装页/面板里本脚本的授权清单是否恰为 5 项、导出仍能触发 `GM_download`、TM 菜单项齐全（实测 8 处注册）。
+7. **原生 `fetch` 语言色通道有一个新观察项**：它现在受页面 CSP `connect-src` 约束（已实测该主机在白名单内），
+  且失败是静默降级（灰圈）。GitHub 若收紧 CSP，表现是语言色全部变灰点 —— 届时把 `gmFetchText` 加回来即可。
 
 ## 快速构建约定
 
