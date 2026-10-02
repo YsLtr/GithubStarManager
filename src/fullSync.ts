@@ -48,6 +48,7 @@ interface RemoteStar {
   meta: Partial<RepoData>;
 }
 
+/** 一次全量同步的产出摘要（按钮 title 与简报都用它；只在模块内流转） */
 interface SyncSummary {
   pages: number;
   total: number;
@@ -68,6 +69,58 @@ const PROBE_COOLDOWN_MS = 60_000;
 const FULL_SYNC_TTL_MS = 48 * 60 * 60 * 1000;
 let syncing = false;
 let lastProbeAt = 0;
+
+/* ================================================================
+ * 同步状态（4.10.0）：**模块内单一真相**，头部 Sync 按钮是它唯一的视图。
+ *
+ * 为什么要有这一层：4.10.0 之前，只有一个入口（标题行按钮）会给自己加
+ * `.gsm-pager-loading`，其余四个入口（TM 菜单 / 配置横幅「立即同步」/ Token 保存后
+ * 的自动同步 / 进页自动探测）触发时页面上没有任何反馈 —— 用户看到的就是
+ * 「点了没反应，但它其实在跑」。现在改成：`runFullSync` 只负责推进状态并广播，
+ * 任何入口触发的同步都会让同一个按钮把它显示出来；旧代码里那套
+ * 「整按钮文字变透明 + 伪元素转圈」的写入方式随之删除（4.10.0）。
+ * ================================================================ */
+type SyncPhase = 'idle' | 'running' | 'failed';
+
+interface SyncState {
+  phase: SyncPhase;
+  /** phase === 'failed' 的用户可见原因（复用既有失败分类文案，不新造词） */
+  reason?: string;
+  /** 上一次**成功**同步的摘要，供按钮 title 长期展示 */
+  lastSummary?: SyncSummary;
+}
+
+type SyncStateListener = (state: SyncState) => void;
+
+let syncState: SyncState = { phase: 'idle' };
+const syncStateListeners = new Set<SyncStateListener>();
+let lastSyncSummary: SyncSummary | undefined;
+
+/** 当前同步状态的**快照**（按钮挂载时用它做「挂载即对齐」，不必等下一次广播） */
+function getSyncState(): SyncState {
+  // 返回副本：调用方拿到的是值而不是模块内可变对象，就地改写不会绕过 setSyncState 的广播
+  return { ...syncState };
+}
+
+/** 订阅同步状态；返回取消订阅函数（teardown 必须显式调用，不能只靠节点被删） */
+function subscribeSyncState(listener: SyncStateListener): () => void {
+  syncStateListeners.add(listener);
+  return () => {
+    syncStateListeners.delete(listener);
+  };
+}
+
+function setSyncState(next: SyncState): void {
+  syncState = next;
+  // 遍历副本：订阅者在回调里退订/新增订阅不能影响本轮广播
+  for (const listener of [...syncStateListeners]) {
+    try {
+      listener(syncState);
+    } catch (err) {
+      console.error('[github-star-manager] 同步状态订阅者抛错（已隔离，不影响同步）：', err);
+    }
+  }
+}
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -581,7 +634,12 @@ function rerenderAfterSync(changed: number): void {
 
 /** 手动/自动的共同入口；失败返回 null 且不改动任何数据 */
 export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummary | null> {
-  if (syncing) return null;
+  if (syncing) {
+    // 并发丢弃**不改变状态**：另一次同步正在进行中，按钮正转着就是最准确的信号，
+    // 把它改成 failed 反而会让转圈停下、谎报失败。旧代码在这里连日志都没有。
+    console.log('[github-star-manager] P4 同步：已有一次同步在进行中，本次触发被忽略（不排队）');
+    return null;
+  }
   let tok = getGitHubPat();
   if (!tok && source === 'button') {
     // 打开**配置横幅**（内联粘贴行 + 两条快速创建深链），而不是 window.prompt：
@@ -592,10 +650,18 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
   }
   if (!tok) {
     console.log('[github-star-manager] P4 同步：未配置 token，已取消（TM 菜单 →「⭐ 设置 GitHub Token」）');
+    // 这是**真的要用户做点什么**的终态：广播 failed，按钮 title 会留下原因
+    setSyncState({ phase: 'failed', reason: '未配置 Token', lastSummary: lastSyncSummary });
     return null;
   }
 
+  /** 本轮成功产出的摘要；finally 广播终态时用它更新 lastSummary */
+  let produced: SyncSummary | undefined;
+  /** 非空 = 本轮失败，finally 广播 failed 而不是 idle */
+  let failureReason: string | undefined;
+
   syncing = true;
+  setSyncState({ phase: 'running' });
   try {
     // 单遍扫描（4.0.8）：逐页 If-None-Match 一把梭——全 304 免额度早退；200 页收正文、
     // 304 页用本地切片复用缓存（starred_at 降序复算，不重拉）；无基线/超 TTL/阀门失守 → 无条件整表。
@@ -614,7 +680,8 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
       // 无变化也弹（ADR 0003）：用户需要知道「同步确实跑过了」
       const total = storedMeta.count ?? 0;
       pushNotice(`同步完成：无变化（共 ${total} 个 star）`, 'info');
-      return { pages: 0, total, added: 0, restored: 0, unstarred: 0, backfilled: 0 };
+      produced = { pages: 0, total, added: 0, restored: 0, unstarred: 0, backfilled: 0 };
+      return produced;
     }
     console.log(
       `[github-star-manager] ★ P4 扫描：${scan.pages} 页（正文 ${scan.bodyPages} + 本地切片 ${scan.slicePages}，` +
@@ -723,58 +790,166 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
     gmSet(STORAGE_KEYS.fullSyncMeta, outMeta);
     const noEtag = scan.etags.filter((e) => !e).length;
     console.log(`[github-star-manager] ETag 基线：${scan.etags.length} 页已保存${noEtag ? `（${noEtag} 页响应缺 ETag 头，下次扫描直接整表）` : '（下次扫描逐页 304 免额度）'}`);
+    produced = summary;
     return summary;
   } catch (err) {
-    console.error(
-      '[github-star-manager] ★ P4 全量同步失败（未改动任何数据）：',
-      err instanceof Error ? err.message : err
-    );
+    failureReason = err instanceof Error ? err.message : String(err);
+    console.error('[github-star-manager] ★ P4 全量同步失败（未改动任何数据）：', failureReason);
     return null;
   } finally {
     syncing = false;
+    // 终态只在这里广播一次：正常返回、304 早退、抛错三条路径全覆盖。
+    // 旧代码在 catch 里只写 console —— 失败对用户完全不可见（4.10.0 修正）。
+    if (produced) lastSyncSummary = produced;
+    setSyncState(
+      failureReason
+        ? { phase: 'failed', reason: failureReason, lastSummary: lastSyncSummary }
+        : { phase: 'idle', lastSummary: lastSyncSummary }
+    );
   }
 }
 
-/** TM 菜单手动同步入口（4.0.4：横幅「立即同步」与标题行 Sync 按钮同时恢复，三处等价） */
+/** TM 菜单手动同步入口（与横幅「立即同步」、标题行 Sync 按钮等价：都只是触发 runFullSync，
+ *  反馈统一由头部按钮这一个视图呈现 —— 「入口多处、状态一处、视图一处」） */
 export function registerSyncMenu(): void {
   gmRegisterMenuCommand('🔄 立即全量同步（GitHub API）', () => {
     void runFullSync('button');
   });
 }
 
-/** 标题行 Sync 按钮（4.0.4 恢复）：贴在顶部翻页器左侧，点击 → runFullSync('button') */
+/* ================================================================
+ * 头部 Sync 按钮（4.0.4 恢复；4.10.0 起 = 同步状态的**唯一视图**）
+ * ================================================================
+ *
+ * **失败与「被丢弃」的可见性（4.10.0）**：
+ * - 失败：`runFullSync` 把原因广播成 `failed` 态 → 按钮 title 常驻原因 + 红字 20s
+ *   （旧代码在 catch 里只写 console，用户完全看不到失败）；
+ * - 被并发丢弃：**不**广播 failed（那会把正在转的按钮停下、谎报失败），可见信号是
+ *   按钮正在转着的 running 态，外加一条说明为何忽略的控制台日志。
+ */
+const SYNC_DEFAULT_TITLE =
+  '同步 GitHub 全量 star 列表（逐页 ETag 快筛 + 整表比对 + 回填 star 时间）';
+
+/** 已挂载按钮的取消订阅函数；teardown 必须显式注销（只删节点会漏掉订阅） */
+let mountedSync: { unsubscribe: () => void } | null = null;
+/** 读屏播报区（惰性创建） */
+let syncLiveRegion: HTMLElement | null = null;
+/** 失败态红色视觉的自动褪去定时器（原因文案留在 title 里，不随之消失） */
+let syncFailedVisualTimer: number | undefined;
+/**
+ * 失败红字保留时长。刻意不是「永久的」：失败可能发生在用户没盯着屏幕的时候
+ * （进页自动同步），所以它必须醒目；但也不该长期挂在头部当装饰 —— 十几秒足够
+ * 让人注意到，之后 title 里仍能读到原因。
+ */
+const SYNC_FAILED_VISUAL_MS = 20_000;
+
+/** 只切失败配色，并给它一个自动褪去的时间盒 */
+function setSyncFailedVisual(btn: HTMLElement, on: boolean): void {
+  if (syncFailedVisualTimer !== undefined) {
+    window.clearTimeout(syncFailedVisualTimer);
+    syncFailedVisualTimer = undefined;
+  }
+  btn.classList.toggle('gsm-sync-failed', on);
+  if (!on) return;
+  syncFailedVisualTimer = window.setTimeout(() => {
+    syncFailedVisualTimer = undefined;
+    btn.classList.remove('gsm-sync-failed');
+  }, SYNC_FAILED_VISUAL_MS);
+}
+
+/**
+ * 显式注销头部按钮的同步状态订阅（`viewTeardown` 删 `.gsm-sync-btn` 时调用）。
+ * 只靠 `isConnected` 兜底是错的：跨断点往返每轮都会在订阅集合里留下一个指向
+ * 游离按钮的闭包，越积越多。
+ */
+export function unmountSyncButton(): void {
+  mountedSync?.unsubscribe();
+  mountedSync = null;
+  syncLiveRegion = null;
+  if (syncFailedVisualTimer !== undefined) {
+    window.clearTimeout(syncFailedVisualTimer);
+    syncFailedVisualTimer = undefined;
+  }
+}
+
+/** 视觉隐藏的播报区：只在进行中写入文案，且必须能被 teardown 一并清掉 */
+function ensureSyncLiveRegion(host: HTMLElement): HTMLElement {
+  if (syncLiveRegion && syncLiveRegion.isConnected) return syncLiveRegion;
+  const el = document.createElement('span');
+  el.className = 'gsm-sync-status';
+  el.setAttribute('role', 'status');
+  el.setAttribute('aria-live', 'polite');
+  host.appendChild(el);
+  syncLiveRegion = el;
+  return el;
+}
+
+/**
+ * 标题行 Sync 按钮（4.0.4 恢复；**4.10.0 起改为同步状态的唯一视图**）。
+ *
+ * 旧实现只有「自己点自己」才有反馈（而那正是被明确否决的整按钮刷新态）；现在
+ * TM 菜单 / 配置横幅 / Token 保存 / 进页自动 / 按钮自身五个入口触发的同步，
+ * 都由这里同一个按钮显示出来。
+ *
+ * 契约（勿破坏）：**DOM 形状恒定** —— 只切 `aria-busy` / `aria-disabled` / `title` /
+ * 一个错误态 class，既不换图标节点也不换文字节点。Primer 的 `ButtonBase` 源码注释
+ * 明确记载「切 loading 前后若 DOM 不同形，按钮会丢焦点」；这同时保证按钮宽度在
+ * 同步前后完全不变（用户明确要求「不要整个按钮变成刷新态」）。
+ */
 export function mountSyncButton(row: HTMLElement): void {
+  unmountSyncButton();
   row.querySelector('.gsm-sync-btn')?.remove();
   const pager = row.querySelector('.gsm-top-pager');
 
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'Button Button--secondary Button--medium gsm-sync-btn';
-  btn.title = '同步 GitHub 全量 star 列表（逐页 ETag 快筛 + 整表比对 + 回填 star 时间）';
   btn.innerHTML = SYNC_SVG + ' Sync';
+  btn.title = SYNC_DEFAULT_TITLE;
   btn.addEventListener('click', () => {
-    void syncFromButton(btn);
+    // 同步中点了也不会有第二次请求（runFullSync 的重入守卫兜底）；CSS 另加
+    // pointer-events:none 让「不可点」在观感上也成立
+    void runFullSync('button');
   });
 
   if (pager) row.insertBefore(btn, pager);
   else row.appendChild(btn);
+
+  // 「挂载即对齐」：Token 保存路径下网格（连同按钮）是在同步**之后**才建的，
+  // 若只等下一次广播，按钮会先呈空闲再跳变。
+  renderSyncButton(btn, row, getSyncState());
+  mountedSync = { unsubscribe: subscribeSyncState((state) => renderSyncButton(btn, row, state)) };
 }
 
-async function syncFromButton(btn: HTMLButtonElement): Promise<void> {
-  if (syncing || btn.classList.contains('gsm-pager-loading')) return;
-  btn.classList.add('gsm-pager-loading');
-  btn.setAttribute('aria-busy', 'true');
-  try {
-    const sum = await runFullSync('button');
-    if (sum) {
-      btn.title =
-        `上次同步：${sum.total} 个 star / ${sum.pages} 页 — 新增 ${sum.added}、恢复 ${sum.restored}、` +
-        `外部 unstar ${sum.unstarred}、回填 star 时间 ${sum.backfilled}`;
-    }
-  } finally {
-    btn.classList.remove('gsm-pager-loading');
-    btn.removeAttribute('aria-busy');
+/** 把状态画到按钮上（唯一视图；只碰属性，绝不碰结构） */
+function renderSyncButton(btn: HTMLElement, host: HTMLElement, state: SyncState): void {
+  setSyncFailedVisual(btn, state.phase === 'failed');
+
+  if (state.phase === 'running') {
+    btn.setAttribute('aria-busy', 'true');
+    // 用 aria-disabled 而不是 disabled 属性：保留可聚焦与 title 提示
+    // （Primer 按钮加载态指南第一条即「不摘除节点、不用 disabled」）
+    btn.setAttribute('aria-disabled', 'true');
+    btn.title = SYNC_DEFAULT_TITLE;
+    ensureSyncLiveRegion(host).textContent = '正在同步 GitHub star 列表…';
+    return;
   }
+
+  btn.removeAttribute('aria-busy');
+  btn.removeAttribute('aria-disabled');
+  if (syncLiveRegion && syncLiveRegion.isConnected) syncLiveRegion.textContent = '';
+
+  if (state.phase === 'failed') {
+    // 失败可见（4.10.0 修正）：旧代码只写 console，用户完全看不到
+    btn.title = `上次同步失败：${state.reason ?? '未知原因'}（点此重试）`;
+    return;
+  }
+
+  const s = state.lastSummary;
+  btn.title = s
+    ? `上次同步：${s.total} 个 star / ${s.pages} 页 — 新增 ${s.added}、恢复 ${s.restored}、` +
+      `外部 unstar ${s.unstarred}、回填 star 时间 ${s.backfilled}`
+    : SYNC_DEFAULT_TITLE;
 }
 
 /** API 数据就绪 = 至少完整整表过一次（全量缓存可渲染 = API 主模式前提） */

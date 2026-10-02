@@ -8,47 +8,47 @@
 
 ## 当前状态
 
-版本 **4.9.2**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
+版本 **4.10.0**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
 
-> 交接时间：**2026-10-02 19:25 +0800**。
+> 交接时间：**2026-10-02 20:30 +0800**（本机时钟；上一次交接标注的 21:40 与本机 `date` 不符，以本行为准）。
 
-**4.9.2（已提交；`git log` 里标题为「窄视口(<768px)完全惰性…」的那一条）**：三组改动 + 一轮独立审查修正，规划与验收标准见
-`docs/plans/archive/2026/2026-10-02-优化手机端-窄视口-脚本行为-…-精简-gm-权限.md`：
+**4.10.0（本次交接的版本）**：两组功能 + 一处顺带修 + 一轮死码清理 + 一轮发布前独立审查修复。规划与验收标准见
+`docs/plans/archive/2026/2026-10-02-分页按钮可跳页-点击输入目标页-所有-sync-入口与头部同步按钮完全联动-图标旋转-删除旧的整.md`
+（联网调研证据另见 `docs/research-pager-jump-a11y-spinner.md`）：
 
-1. **窄视口（<768px）完全惰性** —— 修「缩到手机尺寸后脚本没失效、留下一地残次内容」：
-   `transformAndReveal()` 的视口判定挪到**一切注入之前**；其余入口门分散在各处（**数量以
-   `grep -rn 'isDesktop()' src/` 为准**，别在此维护计数）。新增 `src/viewTeardown.ts`（幂等回滚）
-   + 断点双向切换（`subscribeBreakpointChange`）。
-2. **回滚可靠性的两个新机制**：`src/lifecycle.ts`（受管监听/定时器作用域 + 世代号，杀掉「回滚被自己排的队
-   撤销」）；所有对原生节点的 `display:none` 写入必须带 `data-gsm-hidden` 标记（按痕迹回滚）。
-3. **GM 权限 8 → 5**（`GM_getValue` / `GM_setValue` / `GM_registerMenuCommand` / `GM_openInTab` / `GM_download`）
-   + 一批死码/冗余兜底清理。TM 的能力徽标按 `@grant` 数组生成（不做调用分析），删掉「用别的通道实现」的
-   授权才真的让用户看到的能力清单变短。
+1. **分页按钮可以跳页** —— 修「页码指示器只显示页数、点击无任何效果」：指示器由静态 `span` 升级为
+   `<button type="button" class="btn BtnGroup-item gsm-page-info">`；点击 → **同一单元格内原位换成输入框**
+   （`type=text` + `inputmode=numeric`，**不用** `type=number`）→ `Enter` 提交 / `Escape` 取消 / 失焦提交。
+   非数字与越界**静默夹取**（`0`/`-1` → 第 1 页，`999` → 末页），夹取后等于当前页则不重绘，全程不弹提示。
+   跳页与 `Previous`/`Next` **共用唯一提交口径** `navigateToLocalPage()`（`src/pagination.ts`）。
+   交互**全部由 window-capture 委托承担**（不往分页器节点挂监听）—— 顶部分页器是 `cloneNode(true)` 的克隆件，
+   **克隆不会复制事件监听**（见 D22）。
+2. **所有同步入口都驱动头部 Sync 按钮** —— 修「部分入口点击后无明显回应」：`fullSync.ts` 新增同步状态
+   **单一真相**（`SyncState` = idle/running/failed + `getSyncState` / `subscribeSyncState` / `setSyncState`），
+   `runFullSync` 只推进状态并在开始/finally 广播；`mountSyncButton` 是该状态的**唯一视图**。
+   五个入口（TM 菜单 / 配置横幅 / 标题行按钮 / Token 保存后 / 进页自动）触发的同步，都让按钮内的
+   **octicon 旋转**，而按钮文字与几何**恒定不变**（见 D23）。
+3. **删除旧刷新态**：`.gsm-pager-loading`（整按钮文字变透明 + `::before` 伪元素转圈）与其全部 `classList`
+   读写已删；`@keyframes gsm-spin` 保留并转由新规则复用。git 全历史查证**不存在第二套刷新态实现**
+   （`270ba4d` 翻页链接引入 → `fff03cc` Sync 按钮复用 → `91be837` 搬到横幅 → `5284745` 全删 → `67151c9` 恢复），
+   用户所说的「旧的整按钮刷新态」就是这一套，现已无任何消费者。
+4. **顺带修**：`pushNotice` 的容器入口加视口门 —— 窄视口下从 TM 菜单触发同步不再把通知栈懒重建出来
+   （消掉「已知风险」第 10 条的剩余一半，见 D24）。
+5. **发布前独立审查轮**（外部 reviewer 复核整批 diff，抓到 1 个 P0 + 3 个 P1，**全部已修**）：
+   P0 = 新引入的「失焦即提交」在渲染**内部**嵌套再调一次 `renderBrowsePage`（`renderBrowsePage` 会
+   `remove()` 底部那份分页器再插回，而摘掉含焦点的子树本身触发 `blur`）⇒ 页码文字与网格内容各说各话，
+   触发路径全与用户无关（进页自动同步 / 同步后重渲染 / 导入后的 `applyFilters`）；改为 **blur 延后一拍
+   再判 `input.isConnected`**。P1 = `updateLocalPagers()` 那道过粗的跳过门（编辑态下 prev/next 不更新）、
+   关闭输入后焦点掉到 `body`、文档说 `-1` 会夹到第 1 页而实现是「不跳」。顺带清掉重复注释、无消费者的
+   `export`、`getSyncState` 返回可变引用等 P2。逐条口径见 **D22 / D23**，验证见「下一步」第 8 条。
 
-**独立审查轮（2026-10-02，2 个 code-reviewer 并行 + 本人复核）**：29 个改动文件、~620 行，切两个互不重叠的
-范围审（视口/回滚/生命周期 vs 写路径/权限/存储/文档）。查出 **5 处真缺陷（3🔴 + 2🟡），全部已修并逐条实测复现**：
+> **交接第一件事**：`@version` 已变 ⇒ **用 dev 脚本的人必须重装 dev loader**（重开安装页原地更新），
+> 否则 TM 菜单整体消失。正式版不受影响。机制见下「dev 模式必须知道的四件事」第 4 条。
 
-1. **🔴 原生搜索被吞**（两位审查员独立复现）：`search.ts` 用 `data-gsm-search-bound` 标记串防重复挂载，
-   但**摘不掉**已挂的 `submit`/`keydown` 监听 ⇒ 桌面收窄后原生搜索仍被 `preventDefault`，而本地搜索已被
-   视口门挡住 ⇒ 按回车「什么都不发生」，且标记本身是残留痕迹。改为 `lifecycle` 作用域持有 +
-   `disposeSearchInterception()`（teardown 第 10 项）。
-2. **🔴 回滚后仍发整表 API**：`scheduleProbeSync` 的 2s 定时器只在排队时判视口 ⇒ 「桌面打开 → 2s 内收窄」
-   时页面已退回原生视图却仍在拉 API，且检出变化会在窄视口重建通知栈。改为 `ifCurrent(gen)` + 回调内复判视口。
-3. **🔴 桌面 Hide Lists 回归**：teardown 无条件清 `gsm-hide-lists` + Lists 标记 ⇒ 离开 Stars 去别的
-   profile 标签后 Lists 会与开关状态相反地冒出来。改为**只在 `!isDesktop()` 时清**（见 D20 的「视图级 vs 页面级」）。
-4. **🟡 首次安装路径 Lists 标题行外露**：`.my-3` CSS-only 兜底删掉后，`!hasApiData()` 分支不跑 transform
-   ⇒ 容器被门控 CSS 藏住但标题行（54px）露在配置横幅上方。已在该分支补 `hideListsSection()`。
-5. **🟡 Starred topics 回填无身份校验**：teardown 只判 `colLg3.isConnected` ⇒ Turbo 原位重渲染换出**新的**
-   `.col-lg-3` 时会把陈旧内容倒进去（重复 topics）。改为痕迹标记 `GSM_TOPICS_SRC_ATTR`（见 D20）。
-   （另有 🟢 一条已采纳：teardown 补一行 `console.log` 留痕；4 条 🟢/🟡 判定为低价值或需用户裁定、本轮未改，
-   清单见归档方案 §11。）
-
-另外修掉 3 处**注释与事实不符**（`gm.ts` 把 `{ id }` 写成 TM 4.20+ —— 实为 5.0，同一提交内自相矛盾；
-`hideListsMenu.ts` 对旧版 TM 退化的描述不准；`constants.ts` / `wide.css` 的陈旧引用与悬空 JSDoc），
-并删掉 `lifecycle` 里零消费者的 `interval` / `clearTimer`。审查证据见下「验证」条。
-
-> **审查员判错的一条（勿照抄）**：`gm.ts` 注释「菜单有 8 项」被报为陈旧 —— 实为 8 处注册
-> （同步 1 + Token 3 + 导入导出 2 + Hide Lists 1 + 恢复 1），**是对的**。
+**4.9.2 提要**（仍生效的口径已全部归入 D18–D21，此处只留一句）：窄视口完全惰性 + `viewTeardown` 幂等回滚 +
+`lifecycle` 世代号 + GM 权限 8→5；另有一轮独立审查修掉 5 处真缺陷（原生搜索拦截未解绑、回滚后仍发整表 API、
+桌面 Hide Lists 回归、首次安装 Lists 标题行外露、topics 回填无身份校验）——实现细节查 `git log` 与
+`docs/plans/archive/2026/2026-10-02-优化手机端-窄视口-脚本行为-…-精简-gm-权限.md`。
 
 **更早的版本**（改动细节查 `git log` 与对应 ADR；此处只保留仍生效的口径）
 
@@ -264,6 +264,77 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
 - **首次安装路径要自己补一次 `hideListsSection()`**（4.9.2 审查补）：`.my-3` CSS-only 兜底删掉后，
   无缓存分支（`!hasApiData()` → 配置横幅，不走 transform）只剩门控 CSS 藏容器，**标题行会露出来**，
   所以 `transformAndReveal` 的 `!hasApiData()` 分支里必须显式调一次。
+
+**D22 · 分页可跳页（4.10.0）**
+
+- **入口**：分页器中间的 `N / M` 由静态 `span` 改为 `<button type="button" class="btn BtnGroup-item gsm-page-info">`
+  （可聚焦、可被读屏描述）。点击 → **同一单元格内原位**换成 `<input class="btn BtnGroup-item gsm-page-input">`，
+  提交/Esc/失焦后换回按钮。**不做浮层**：顶部那份是 `cloneNode(true)` 克隆件，`popovertarget` /
+  `anchored-position` 需要 document 级唯一 id 与锚点，克隆会把 id 一起复制；而 Popover API 属 Baseline 2024
+  （Safari 17+），超出本脚本 `cssTarget=safari15` 的目标面。
+- **交互一律走 `pagination.ts` 的 window-capture 委托**（`closest('button.gsm-page-info')`）。
+  **禁止**改成往分页器节点挂监听：`cloneNode` **不复制事件监听**，顶部那份会失效。输入框本身是**瞬态**节点，
+  监听随它一起销毁 ⇒ 不需要 `lifecycle` 作用域、也不留需要回滚的痕迹。
+- **唯一提交口径** `navigateToLocalPage(raw: unknown)`：`Number.isFinite` 守卫 → 夹取 `[1, totalPages]` →
+  同页早退 → `renderBrowsePage`。prev/next 与新输入态**都只调它**，不得各写一份校验
+  （`renderBrowsePage` 自己对 `NaN` 没有守卫，远端 `?page=N` 越界又是**静默返回空结果**，所以越界只能本地兜）。
+- 输入框用 `type="text"` + `inputmode="numeric"` + `pattern="[0-9]*"` + `enterkeyhint="go"`；
+  **不要用 `type="number"`**（隐式角色 `spinbutton`、方向键会意外改值、非法输入无反馈）。
+  宽度与字体度量**不用固定值** —— JS 在进入编辑态时按被顶替按钮的实测几何写内联值
+  （固定 `3.5em` 实测会宽出 21px、整条分页器横向跳动）。进出编辑态整条分页器不重排。
+- **`updateLocalPagers()` 不为输入态加跳过门**（4.10.0 发布前审查推翻首版措辞）：进入编辑态是把页码按钮
+  `replaceWith` 成 input，那份 `.gsm-page-info` 查不到、文字写入天然是空操作；而 prev/next 的禁用态
+  **必须**照常更新 —— 曾「整份跳过」，结果编辑期间发生一次渲染就会让分页器与真实页码脱节。
+- **失焦提交必须延后一拍**（4.10.0 发布前审查抓到的 P0）：`renderBrowsePage` 会 `remove()` 底部那份
+  分页器再 `appendChild` 插回，而「摘掉含焦点的子树」本身就触发 `blur`；同步提交会在渲染**内部**嵌套
+  再调一次 `renderBrowsePage`，外层接着用它早算好的 `start` 覆盖网格 ⇒ 页码文字与网格内容各说各话。
+  故 `blur` → `queueMicrotask` → 判 `input.isConnected`：仍在文档里 = 真失焦 → 提交；已被摘掉 = 外层渲染
+  接管 → 作废。**不要**改回同步提交，也不要为此给 `renderBrowsePage` 加重入守卫（守卫只会让嵌套那次
+  被丢弃、外层照样覆盖，问题依旧）。
+- `finish()` 还原单元格时按**当前**页码重写文字（编辑期间可能已渲染过），并 `cell.focus({preventScroll:true})`
+  把焦点还给按钮 —— 不还焦点 = 键盘用户被丢回页面开头。
+- 非法/越界**静默**处理，不弹提示、不发请求。字符串路径允许**前导负号**（`-1` 属越界 → 第 1 页）；
+  数字守卫只否 `NaN`（超长数字串折成 `±Infinity` 属越界 → 夹到边界，不是「不跳」）；IME 组成中的
+  `Enter` 不提交（`ev.isComposing` 直接返回）。
+
+**D23 · 同步状态只有一个真相，头部按钮是它唯一的视图（4.10.0）**
+
+- **口径：入口多处、状态一处、视图一处。** `runFullSync()` 签名与五个调用点保持不变；它只推进
+  `fullSync.ts` 内的 `SyncState`（idle / running / failed+reason）并在**开始**与 **finally** 各广播一次
+  （`subscribeSyncState`）。`mountSyncButton` 订阅它，**任何入口**触发的同步都让同一个按钮显示出来。
+- **按钮 DOM 形状与文字恒定**：只切 `aria-busy` / `aria-disabled` / `title`（外加错误态配色 class），
+  不换图标节点、不换文字、不加 `disabled` 属性。理由有两层：Primer `ButtonBase` 的源码注释明确记载
+  「切 loading 前后若 DOM 不同形，按钮会丢焦点」；且用户 2026-10-02 明确要求**只让 ICON 转**，
+  而不是「整个按钮变成刷新态」。
+- 旋转由 `.gsm-sync-btn[aria-busy='true'] .octicon-sync` 驱动（作用在 `<svg>` 上，抄 Primer `.anim-rotate`），
+  包在 `@media (prefers-reduced-motion: no-preference)` 里；**禁止用 SVG SMIL** —— Primer PR #1251 记录
+  无限 SMIL 会让后台标签回前台时冻结数秒以上（与本脚本既有的后台标签冻结观察同源）。
+- **挂载即对齐**：`mountSyncButton` 建完按钮先 `renderSyncButton(getSyncState())` 再订阅 ——
+  Token 保存路径下网格（连同按钮）是在同步**之后**才建的（`index.ts` 的 `setTokenSavedHandler`）。
+- **状态 API 只给模块内用**（4.10.0 发布前审查）：`getSyncState` / `subscribeSyncState` / `SyncState` 等
+  都不 `export`（唯一消费者是同文件的 `mountSyncButton`；`viewTeardown` 只拿 `unmountSyncButton`），
+  与 D21「删多余 export」同口径。`getSyncState()` 返回**浅拷贝** —— 调用方就地改写不得绕过 `setSyncState` 的广播。
+- **订阅必须显式注销**：`unmountSyncButton()` 由 `viewTeardown` 第 2 项调用。**禁止**用 `isConnected` 兜底 ——
+  跨断点往返每轮都会在订阅集合里留一个指向游离按钮的闭包。
+- **失败与被丢弃都要有痕迹**：失败 → `failed` 态（title 常驻「上次同步失败：<分类文案>（点此重试）」+ 红字 20s
+  后自动褪去，文案复用既有失败分类，不新造）；**被并发丢弃不广播 failed**（那会把正在转的按钮停下、谎报失败），
+  它由 running 态本身 + 一条说明为何忽略的 console 日志承载。旧代码在 `catch` 里只写 console，失败对用户不可见。
+- 加载态另有视觉隐藏的 `aria-live` 播报区 `.gsm-sync-status`（**惰性创建**，文案只在进行中渲染，
+  `viewTeardown` 第 2 项一并删除）—— 这是「回滚按痕迹」清单里唯一为本次新增的选择器。
+- **证据来源（联网调研，含 URL）**：`docs/research-pager-jump-a11y-spinner.md` —— 要点：GitHub 自身**没有**
+  跳页输入（线上页面 `<input>` 计数 0、Primer `Pagination` 无跳页入参）；`?page=N` 越界在 GitHub 侧**静默返回空结果**；
+  `type="number"` 的 a11y 缺陷；Primer `ButtonBase` 的 loading 范式（保留文字、只换 visual、`aria-disabled`、
+  隐藏 live region，注释明说「DOM 不同形会丢焦点」）；Primer PR #1251 的 SMIL 冻结 bug；
+  `.anim-rotate` 与 `prefers-reduced-motion` 在 Primer 自身的实现分歧。
+
+**D24 · 窄视口下通知不再被懒重建（4.10.0）**
+
+- 门开在 `ui/notifications.ts` 的 **`ensureContainer()`**（所有通知唯一的容器入口，返回 `HTMLElement | null`），
+  `pushNotice` 在拿到 `null` 时返回**空句柄**（`NOOP_NOTICE_HANDLE`）并留一条 console。
+- 背景：容器是**懒重建**的，窄视口下哪怕只从 TM 菜单触发一次同步，也会把整座 `gsm-notify-stack` 建回来，
+  与「窄视口完全惰性」正面冲突（原「已知风险」第 10 条的剩余一半）。
+- 与 D18 的关系：新增任何**异步通知路径**时不必各自加视口门 —— 只要经过 `pushNotice` 就被拦住；
+  但**绕过 `pushNotice` 直接建节点**的路径仍然会破这条约束。
 ---
 
 ## dev 模式必须知道的四件事
@@ -351,15 +422,20 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
 9. **老版 Tampermonkey（< 5.0）下「隐藏 Lists」菜单项会累积重复**（4.9.2 审查发现，**既有行为非新引入**）：
    旧版忽略 `GM_registerMenuCommand` 的 `{ id }` 却仍返回 id，于是每次切换都新建一条菜单项。功能不受影响，
    只是菜单条数变长；重进页面即恢复单条。VM 2.15.9+ 与 TM 5.0+ 行为正常（见 D21）。
-10. **通知栈没有「窄视口不弹」的硬保证**：`disposeNotificationStack()` 之后，任何仍在跑的 `pushNotice()`
-   都会经 `ensureContainer()` 懒重建整座栈。`scheduleProbeSync` 的 2s 定时器已用世代号 + 视口复判堵住
-   （见 D18），但**将来新增的任何异步通知路径都要自己带这道门**。
+10. ~~通知栈没有「窄视口不弹」的硬保证~~ —— **4.10.0 已修**（见 D24）：门开在 `ensureContainer()`，
+    窄视口返回 `null`、`pushNotice` 交回空句柄。`scheduleProbeSync` 的 2s 定时器仍另有世代号 + 视口复判
+    （见 D18）。残留约束：**绕过 `pushNotice` 直接建节点的路径**不受这道门保护。
+11. **底部那份分页器提交后焦点仍会掉到 `BODY`**（4.10.0 审查发现，**有意留下**）：`renderBrowsePage` 会
+    `remove()` 底部 pager 再插回，落在里面的焦点无法存活。标题行那份（顶部，也是本功能的入口）不经过
+    这条路径，焦点能正常回到按钮。要彻底修就得让 `renderBrowsePage` 也管焦点，代价大于收益。
+12. **`.gsm-sync-btn[aria-disabled='true']` 上的 `cursor: progress` 实际不生效**（`pointer-events: none`
+    把光标让给了父级）—— 纯装饰，留着不修。
 
 ---
 
 ## 下一步
 
-1. **@version 已升到 4.9.2 → 若你在用 dev 脚本，必须重装 dev loader**：重开
+1. **@version 已升到 4.10.0 → 若你在用 dev 脚本，必须重装 dev loader**：重开
    <http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js> 让 TM 原地更新，否则 TM 菜单会整体消失
    （机制见「dev 模式必须知道的四件事」第 4 条：`@version` 变了 → 脚本头变了 → mountGmApi 的 key 对不上）。
    正式版不受影响；`@version` 变了却没重装，表现是「TM 菜单空了」+「同步说未配置 token」。
@@ -367,7 +443,7 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
    **不得**声称可用或不可用）、`context=user_stars` 服务端是否据其分支（实测 200 但不可知）。
    离页仓库 + 仅 VF 头**已实测成立**（见「当前状态」的实测结论），不必重复验。
 3. 后续阶段（详见 `todo` 与 `DEVELOPER.md` §13）：GraphQL 分页调研、周期自动同步、非本人 star 页
-   `GET /users/{u}/starred` 接入、分页按钮可跳页。
+   `GET /users/{u}/starred` 接入。（「分页按钮可跳页」已于 4.10.0 完成，见 D22。）
 4. 未消化的架构建议：单遍 facet 计算、响应式漏斗（见 `starmgr-arch-review-report.md`）。
 5. fine-grained PAT 写他人公开仓库的能力缺口由 GitHub 控制（roadmap#600 NOT_PLANNED、#601 OPEN）——将来若补齐，
    可回头简化 `docs/adr/0006` 的网页端点通道。
@@ -396,6 +472,52 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
    安装页/面板里本脚本的授权清单是否恰为 5 项、导出仍能触发 `GM_download`、TM 菜单项齐全（实测 8 处注册）。
 7. **原生 `fetch` 语言色通道有一个新观察项**：它现在受页面 CSP `connect-src` 约束（已实测该主机在白名单内），
   且失败是静默降级（灰圈）。GitHub 若收紧 CSP，表现是语言色全部变灰点 —— 届时把 `gmFetchText` 加回来即可。
+8. **4.10.0 的验证（T9，2026-10-02 已跑完）**：静态 = `pnpm check` 绿、`node scripts/verify-css.cjs` EXIT 0、
+   `pnpm test:exportimport` 51/0、dist 头部 `@grant` **恰 5 项**、dist 内 `gsm-pager-loading` 0 命中 / 无 SMIL /
+   有 `prefers-reduced-motion`。
+   **仿真页断言全绿**（工装 `.diag/gen-jump-harness.cjs` → `jump-harness.html` + `assert-jump-{a,b,c,d,e,f,g,h}.js`，
+   全部在 gitignore 的 `.diag/` 下，可重跑；**URL 必须带 `?tab=stars`**，否则脚本根本不转换、`grid:0` 会被误读成全绿；
+   夹具含 70 个仓库 = 3 页，fetch 用桩、零真实网络）：
+
+   | 断言 | 实测结果 |
+   |---|---|
+   | 跳页入口 | 点击页码指示器（顶/底两份都测）→ 原位出 `<input>`：已聚焦、已全选、`type=text` + `inputmode=numeric` + `pattern` + `enterkeyhint=go` |
+   | 几何不跳动 | 输入框 42×21 vs 按钮 41.9×21、BtnGroup 157.6 vs 157.5 ⇒ 一致（曾用固定 `3.5em` 导致 +21px 横向跳动，已改为按被顶替单元格实测宽度写内联值） |
+   | 越界/非法 | `999`→末页 `3 / 3` 且顶底同步；`0`/`-1`→第 1 页；`abc`/空→不跳；**全程 fetch 增量为 0** |
+   | 同页不重绘 | 跳当前页后首卡 DOM 引用不变 |
+   | Escape / blur | Escape 取消不回退页码；blur 提交生效（与备注编辑同口径） |
+   | 编辑态保护 | 输入框开着时经原生搜索 Enter 触发一次真实渲染 → 输入框仍在、值未丢、仍聚焦 |
+   | 同步联动（他入口） | 从 **TM 菜单**触发 → 按钮 `aria-busy=true` + `aria-disabled=true` + `.octicon-sync` 动画 `gsm-spin` + live 区「正在同步…」 |
+   | 并发丢弃 | 同步中再点按钮 ⇒ **0 个新请求**且仍 busy（不谎报失败） |
+   | 失败可见 | 桩网络错 ⇒ busy 清除、`gsm-sync-failed` 上色、title = 「上次同步失败：boom-network（点此重试）」、动画停、live 清空 |
+   | a11y 结构 | 同步前/中/后 `outerHTML`（剥属性）**完全一致**、文字恒为 `Sync`、宽度恒 69px |
+   | 完整同步 + 简报 | 桩「无变化」整表 ⇒ 通知栈出现「同步完成：无变化（共 70 个 star）」、按钮回 idle 且 title 换成摘要 |
+   | 窄视口零残留 | 载入与运行中共测：grid=0、`.gsm-*`/`.stars-*` 节点 0、无 live 区、无通知栈；页面仅有的 3 个内联 `display` 全是夹具自身（无 `data-gsm-hidden`）、2 个 `<style>` 是夹具与 CLI 注入的 |
+   | 通知栈视口门 | 窄视口里把一次同步**跑完**（元数据写盘 = 最后一步）⇒ `.gsm-notify-stack` 仍为 0（简报被拦） |
+   | 订阅不泄漏 | 收窄回滚后改变状态（running→failed）⇒ **游离按钮的 `aria-busy` 保持 "true"、未染 failed 类**（订阅确已注销） |
+   | 挂载即对齐 | 拖回桌面后新按钮立即渲染**当前**状态（running 时 busy+旋转；failed 时上色+title 带原因） |
+   | 幂等 | 桌面↔窄视口往返 3 轮：grid/topPager/rightSidebar/syncBtn/infoButtons/topicsMark 恒为 1/1/1/1/2/1，窄侧全 0；往返后跳页与状态驱动仍正常；`__errors` 空 |
+   | 动效门 | CDP `Emulation.setEmulatedMedia` 切 `prefers-reduced-motion: reduce` ⇒ 动画 `none`（busy 与文字仍在）；切回 ⇒ `gsm-spin` 1s infinite |
+
+   **发布前独立审查轮**（外部 reviewer，只读复核 + 自建复现实验）抓到 1 P0 / 3 P1 / 7 P2，**P0+P1 已修**，
+   P2 修了 5 条（重复注释、陈旧 CSS 注释、无消费者的 `export`、`getSyncState` 可变引用、超长数字串）。
+   修复后另跑 **断言 I**（`.diag/assert-jump-i.js`，同一工装，全绿）：
+
+   | 审查项 | 修复后的实测 |
+   |---|---|
+   | P0 编辑态与内容一致性 | 底部输入框开着 + 触发一次与用户无关的渲染 ⇒ 文字两份都是 `2 / 3` **且**网格首卡 = 第 2 页首卡（修复前：文字 `2 / 3`、内容是第 1 页） |
+   | P1 编辑态下 prev/next | 顶部编辑态中渲染把页重置到 1 ⇒ `prev` 带 `disabled`、`next` 可用（此前整份跳过，停在旧禁用态） |
+   | P1 焦点归还 | Escape 与 Enter 之后 `document.activeElement` 都是 `BUTTON.gsm-page-info`（修复前是 `BODY`） |
+   | P1 `-1` 口径 | 从第 3 页输入 `-1` ⇒ 第 1 页（现已与文档一致） |
+   | P2 超长数字 | 400 位 `9` ⇒ 末页 `3 / 3`（修复前「不跳」） |
+   | P2 IME | `isComposing: true` 的 Enter ⇒ 输入框仍在、页码未变 |
+   | 无回归 | A / B / E / F / G / H 六组旧断言全部复跑通过；`pnpm check` 绿、`verify-css` EXIT 0、51/0、dist `@grant` 恰 5、旧类零命中 |
+   **仍需真机确认（只能在真 github.com + TM 上做）**：① 真窗口下点击页码跳页的实际手感（仿真里几何是
+   精确对齐的，但字体/缩放的真实观感只能肉眼看）；② TM 安装页/面板里本脚本的授权清单是否恰 5 项
+   （dist 头部已核为 5 项，但 TM 的展示需真机确认）；③ 真机 Turbo 导航路径下跳页与同步按钮的观感
+   （①②的行为层已由仿真断言覆盖，真机只做观感与安装页核对）。
+   **一处刻意的实现收窄**（与方案 T6 的措辞不同）：**被并发丢弃的同步不广播 `failed`**，只留 console ——
+   改成 failed 会把正在转的按钮停下、谎报失败（见 D23）。
 
 ## 快速构建约定
 

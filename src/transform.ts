@@ -91,8 +91,14 @@ function buildLocalPager(): HTMLElement {
   prev.dataset.gsmPage = 'prev';
   prev.textContent = 'Previous';
 
-  const info = document.createElement('span');
+  // 4.10.0：页码指示器由 span 升级为 button —— 它是「点击输入要去的页数」的入口，
+  // 必须可聚焦（键盘可达）、可被读屏描述，而不是一块纯视觉文本。
+  // 注意：顶部那份是 cloneNode(true) 克隆件，**监听不会被复制**，所以交互一律由
+  // pagination.ts 的 window 捕获委托承担（见该文件 / interceptPagination）。
+  const info = document.createElement('button');
+  info.type = 'button';
   info.className = 'btn BtnGroup-item gsm-page-info';
+  info.title = '点击输入要跳到的页码';
   info.textContent = '…';
 
   const next = document.createElement('a');

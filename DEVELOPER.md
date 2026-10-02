@@ -95,13 +95,13 @@ src/
   gm.ts               GM API 兼容层（调用时判定；localStorage 兜底与迁移；PAT 不写镜像）
   boot.ts             document-start 防闪烁隐藏生命周期（FOUC）
   dom.ts              DOM 查询工具 + Hide Lists 开关引擎（isHideListsEnabled / applyHideListsGate / hideListsSection / clearListsHiddenMarks）
-  transform.ts        列表 → 卡片网格转换（藏原生列表与分页器、挂顶部分页器与 Sync 按钮、Starred Topics 迁右栏）
+  transform.ts        列表 → 卡片网格转换（藏原生列表与分页器、挂顶部分页器与 Sync 按钮、Starred Topics 迁右栏）；自造分页器：`Previous | <button.gsm-page-info> | Next`（4.10.0 起页码指示器是可点击/可聚焦按钮，见 pagination.ts）
   lifecycle.ts        生命周期层（4.9.1；4.9.2 审查删掉零消费者的 interval / clearTimer）：受管监听/定时器作用域（createScope）+ 世代号（beginGeneration / guardedTimeout / ifCurrent）
                       —— 回滚后旧回调在动手前自我作废，解决「teardown 被自己排的队撤销」
   viewTeardown.ts     窄视口回滚 / 离开 Stars 收尾（4.9.1；4.9.2 审查加第 10 项「解绑原生搜索监听」并把 Lists 隐藏改为仅在窄视口清）：按痕迹逐项撤销脚本对 GitHub DOM 的写入（幂等；见 §6「窄视口完全惰性」）
   filters.ts          筛选引擎：queryRepos 统一查询管线、4 排序键×双向、facet 候选收窄、renderBrowsePage 本地分页、applyFilters、exitCustomMode、initFiltersFromUrl
   search.ts           搜索表单拦截（纯本地）
-  pagination.ts       本地分页拦截（只拦自造 data-gsm-page，零网络零 Turbo）
+  pagination.ts       本地分页拦截（只拦自造 data-gsm-page，零网络零 Turbo）+ **跳页唯一提交口径 navigateToLocalPage**（4.10.0：prev/next 与页码输入框共用同一套夹取/越界守卫）
   langColors.ts       语言色引擎：linguist languages.yml 运行时拉取（**原生 fetch**，4.9.1 起不用 GM_xmlhttpRequest）+ 行扫描提取 + GM 缓存 + 未命中补拉/回退重检 + 色点原地重涂
   starCheck.ts        PAT 读写/前缀校验/菜单、外部 unstar 宽限管线（applyExternalUnstar）、卡片星标态刷新（syncCardAfterStarChange）
   tokenConfig.ts      凭据单一来源：getToken / detectTokenKind（ghp_·gho_=classic，github_pat_=fine-grained）/ isClassicCredential、
@@ -110,7 +110,10 @@ src/
                       成功判定、失败归一 + writeFailureMessage。**无 422 回退**（2026-10-01 实测推翻其前提，见 ADR 0006）
   mutationQueue.ts    全局串行变异队列（4.9.0）：间隔 ≥1000ms、排队中可撤销、失败不阻断后续
   restore.ts          恢复编排（4.9.0）：restoreOne / restoreMany（严格串行·可取消·不重试）/ pushRestoreNotice（同仓库通知去重）
-  fullSync.ts         API 主模式同步：scanStarred 单遍条件扫描、波次并发、整表 diff、star 时间回填、进页 probe、runFullSync / registerSyncMenu / mountSyncButton / hasApiData
+  fullSync.ts         API 主模式同步：scanStarred 单遍条件扫描、波次并发、整表 diff、star 时间回填、进页 probe、runFullSync / registerSyncMenu / hasApiData
+                     —— **同步状态单一真相（4.10.0）**：SyncState（idle/running/failed）+ getSyncState / subscribeSyncState / setSyncState
+                     （都在模块内，唯一消费者是同文件的 mountSyncButton）；mountSyncButton 只是该状态的**唯一视图**
+                     （unmountSyncButton 显式注销订阅）
   storage/
     repoCache.ts      仓库缓存 CRUD
     tags.ts           标签存储 + 用户 ID 解析 + 备注键规则 + 迁移
@@ -120,6 +123,7 @@ src/
   ui/
     cards.ts          卡片构建 + 星星按钮（4.9.0：乐观翻转 → 全局队列 → 排队中再点撤销 → 失败回滚 + alert）
     notifications.ts  通知栈（4.9.0 建立 / 4.9.1 改定位与观感）：锚在全局头部下方（挂 body、随滚动重算）+ 观感照 GitHub `.flash`（语义浅色底 + 1px 细描边 + 细线图标）+ transition 滑入、3s 自动消失、悬停整区暂停、划掉完成态
+                      —— **4.10.0 起容器入口带视口门**：`ensureContainer()` 在窄视口返回 null，`pushNotice` 交回空句柄（否则窄视口下同步会把整座栈懒重建出来）
     restoreMenu.ts    TM 菜单「♻️ 恢复已取消的 star」（4.9.0）：可勾选 + 一键恢复选中 + 每行 ☆ 按钮 + 进度 + 取消
     tagFilter.ts      标签 pill、筛选栏（原位重绘 = 共现收窄，勾选不关 popover）、pill 选中态同步、refreshTagFilterBar（候选刷新唯一入口）
     hideListsMenu.ts  TM 菜单「🙈 隐藏 Lists 区块」开关（持久键 stars_hide_lists + 标签刷新 + 门控即时生效）
@@ -170,11 +174,13 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
          │        ├─ renderBrowsePage(page) ─► buildCardFromCache() ─► 缓存卡片 DOM
          │        │        ├─ createStarButtonForCached()（API PUT/DELETE）
          │        │        ├─ renderTags() / renderNotes()
-         │        │        └─ updateLocalPagers()（顶/底 gsm-local-pager 同步页码与 disabled）
+         │        │        └─ updateLocalPagers()（顶/底 gsm-local-pager 同步页码文字与 prev/next disabled）
          │        ├─ mountTopPager() / mountSyncButton()
          │        └─ 渲染标签栏 + interceptSearchForm() + applyFilters()
          │
-         ├─ 分页：pagination.ts 拦 data-gsm-page ─► renderBrowsePage()（零网络零 Turbo）
+         ├─ 分页：pagination.ts 委托拦 data-gsm-page ─► navigateToLocalPage() ─► renderBrowsePage()（零网络零 Turbo）
+         │        （同一处委托还管「点击页码 → 原位输入框 → 跳页」，故顶部克隆件也生效：克隆不复制监听）
+         ├─ 同步：任意入口 runFullSync() ─► setSyncState() 广播 ─► mountSyncButton 的订阅回调（只让图标旋转）
          ├─ 退出：exitCustomMode() ─► pushState('?tab=stars')
          └─ 搜索：queryRepos() 纯本地全文（语言不参与匹配）
 ```
@@ -365,7 +371,12 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 
 **条件请求**：所有 fetch 带 `cache: 'no-store'`（GitHub API 回 `Cache-Control: public, max-age=60`，浏览器缓存会直接回 200 或把本地 304 合并成 200 返回 JS，导致误判「有变化」）。`normEtag()` 剥 `W/` 前缀统一规范形（弱比较等价，实测 304）。正确带 Authorization 的 304 不计主限流。
 
-**触发入口**（三处等价）：TM 菜单「🔄 立即全量同步」、横幅「立即同步」、标题行 Sync 按钮；另有进页 `scheduleProbeSync()`（冷却 60s + 有 PAT → `runFullSync('auto')`）。
+**触发入口**（五处，都只是「触发」）：TM 菜单「🔄 立即全量同步」、横幅「立即同步」、标题行 Sync 按钮、Token 保存后的自动同步、进页
+`scheduleProbeSync()`（冷却 60s + 有 PAT → `runFullSync('auto')`）。
+**4.10.0 起反馈不再各写一套**：`runFullSync` 只推进 `fullSync.ts` 内的同步状态并广播（`SyncState` +
+`subscribeSyncState`），头部 Sync 按钮是该状态的**唯一视图** —— 任何入口触发的同步都让按钮内的 octicon
+旋转（文字与按钮几何恒定不变）。旧的「整按钮文字透明 + `::before` 伪元素转圈」（`.gsm-pager-loading`）
+已删除。口径：**入口多处、状态一处、视图一处**。
 
 **`hasApiData()`** = `stars_full_sync_meta` 有 `lastFullSyncAt` 且 `count > 0`（= 至少完整整表过一次），决定「缓存网格」还是「原生页 + 配置横幅」。**它不检查当前是否配置了 token**——token 被撤销/清除后缓存网格照常渲染，且 4.9.0 起仍能经浏览器会话写星标；同步与写各自失败时报错。
 
@@ -427,7 +438,7 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 - `restoreMany()` **逐条 await**（严格串行）、执行中**可取消**（只停后续，已发出的不回滚）、**不自动重试**、无数量阈值。
 - TM 菜单「♻️ 恢复已取消的 star（24h 内）」= 可勾选 + 一键「恢复选中」+ **每行一个 ☆ 恢复 按钮**；`confirm` 显示条数与预估耗时（≥1s/条）。
 - **变化简报**（`emitSyncReport`）：任何 `runFullSync` 路径收尾都弹；口径只有「取消 star / 新增 / 恢复」，**元数据刷新只进控制台**；无变化也弹「无变化（共 N 个 star）」（304 免额度早退路径同样弹）；**不判重**；每条外部取关**各弹一条带「恢复」按钮的通知**。
-- **通知栈**（`ui/notifications.ts`）：常挂 `document.body`（**不是** header 子节点），锚在**全局头部下方**（`div.header-wrapper.js-header-wrapper` 底边 + 8px，滚动/改窗口时 rAF 重算，头部滚出视口后回落视口顶部 8px）、新条目从底部追加、无条数上限、3s 自动消失、**悬停整个区域暂停计时**、带动作按钮的条目成功后原地划掉并重置 3s。**观感 = GitHub 自己的 `.flash`**（内联消息族）：`bgColor-*-muted` 浅色底 + `borderColor-*-muted` 1px 真描边 + 16px 细线 octicon 着 `fgColor-*` + `KIND_STYLE` 一张表管全套；尺度对齐本脚本既有 UI（6px 圆角、`0 1px 3px rgba(0,0,0,.08)` 阴影、`12px 16px` 内边距、按钮 14px / `6px 14px`）。**不要**用 Primer `Toast` 的 48px 满饱和图标条 + 三层悬浮投影（浮动 toast 族，与卡片/横幅语言不同族）。样式全内联（可出现在任意 github.com 页面，不依赖 Stars 视图注入的样式表）。
+- **通知栈**（`ui/notifications.ts`）：常挂 `document.body`（**不是** header 子节点），锚在**全局头部下方**（`div.header-wrapper.js-header-wrapper` 底边 + 8px，滚动/改窗口时 rAF 重算，头部滚出视口后回落视口顶部 8px）、新条目从底部追加、无条数上限、3s 自动消失、**悬停整个区域暂停计时**、带动作按钮的条目成功后原地划掉并重置 3s。**观感 = GitHub 自己的 `.flash`**（内联消息族）：`bgColor-*-muted` 浅色底 + `borderColor-*-muted` 1px 真描边 + 16px 细线 octicon 着 `fgColor-*` + `KIND_STYLE` 一张表管全套；尺度对齐本脚本既有 UI（6px 圆角、`0 1px 3px rgba(0,0,0,.08)` 阴影、`12px 16px` 内边距、按钮 14px / `6px 14px`）。**不要**用 Primer `Toast` 的 48px 满饱和图标条 + 三层悬浮投影（浮动 toast 族，与卡片/横幅语言不同族）。样式全内联（可出现在任意 github.com 页面，不依赖 Stars 视图注入的样式表）。**4.10.0 起容器入口带视口门**：`ensureContainer()` 在窄视口返回 `null`，`pushNotice` 交回**空句柄**并留一条 console —— 否则窄视口下从 TM 菜单触发一次同步就会把整座栈懒重建出来（与「窄视口完全惰性」冲突）。
 - **失败一律 `alert` 一行文字**（ADR 0003）：写失败、单条恢复失败、批量恢复的失败汇总都走 `alert`——3s 的通知承载不了「唯一可能造成数据丢失的事件」的反馈。
 - **重绘**：有增删差异或可见元数据更新就**立即** `applyFilters({keepPage:true})`——手动与自动来源一视同仁，**不再问「是否刷新」**（原先自动来源 + 最近 10s 有交互会改成可点击提示，已删除）。
 
@@ -436,6 +447,27 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 搜索与筛选统一走 `queryRepos()` 单管线：关键词按空白拆词，每词必须命中 作者 / 仓库名 / 描述 / 标签 / 备注 之一（**语言不参与全文匹配**，避免 `ASC` 命中 `javascript`）；约束叠加 = type（多选 OR）∩ lang（多选 OR，大小写不敏感；`LANG_NONE='(none)'` = 无语言）∩ tags（多选 AND）∩ 关键词（AND）。命中词以 `<mark class="gsm-search-hit">` 高亮（四字段、大小写不敏感、只包文本节点、跳过输入控件）。
 
 结果统一**本地分页**（browse 与筛选态都走 `renderBrowsePage`，30/页）。自建 Sort 菜单四项：Recently starred / Recently active / Most stars / Most Forks（末项为本地扩展）。排序规则（`sortResults()`）：4 键 × asc/desc，**缺失值恒沉底不随方向翻转**，平局按仓库名决胜；`created` 按 `starredAt`（未回填沉底）；默认 `sort='created'` + `direction='desc'` = 原生默认。方向与 Sort 合并为 split button（方向态只由 ↑/↓ icon 表达）。
+
+**分页与跳页（4.10.0）**：顶/底两份 `gsm-local-pager` 结构相同（顶份是底份的 `cloneNode(true)`，额外带 `gsm-top-pager` 类），内容为
+`Previous | <button.gsm-page-info>N / M</button> | Next`。点击页码指示器 → **同一单元格内原位换成输入框**
+（`type=text` + `inputmode=numeric`，不用 `type=number`：避免 `spinbutton` 语义与方向键意外改值）→
+`Enter` 提交 / `Escape` 取消 / 失焦提交。全部交互由 `pagination.ts` 的 window-capture **委托**承担，
+因为克隆件**不会**复制挂在节点上的监听。跳页与 `Previous`/`Next` 共用唯一提交口径
+`navigateToLocalPage()`（数字守卫 + 夹取到 `[1,totalPages]` + 同页早退），
+非法输入静默退回、不弹提示；远端 `?page=N` 越界在 GitHub 侧是**静默返回空结果**（不报 404），
+所以越界只能由本地兜住。守卫只否 `NaN`：超长数字串被 `parseInt` 折成 `±Infinity` 属**越界**，
+应夹取到边界；字符串路径允许前导负号（`-1` 也是越界 → 第 1 页），其余（`abc`/空/`1e3`/`2.9`）一律退回。
+`updateLocalPagers()` **不需要**为输入态加跳过门：进入编辑态是把页码按钮 `replaceWith` 成 input，那份
+`.gsm-page-info` 查不到、文字写入天然是空操作，而 prev/next 的禁用态**必须**照常更新（曾整份跳过 →
+编辑期间发生渲染就会与真实页码脱节）。
+
+**失焦提交不能同步执行**（4.10.0 发布前独立审查抓到的 P0）：`renderBrowsePage` 会 `remove()` 底部那份
+分页器再 `appendChild` 插回，而「摘掉含焦点的子树」本身就触发 `blur` —— 若在那一刻同步提交，就会在渲染
+过程**内部**嵌套再调一次 `renderBrowsePage`，外层接着用自己早算好的 `start` 覆盖网格 ⇒ 页码文字与网格
+内容各说各话（触发路径与用户无关：进页自动同步 / 同步后重渲染 / 导入后的 `applyFilters`）。所以 `blur`
+处理**延到一拍之后**（`queueMicrotask`）再判 `input.isConnected`：仍在文档里 = 真失焦 → 提交；已被摘掉
+= 外层渲染接管 → 静默作废。`finish()` 在同拍内先还原单元格、按**当前**页码重写文字，再
+`cell.focus({ preventScroll: true })` 把焦点还给按钮（顶部那份不经 remove/插回，焦点能存活）。
 
 初始值由 `initFiltersFromUrl()` 从 URL 参数对齐（**URL 只读不写**）：`language` / `type` 支持逗号分隔多值，`none`/`(none)` = 无语言，非法值丢弃，大小写归一（哨兵合并先于去重）。
 

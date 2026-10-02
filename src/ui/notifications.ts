@@ -13,6 +13,7 @@
 // 样式**全内联 + transition**（不用 keyframes、不依赖只有 Stars 视图才注入的样式表）：
 // 同步简报可能出现在任意 github.com 页面（如详情页手动同步）。
 import { createScope, type LifecycleScope } from '../lifecycle';
+import { isDesktop } from '../utils';
 type NoticeKind = 'info' | 'warn' | 'success' | 'danger';
 
 interface NoticeOptions {
@@ -31,6 +32,13 @@ export interface NoticeHandle {
   /** 立即移除 */
   dismiss(): void;
 }
+
+/** 窄视口下通知被整体拒绝时返回的空句柄（调用方不必判空，划掉/更新/关闭都是无操作） */
+const NOOP_NOTICE_HANDLE: NoticeHandle = {
+  complete: () => {},
+  update: () => {},
+  dismiss: () => {},
+};
 
 /** 自动消失时长（ADR 0003） */
 const NOTICE_LIFETIME_MS = 3000;
@@ -198,7 +206,12 @@ export function disposeNotificationStack(): void {
   stackScope = null;
 }
 
-function ensureContainer(): HTMLElement {
+function ensureContainer(): HTMLElement | null {
+  // 窄视口零 UI（4.10.0）：门开在**容器入口**而不是 pushNotice —— 这里是所有通知唯一的
+  // 落点，同步简报、恢复通知、将来新增的异步通知路径都自动被拦住（单一真相）。
+  // 背景：容器是**懒重建**的，窄视口下哪怕只从 TM 菜单触发一次同步，也会把整座通知栈
+  // 重新建出来，与「窄视口完全惰性」正面冲突（AGENTS 已知风险第 10 条）。
+  if (!isDesktop()) return null;
   if (container && container.isConnected) return container;
   // 容器消失了（Turbo 整页导航把 body 内容换掉）：mouseleave 永不会来，
   // 必须显式复位，否则 hovering 恒 true → 之后所有通知都不再自动消失。
@@ -427,6 +440,11 @@ function buildItem(text: string, kind: NoticeKind, opts: NoticeOptions): Item {
  */
 export function pushNotice(text: string, kind: NoticeKind = 'info', opts: NoticeOptions = {}): NoticeHandle {
   const host = ensureContainer();
+  if (!host) {
+    // 窄视口：通知不显示，但也**不静默** —— 至少控制台留一条（用户可从 TM 菜单开控制台）
+    console.log(`[github-star-manager] 窄视口：通知未显示（只留在控制台）：${text}`);
+    return NOOP_NOTICE_HANDLE;
+  }
   const item = buildItem(text, kind, opts);
   host.appendChild(item.el); // 追加 = 新条目出现在**底部**
   items.add(item);

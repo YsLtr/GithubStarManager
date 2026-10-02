@@ -276,6 +276,10 @@ export function renderBrowsePage(page: number): number {
 /** 同步顶/底两份本地分页器：页码文字 + Previous/Next 禁用态 */
 function updateLocalPagers(): void {
   document.querySelectorAll<HTMLElement>('.paginate-container.gsm-local-pager').forEach((pager) => {
+    // 4.10.0 跳页：**不需要**为输入态加跳过门 —— 进入编辑态是把页码按钮 replaceWith
+    // 成 input，所以编辑中的那份连 `.gsm-page-info` 都查不到，文字写入天然是空操作；
+    // 而 prev/next 的禁用态必须照常更新，否则编辑期间发生渲染会让它与真实页码脱节
+    // （曾整份跳过 → 顶部那份永远停在旧页码/旧禁用态，见 4.10.0 审查 P1-1）。
     const info = pager.querySelector('.gsm-page-info');
     if (info) info.textContent = `${filterState.page} / ${filterState.totalPages}`;
     pager

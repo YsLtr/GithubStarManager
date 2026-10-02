@@ -19,6 +19,7 @@ import { clearListsHiddenMarks } from './dom';
 import { revealBootHide, revealTurboHide } from './boot';
 import { disposeNotificationStack } from './ui/notifications';
 import { GSM_HIDDEN_ATTR, GSM_TOPICS_SRC_ATTR } from './constants';
+import { unmountSyncButton } from './fullSync';
 import { disposeSearchInterception } from './search';
 import { isDesktop } from './utils';
 
@@ -43,9 +44,13 @@ export function teardownStarsView(reason: string): void {
     rightSidebar.remove();
   }
 
-  // 2) 脚本自造节点
+  // 2) 脚本自造节点。
+  //    `unmountSyncButton()` 必须在这里显式调用：同步状态的订阅挂在模块上，
+  //    只删节点摘不掉订阅（跨断点往返每轮都会多留一个指向游离按钮的闭包）。
+  //    `.gsm-sync-status` 是头部按钮旁的读屏播报区（惰性建的，同样要清）。
+  unmountSyncButton();
   document
-    .querySelectorAll('.stars-grid-container, .gsm-top-pager, .gsm-sync-btn')
+    .querySelectorAll('.stars-grid-container, .gsm-top-pager, .gsm-sync-btn, .gsm-sync-status')
     .forEach((el) => el.remove());
 
   // 3) 脚本插进原生筛选行的控件 + 信息条 + 配置横幅
