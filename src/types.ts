@@ -26,7 +26,7 @@ export interface RepoData {
 }
 
 /** 待删除区条目：unstar 宽限期内保留的数据 + 标签/备注备份 */
-interface PendingDeleteEntry extends RepoData {
+export interface PendingDeleteEntry extends RepoData {
   unstarredAt?: number;
   _tags?: string[];
   _note?: string;

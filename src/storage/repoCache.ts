@@ -1,6 +1,20 @@
 import { gmGet, gmSet } from '../gm';
 import { STORAGE_KEYS } from '../constants';
-import type { RepoCache, RepoData } from '../types';
+import type { FullSyncMeta, RepoCache, RepoData } from '../types';
+
+/**
+ * API 数据就绪 = 至少完整整表过一次（全量缓存可渲染 = API 主模式前提）。
+ *
+ * **定义放在存储层**（4.14.0 从 `fullSync.ts` 迁来）：它读的只是 `stars_full_sync_meta`
+ * 这一份存储元数据，而 `cardState.ts` 这类**不依赖 fullSync** 的模块也要用它判断
+ * 「本人整表缓存是否可用」——留在 fullSync 会形成 `cardState → fullSync → starCheck →
+ * cardAreas → cardState` 的导入环。`fullSync.ts` 仍以同名 re-export 对外提供，既有调用方
+ * （`filters.ts` / `index.ts`）无需改动。
+ */
+export function hasApiData(): boolean {
+  const meta = gmGet<FullSyncMeta>(STORAGE_KEYS.fullSyncMeta, {});
+  return !!meta.lastFullSyncAt && (meta.count ?? 0) > 0;
+}
 
 /** linguist 语言名的字符域：字母/数字/空格/#/+'-.（C++、F#、Ren'Py、1C Enterprise、G-code 皆合法）。
  * 4.3.1 前的 DOM 提取曾把 2026 版详情页 Watch/Fork 计数条（"Watch1 (1)"）当语言写进缓存，此门挡住该类脏值。 */

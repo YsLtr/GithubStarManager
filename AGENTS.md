@@ -8,12 +8,35 @@
 
 ## 当前状态
 
-版本 **4.13.0**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
+版本 **4.14.0**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
 
-> 交接时间：**2026-10-03 18:32 +0800**（本机时钟）。**4.12.0 + 4.13.0 的改动已全部提交**（`git log` 是历史权威，
+> 交接时间：**2026-10-03 21:30 +0800**（本机时钟）。**4.14.0 已随本次交接一起提交**（`git log` 是历史权威，
 > 提交信息写得很详细）；本文件只留仍生效的口径与下一步。
+> 实施计划（含 7 条可变决策的原始口径与验收标准）已归档：
+> `docs/plans/archive/2026/2026-10-03-他人-stars-页的卡片-本人未-star-的仓库卡片为只读-显示标签-备注但不可编辑-本人已.md`。
 
-**4.13.0（本次交接的版本）：他人的 star 页 = 零网络只读网格** —— 4.12.0 的「原生列表 + 只读徽章」在真机上确实工作，
+**4.14.0（当前版本）：他人 stars 页的卡片改为「逐仓库」可编辑** —— 用户报「他人 star 页面的卡片会因为点了
+star 就变成可编辑状态」。根因是**只读被判成了页级单一布尔**，且分派写了两处、判据不一致：
+`filters.renderBrowsePage` 有判据，而 `starCheck.syncCardAfterStarChange` **无条件**调可编辑渲染器
+（后者在点星成功的回调链上）。详见 **D29** 与 `docs/adr/0009` 的「追加 7」。一句话口径：
+
+1. **三态逐仓库判定**（新模块 `src/cardState.ts`）：`editable`（本人已 star）/ `locked-pending`
+   （已 unstar 但数据仍在 **24h 宽限期备份**里）/ `locked-empty`（两者都不是）。
+2. **可编辑性只认「已提交」状态**（内存覆盖表 → 本人整表缓存），不认乐观翻转、不认在途请求。
+3. **未 star 但仍在宽限期内的卡片：只读，但仍显示标签与备注**（数据来自 `stars_pending_delete`
+   的 `_tags`/`_note` —— 活区此刻已被 `markRepoUnstarred` 清空，所以只读渲染器改为**接受调用方传入的数据**）。
+4. **渲染分派唯一入口**：`src/cardAreas.ts` 的 `renderCardTagAndNoteAreas(card, 'own' | 'other', viewerCache)`。
+   禁止再出现第二处 `readOnly ? A : B` —— 两处判据不一致**就是**这个缺陷。
+5. **口径收窄**：「零存储写入」→「**渲染路径**零写入，用户显式动作才写、且只写登录者命名空间」；
+   **零网络不变**。顺带给 `applyFilters()` 补了 `isReadOnlyView()` 早退门（否则「在自己页筛过标签 →
+   切到别人的页 → 点 star」会往**页面主人**的原生筛选行插控件）。
+6. **他人页点标签不再切换筛选**（`renderTags` 的 `filterToggle` 上下文开关，默认 `true` = 自有页逐字不变）。
+7. **发布前独立审查**（外部 reviewer）抓到 **1 P1 + 4 P2**（详见 D29 末条）：
+   P1 = 只读卡片的备注容器上残留可编辑 click 监听 ⇒ **点一下仍能弹编辑器并真的写盘**（容器在重绘间
+   复用，`innerHTML = ''` 摘不掉监听）→ 已修（`ui/notes.ts` 的 `disposeNotesEditor()` + 唯一分派点先摘）；
+   P2 ×2 已修（登出页泄露全局宽限期备份 / `isStarredByViewer` 两份实现），P2 ×2 登记为观察项。
+
+**4.13.0 提要：他人的 star 页 = 零网络只读网格** —— 4.12.0 的「原生列表 + 只读徽章」在真机上确实工作，
 但**用户几乎永远看不到**（实测 mattn 前 100 个 starred 与本人 21 个带标签/备注的仓库**交集为 0**）。
 用户裁定「用脚本网格」，并给出决定性约束：**只获取页面中已有的数据，不拉取，做网格**（见 **D26** 与 `docs/adr/0009`）：
 
@@ -22,9 +45,10 @@
 2. **来源只存内存**（新模块 `src/viewContext.ts`）：`queryRepos()` 按来源取表；**零存储写入**、无他人缓存键。
    **呈现层与本方自己的页完全一致**（用户裁定方案 A）：共用 `src/layoutStyles.ts` 的布局主表（左栏 180px / 满宽多列），
    并把对方的 Starred topics 搬进脚本右栏（`dom.ts` 的 `moveTopicsToRightSidebar` / `restoreTopicsFromRightSidebar`，
-   本方页与他人页共用）。功能层仍未接管：无星按钮/编辑入口/脚本分页器/筛选栏/同步按钮/横幅。
-3. **只读渲染**：`renderBrowsePage` 跳星按钮、标签/备注走 `readonly.ts` 的只读渲染器、不挂脚本分页器；
-   `cards.ts` 与 `ui/tagFilter.ts` / `ui/notes.ts` **一字未改**。
+   本方页与他人页共用）。**4.13.0 当时**功能层未接管：无星按钮/编辑入口/脚本分页器/筛选栏/同步按钮/横幅。
+   （4.14.0 已改：星按钮要建、本人已 star 的卡片可编辑 —— 见本文开头与 **D29**；仍是零 API 请求。）
+3. **只读渲染**（4.13.0 形态）：`renderBrowsePage` 跳星按钮、标签/备注走 `readonly.ts` 的只读渲染器、
+   不挂脚本分页器。**4.14.0 起**分派改由 `cardAreas.ts` 唯一入口负责（见 D29）。
 4. **只藏原生条目**（`hideNativeNode`，原生分页器/筛选栏/Lists 不动），翻页与筛选**委派原生控件**。
 5. **零网络的隐藏陷阱**：卡片渲染里的 `getLangColor()` 在色表未命中时会**间接**发 linguist 请求
    ⇒ 加 `setLangColorFetchEnabled(false/true)` 闸门（进入他人页关、退出恢复）。**不设这个闸，零网络断言必挂。**
@@ -48,6 +72,11 @@
 
 **验证**（`pnpm check` 绿、`verify-css` EXIT 0、`test:exportimport` 51/0、dist `@grant` 恰 5 项、`@version` 4.13.0）：
 
+
+> **4.14.0 的验证另见 D29 末条**（静态全绿 + 夹具 **16 组场景 + 2 组窄视口**；口径变化：他人页
+> 「编辑控件必须为 0」只在页面条目与本人缓存**无交集**时成立，仍恒成立的不变量是
+> 「没有默认打开的编辑器」「只读卡片 0 控件」「渲染路径零写入」「零网络」）。
+> 下面这一节是 **4.13.0** 当时的记录，保留作回归基线。
 - **夹具 13 组场景全绿**（`.diag/gen-otherstars-harness.cjs` → `otherstars-harness.html` + `.diag/assert-otherstars.js`，
   file://、零真实网络；**URL 必须带 `?tab=stars`**，否则脚本根本不转换，`grid:0` 会被误读成全绿）：
   `other-profile` / `other-newroute`（`/stars/{login}`）/ `other-newgen`（新代骨架）/ `other-notags` / `other-twolayout`
@@ -429,18 +458,24 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
 - **判定仍为三态**（`src/pageScope.ts` 的 `getStarsPageScope()`）：`own` / `other` / `unknown`。
   主判据 = `octolytics-actor-id`（登录者）vs `octolytics-dimension-user_id`（页面主人）；id 取不到退到 login 比对；
   `/stars/{login}` 路由没有 dimension-* 元数据，只能比路径段。**取不到就判 `unknown`，绝不回退成 `own`**；
-  `unknown` 与 `other` 同处置（都不接管）。
+  `unknown` 与 `other` 同处置（都按他人页渲染只读网格）。**注意措辞**：4.12.0 时这两者「都不接管」，
+  4.13.0 起他人页是**接管**的（只读网格）—— 分派点 `index.ts` 判的是 `scope !== 'own'`，
+  所以 `unknown` **也会**出网格（未登录访客同理）。
 - **零网络 = 硬约束**：数据只来自**页面已渲染的原生条目**的一次投影（`src/domRepos.ts`），
   不调 API、不预取、不做条件请求、不做归属校验请求。**必须**同时压住那条**间接**请求：
   卡片渲染里的 `getLangColor()` 在色表未命中时会顺手发一次 linguist 请求 ——
   故 `otherStarsView` 进入时调 `setLangColorFetchEnabled(false)`、退出时恢复（否则零网络断言必挂）。
   工装判据：他人页 `__gsmFetchLog.length === 0` **且** `__gmWrites.length === 0`（零网络 + 零存储写入）。
-- **零存储**：投影只存内存（`src/viewContext.ts`）；不写任何键、不碰 `stars_repo_cache` / `stars_full_sync_meta`；
-  标签/备注仍读**我自己的**命名空间（D27）。**没有**他人缓存键，也**不**进导出包。
-- **只读渲染**：`filters.renderBrowsePage` 的只读分支跳过星标按钮、标签/备注改走 `readonly.ts` 的
-  `renderTagsReadOnly` / `renderNotesReadOnly`、**不挂脚本分页器**（`updateLocalPagers` 不调用）。
-  `cards.ts` / `ui/tagFilter.ts` / `ui/notes.ts` 的构建逻辑**一字未改**（后两者直接绑 `saveTags`/`saveNote`，
-  属「我自己的页」的写路径 ⇒ 只共享卡片容器，不共享渲染器）。
+- **零存储（4.14.0 收窄为「渲染路径零写入」）**：投影只存内存（`src/viewContext.ts`）；不写**任何**
+  他人页专属键、不碰 `stars_repo_cache` / `stars_full_sync_meta`；标签/备注仍读**我自己的**命名空间（D27）。
+  **没有**他人缓存键，也**不**进导出包。4.13.0 的「全程零存储写入」按用户需求放宽为：
+  **只有用户显式动作（点星、增删标签、写备注）才写，且只写登录者命名空间**；
+  页面加载与渲染路径**仍然零写入**（工装判据：渲染后 `__gmWrites.length === 0`）。详见 **D29**。
+- **标签/备注逐仓库可编辑（4.14.0，详见 D29）**：分派唯一入口 = `cardAreas.renderCardTagAndNoteAreas()`；
+  三态由 `cardState.ts` 判定（`editable` / `locked-pending` / `locked-empty`）。
+  `readonly.ts` 只负责画「不可编辑的样子」，**数据由调用方传入**（宽限期卡片的数据在备份里，
+  活区已被清空 —— 渲染器自己读活区就会显示成空）。
+  **不挂脚本分页器**（`updateLocalPagers` 不调用），也不挂脚本筛选栏。
 - **只藏原生条目**：经 `dom.ts` 的 `hideNativeNode`（打 `GSM_HIDDEN_ATTR`，由 `viewTeardown` 第 5 项还原）；
   **原生分页器、原生筛选栏**（以及`/stars/{login}` 上那个**第二个** `ul.repo-list` = Starred topics 列表）
   **一律不动** —— 翻页是对齐 GitHub 自己那套 `after`/`before` 游标（实测 HTML stars 页 `?page=N` 被忽略），
@@ -582,6 +617,94 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
   它**缺** `octolytics-dimension-user_id`、`body` 无 `mine`、`<title>` 形态也不同，
   条目 DOM 与 profile 标签页不一样 ⇒ 任何依赖 `dimension-*` / `mine` / title 的逻辑在该路由上都会失效。
   `/stars`（本人新版页）同样存在；脚本对它**不做任何接管**（结构未支持）。
+
+---
+
+**D29 · 他人 stars 页的标签/备注：逐仓库可编辑（4.14.0）**
+
+> 完整口径与工装证据见 **`docs/adr/0009`「追加 7」**；这里只留最容易踩的硬口径。
+
+- **要解决的问题**：4.13.0 的「只读」是**页级单一布尔**（`isReadOnlyView()` = `otherPage !== null`），
+  而分派写了**两处**：`filters.renderBrowsePage`（有判据）与 `starCheck.syncCardAfterStarChange`
+  （**无条件**调 `renderTags`/`renderNotes`）。后者在「卡片星按钮点击成功」的回调链上 ⇒
+  **点一下 star，这张卡（乃至整页后续重绘）就变成可编辑**。用户报的正是这个。
+- **三态逐仓库判定**（`src/cardState.ts`，纯判定：不碰 DOM / 不发请求 / 不写存储）：
+  | 状态 | 判据 | 数据来源 | 控件 |
+  |---|---|---|---|
+  | `editable` | 本人 star 了它 | 活区 | 有 |
+  | `locked-pending` | 不在缓存，但在 `stars_pending_delete` 里且**未超 24h** | **宽限期备份** | 无（数据仍显示） |
+  | `locked-empty` | 两者都不是 | 活区（多半为空） | 无 |
+- **唯一分派入口** = `src/cardAreas.ts` 的 `renderCardTagAndNoteAreas(card, view, viewerCache)`。
+  `filters` 与 `starCheck` 两处都只走它。**禁止**再写出第二处 `readOnly ? A : B`。
+- **可编辑性只认「已提交」状态**：`getViewStarOverride()`（内存覆盖表，只在本页写入**成功**后写）
+  → 本人整表缓存成员关系。**不读**按钮 DOM class、**不读**在途请求 —— 否则写失败回滚后会留下
+  「星星已回退、标签却已改过」的不一致。
+- **前置条件 = `hasApiData() && getViewerId()`**（与 `canShowStar` 同源、是它的子集）。
+  缺任一项 ⇒ **全部卡片不可编辑**（仍只读显示）。**宁缺勿假**，不猜。
+- **`readonly.ts` 的渲染器改为接受调用方传入的数据**：宽限期卡片的标签/备注在**备份**里，
+  活区已被 `markRepoUnstarred` 清空。渲染器自己读活区就会把这些卡片显示成空
+  —— 那正是「unstar 后标签立刻消失」的成因。取数在 `cardState.readCardDisplayData()`
+  （**活区优先，活区为空再看备份**）。
+- **宽限期判据渲染时现算**（`pendingDelete.getPendingInGrace`）：不依赖 `cleanupExpiredUnstarred()`
+  是否跑过（它只在 `init()` 与导入后各跑一次；开了 24h 以上的标签页里过期条目还挂在存储里）。
+- **`markRepoUnstarred(repoId, seed?)` 的判据 = 「有东西要保全就必须建备份」**（缓存有 / 给了 `seed` /
+  有非空标签备注，三者占一）。旧判据只认缓存 ⇒ 他人页「点 star（只在内存覆盖里）→ 加标签 → unstar」
+  这条顺序下**不备份也不清空**，标签会永久留在活区而只读卡片没有删除入口（用户再也清不掉）。
+  连带的正确行为变化：那条路径 unstar 后若 re-star，该仓库会**进入本人整表缓存**（此刻我确实 star 了它）。
+- **`hasApiData` 已从 `fullSync.ts` 迁到 `storage/repoCache.ts`**（`fullSync` 以同名 re-export 转发，
+  调用方不变）：`cardState` 不依赖 `fullSync`，否则会形成
+  `cardState → fullSync → starCheck → cardAreas → cardState` 的导入环。
+- **`applyFilters()` 补了 `isReadOnlyView()` 早退门**：`filterState` 是**跨页共享模块态**
+  （进他人页不清、离开也不清），而 `starCheck` 会在「有 active 筛选」时调它 ⇒「在自己页筛过标签 →
+  Turbo 切到别人的 stars 页 → 在卡片上点 star」会往**页面主人**的原生筛选行插脚本控件、
+  把原生三个菜单设成 `display:none`。此前唯一的防护是「他人页入口刻意直调 `renderBrowsePage`
+  绕过 `applyFilters`」，属实现约定而非不变量。
+- **他人页点标签不切换筛选**：`renderTags(container, { filterToggle })`，默认 `true`（自有页**逐字不变**）；
+  他人页传 `false` ⇒ 不绑筛选点击、不加 `stars-tag-active`、保存后不调 `applyFilters`/`refreshTagPillStates`。
+  `ui/notes.ts` 无需改动（其编辑路径本就不依赖 `applyFilters`）。
+- **观感与 a11y 的四处「不做」**（都有证据，见 ADR 追加 7）：① 只读卡片**不渲染**任何编辑控件
+  （不建 `aria-disabled` 灰按钮、不建只读输入框）；② **不加** `role="textbox"` + `aria-readonly`、
+  **不加** `inert`（`aria-readonly` 只对 9 个 widget role 有效，把「标签 + 备注」包进 textbox 是错误语义）；
+  ③ **不加**可见说明行 / 徽章（唯一提示是只读节点的原生 `title`，按状态分叉）；④ **不做**主动播报
+  （无 WCAG 条款要求「控件消失必须播报」；4.1.3 只约束**已经存在**的状态消息）。
+- **一条状态驱动的样式**：不可编辑卡片的备注区 `cursor: default`（在 **`base.css`**，不在按需注入的
+  `readonly.css` —— 「卡片上什么都没有」的 `locked-empty` 也需要它）。选择器认
+  `[data-gsm-card-state='locked-*']`，该属性**只存在于他人页**（自有页走 `view: 'own'` 分支、不写）
+  ⇒ 自有页观感一字不变；属性随卡片节点销毁，不进回滚清单。
+- **焦点回收**：分派函数在重绘前记 `card.contains(document.activeElement)`，为真则把焦点交还该卡片的
+  星按钮（无按钮时交给卡片自身 + `tabindex="-1"`）。常见路径（点星按钮）本就不丢焦点；这条兜的是
+  「后台同步判定外部取关时，用户正聚焦在本卡片的标签输入框 / 备注 textarea 上」——浏览器实测
+  移除焦点元素会一律回退 `<body>`。
+- **发布前独立审查轮**（外部 reviewer，只读复核 + 自建复现实验）抓到 **1 P1 + 4 P2**，
+  P1 与两条 P2 已修，另两条登记为观察项。完整证据见 `docs/adr/0009`「追加 7 的发布前独立审查轮」。
+  - **P1（已修）：只读卡片点一下仍能弹出备注编辑器并写盘。** 备注的编辑入口是挂在**容器本身**上的
+    click 监听，而容器在重绘间**复用**（`innerHTML = ''` 摘不掉它）⇒ 从可编辑切到只读后，
+    「只读」卡片点一下照样弹 `textarea`、blur 后真的落盘，随后又被只读渲染覆盖（输入被静默吞掉）。
+    修法：`ui/notes.ts` 导出 `disposeNotesEditor()`（`WeakMap` 记住那枚监听），
+    `cardAreas` 在**唯一分派点**上、不管哪个分支都先摘。**标签那一路没有这个问题** ——
+    `ui/tagFilter.renderTags` 的监听都挂在子节点上，随 `innerHTML = ''` 一起销毁。
+    **教训**：既有断言 `R16_betaLockedControlsAfterUnstar` / `R21_betaLockedControlCount` 都是
+    **静态快照**（「此刻没有控件」），而缺陷只在**点了之后**才显现 ⇒ 新增**动态**断言组 `R25`
+    （点只读卡片的备注区：编辑器 0、控件 0、文本仍在、写入 0；**对照组**点可编辑卡片必须进编辑态）
+    与 `R27`（自己的页「点开 → 输入 → blur 提交」仍然落盘）。
+  - **P2（已修）：登出页显示了 `stars_pending_delete` 里的私密数据。** 那个键是**单份全局键**、
+    不按账号分片（与 D27 的命名空间键不同），属于**上一个登录的人**。修法：`cardState.hasViewerIdentity()`
+    作唯一身份判据，没有它时既不判 `locked-pending`、也不读备份。**A/B 实证**（场景 `other-logout-pending`）：
+    修复后 `leaksTags/leaksNote=false`、`roBadges=0`；钳合（身份判据恒真）下是 `true/true`、`roBadges=2`。
+  - **P2（已修）：`isStarredByViewer` 有两份实现**（`filters.ts` 内联 + `cardState.ts`）——
+    「两处各判一次」正是本次要修的缺陷模式。现在 `filters` 直接 import `cardState` 的版本，
+    `canShowStar` 也改为由 `loadViewerCacheForView()` 派生。
+  - **P2（登记，未修）**：逐卡约 5 次 `GM_getValue`（30 条约 150+ 次同步 IPC）。真要省得给存储层加
+    「读缓存 + 写失效」，会改动全脚本共用的新鲜度语义 ⇒ 与本版本主题无关，登记待立项。
+  - **P2（登记，未修）**：他人页上 **D12 的「同步后立即重渲染」不生效**（`rerenderAfterSync` 走
+    `applyFilters`，被只读门挡住）。这是净收益，但 D12 的措辞是全局的 ⇒
+    **D12 只适用于本方自己的 stars 页**；他人页刷新的路径是重新投影原生条目，不由同步驱动。
+- **验收状态**：静态全绿（`pnpm check` / `verify-css` EXIT 0 / `test:exportimport` 51-0 /
+  `@grant` 恰 5 项 / `@version` 4.14.0）；夹具 **15 组场景 + 2 组窄视口**全跑过（`__errors` 全空、
+  他人页 `fetch`/`writes` 为 0、窄视口 `grid=0` 且 `gsm` 节点 0）。新增场景：
+  `other-editstate`（同一页 `editable` + `locked-pending` 并存）、`other-pending-expired`
+  （超 24h ⇒ 不再显示）、`other-nocache-edit`（无缓存 ⇒ 全只读）、
+  `other-logout-pending`（登出 + 备份里有私密数据 ⇒ 一个字符都不许出现）。
 ---
 
 ## dev 模式必须知道的四件事
@@ -719,20 +842,24 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
     ⇒ 在他人 stars 页上脚本读写的是**那个人的命名空间**。
     修法：存储键改用登录者 id（`getStorageUserId()`）；他人的 stars 页不再被接管，只做只读装饰（D26）。
     保留此条是为了记录**曾经的**行为与实测数据（`exportImport` 的 `user.id` 语义随之变化，属可观察变化）。
-17. **零网络只读网格的真实局限**（4.13.0，见 D26 / ADR 0009，全部是**设计属性**而非缺陷）：
-    ① **徽章只在「我也给那个仓库打过标签/写过备注」时出现**：实测 mattn 前 100 个 starred 与本人 21 个带标签/备注的
-       仓库**交集为 0** ⇒ 网格通常一条徽章都没有。**不能**给「对方 star 了但我没 star」的仓库打标签
-       （它不出现在我的列表里，而已有编辑入口只在**我自己的** stars 页）。
-    ② **只有本页数据**：无跨页筛选/搜索，翻页只能靠原生分页器；本条是「不拉取」的直接代价。
-    ③ **字段缺失即降级**：DOM 里没有的就不渲染（例：`/stars/{login}` 的描述实测恒为空 ⇒ 卡片显示「No description」）。
-    ④ **`viewContext` 是模块态**：任何「离开他人页」的路径都必须复位（`exitOtherStarsViewIfActive` / `viewTeardown` 第 11 项），
+17. **他人页网格的真实局限**（4.13.0 起，4.14.0 修订；见 D26/D29 与 ADR 0009，全部是**设计属性**而非缺陷）：
+    ① **可编辑性依赖本人整表缓存的时效**（4.14.0 新增）：他人页上「不在我的缓存里但我在别处 star 过」的仓库
+       （例如刚在 github.com 原生界面 star、脚本尚未同步）会显示为**只读**，直到下一次全量同步把它写进缓存。
+       这是「不拉取」的必然代价。本页新 star 且从未进缓存的仓库，可编辑性只在**本次页面会话**有效
+       （内存覆盖表，`resetViewContext()` 时清空）⇒ 刷新页面后回到只读，直到下次同步。
+    ② **徽章只在我有对应数据时出现**：`locked-empty` 卡片只在我给那个仓库导入过标签/备注时才有内容；
+       实测 mattn 前 100 个 starred 与本人 21 个带标签/备注的仓库**交集为 0** ⇒ 未 star 的卡片通常一片空白。
+    ③ **只有本页数据**：无跨页筛选/搜索，翻页只能靠原生分页器；本条是「不拉取」的直接代价。
+    ④ **字段缺失即降级**：DOM 里没有的就不渲染（例：`/stars/{login}` 的描述实测恒为空 ⇒ 卡片显示「No description」）。
+    ⑤ **`viewContext` 是模块态**：任何「离开他人页」的路径都必须复位（`exitOtherStarsViewIfActive` / `viewTeardown` 第 11 项），
        漏了就串数据（往返把别人的列表画在我的页上）。
-    ⑤ **依赖 GitHub 的条目结构**：改版 ⇒ 退化为「不接管」（功能消失、不破坏页面、不留残次网格）。
-    ⑥ **呈现层接管了页面框架**（方案 A，用户裁定）：他人页的左栏被收窄、对方的 Starred topics 被搬进脚本右栏、
+    ⑥ **依赖 GitHub 的条目结构**：改版 ⇒ 退化为「不接管」（功能消失、不破坏页面、不留残次网格）。
+    ⑦ **呈现层接管了页面框架**（方案 A，用户裁定）：他人页的左栏被收窄、对方的 Starred topics 被搬进脚本右栏、
     **页主头像被缩到 120px**（该页 Sponsors/成就徽章等其它图片不受影响 —— 选择器已收窄到页主头像那一个）、
-    Lists 区块按用户的「隐藏 Lists」开关隐藏。**功能层仍未接管**：无星按钮/编辑入口/脚本分页器/筛选栏/同步按钮/横幅，
-    零 API 请求、零存储写入。
-    ⑦ **GitHub 现在有三套并存的 stars 页面骨架**（真机实测同一 `?tab=stars` URL 会随账号返回不同代际）：
+    Lists 区块按用户的「隐藏 Lists」开关隐藏。**功能层仍未接管**：无脚本分页器/筛选栏/同步按钮/横幅。
+    **4.14.0 变化**：卡片的星按钮**要建**（4.13.0 已定），标签/备注**已 star 的卡片可编辑**；
+    仍是**零 API 请求**，存储写入只发生在用户显式动作上且只落登录者命名空间（见 D29）。
+    ⑧ **GitHub 现在有三套并存的 stars 页面骨架**（真机实测同一 `?tab=stars` URL 会随账号返回不同代际）：
     - **旧代**（如 `mattn`）：`#user-starred-repos > .col-lg-9` + `.col-lg-3`（Starred topics 列），
       标题「Starred repositories」，搜索框 placeholder「Search starred repositories」，有原生分页器；
     - **新代**（如 `Kuddev` / `Norman-bury`，仍是 `?tab=stars`）：`#user-starred-repos > .col-lg-12`
@@ -758,26 +885,44 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
     ⇒ 标记无从落下，该路由从不进入三栏接管（网格整宽 + 2 列），**这是既有行为**（改前那套骨架选择器同样匹配不到）。
     真要修 ② 得先给那代路由找新的列容器，属独立改动。
 
+19. **他人页的两条已知（发布前审查轮登记、刻意未修）**（4.14.0）：
+    ① **逐卡存储读取偏多**：约 5 次 `GM_getValue` / 卡（`getTags` + `getNote` + `loadPendingDelete`，
+    各自还会读一次 localStorage 镜像）⇒ 30 条约 150+ 次同步 IPC。要省下来得给存储层加「读缓存 + 写失效」，
+    那会改动**全脚本共用**的新鲜度语义 ⇒ 与本版本主题（他人页正确性）无关，登记待立项。
+    ② **他人页上 D12 的「同步后立即重渲染」不生效**（`rerenderAfterSync` → `applyFilters`，被只读门挡住）。
+    这是**净收益**（他人页的筛选栏/分页器本就不该被脚本驱动），但 D12 的措辞是全局的 ⇒
+    **D12 只适用于本方自己的 stars 页**；他人页刷新数据的路径是重新投影原生条目，不由同步驱动。
+
 ## 下一步
 
-1. **@version 已升到 4.13.0 → 若你在用 dev 脚本，必须重装 dev loader**：重开
+1. **@version 已升到 4.14.0 → 若你在用 dev 脚本，必须重装 dev loader**：重开
    <http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js> 让 TM 原地更新，否则 TM 菜单会整体消失
    （机制见「dev 模式必须知道的四件事」第 4 条：`@version` 变了 → 脚本头变了 → mountGmApi 的 key 对不上）。
    正式版不受影响；`@version` 变了却没重装，表现是「TM 菜单空了」+「同步说未配置 token」。
-2. **`docs/adr/0006` 剩余两项不可观测项**：`?scopes=repo` 预填是否真的勾上（被 sudo/passkey 门拦住，
+2. **4.14.0 的真机确认（只能在真 github.com + TM 上做；行为层已由夹具 15 组场景覆盖）**：
+   - 他人 stars 页上，本人缓存与页面**有交集**时才看得到效果 —— 若交集为 0（实测常见），
+     可用 TM 菜单先「立即全量同步」把当前账号的 star 拉进缓存，再打开自己的 stars 页给其中一两个加标签，
+     然后去任意他人的 stars 页看那几张卡片是否可编辑；
+   - 点 star ⇒ **只有那张卡片**变可编辑；点 unstar ⇒ 立即不可编辑、**标签与备注仍在**（只读）；
+     打开 TM 菜单 →「恢复取消的 star」⇒ 回到可编辑且数据完好；
+   - 全程 DevTools Network 面板**零 `api.github.com` 请求**；
+   - TM 安装页里的**授权清单仍恰 5 项**（dist 头部已核为 5 项，但 TM 的展示需真机确认）。
+   （以上行为层已由夹具 15 组场景覆盖；真机只补观感与安装页核对。）
+3. **`docs/adr/0006` 剩余两项不可观测项**：`?scopes=repo` 预填是否真的勾上（被 sudo/passkey 门拦住，
    **不得**声称可用或不可用）、`context=user_stars` 服务端是否据其分支（实测 200 但不可知）。
    离页仓库 + 仅 VF 头**已实测成立**（见「当前状态」的实测结论），不必重复验。
-3. **4.13.0 验收状态**：静态 + 夹具 13 组 + 真机（登录态）**全部通过** —— 逐项证据见上「验证」小节与
+4. **4.13.0 验收状态**：静态 + 夹具 13 组 + 真机（登录态）**全部通过** —— 逐项证据见上「验证」小节与
    `docs/adr/0009`（含顶部翻页器「点它真能翻页」、新代页面分页器与筛选控件 `delta=0` 对齐、
    `/stars/{login}` 无原生分页器 ⇒ 克隆按设计空操作）。**只剩观感层面的人工确认**（4 条，见「验证」末条）。
-4. 后续阶段（详见 `todo` 与 `DEVELOPER.md` §13）：GraphQL 分页调研、周期自动同步。
+5. 后续阶段（详见 `todo` 与 `DEVELOPER.md` §13）：GraphQL 分页调研、周期自动同步。
    ~~非本人 star 页 `GET /users/{u}/starred` 接入~~ —— 4.12.0 已按「只读模式」收口（D26）；
-   若将来要让他人页也显示完整卡片网格，那是一条**新功能**（需要 `GET /users/{u}/starred` 匿名 60/hr 额度 +
-   游标翻页 + 独立缓存键），动手前先重新评估额度与用户价值。
-5. 未消化的架构建议：单遍 facet 计算、响应式漏斗（见 `starmgr-arch-review-report.md`）。
-6. fine-grained PAT 写他人公开仓库的能力缺口由 GitHub 控制（roadmap#600 NOT_PLANNED、#601 OPEN）——将来若补齐，
+   若将来要让他人页也显示完整卡片网格（**已实现**：4.13.0 的零网络投影网格 + 4.14.0 的逐仓库可编辑），
+   要进一步「跨页/全量」则需 `GET /users/{u}/starred` 匿名 60/hr 额度 + 游标翻页 + 独立缓存键，
+   动手前先重新评估额度与用户价值。
+6. 未消化的架构建议：单遍 facet 计算、响应式漏斗（见 `starmgr-arch-review-report.md`）。
+7. fine-grained PAT 写他人公开仓库的能力缺口由 GitHub 控制（roadmap#600 NOT_PLANNED、#601 OPEN）——将来若补齐，
    可回头简化 `docs/adr/0006` 的网页端点通道。
-7. **4.9.2 的真机验证部分完成**（`pnpm check` + 51 项导入导出断言 + CSS 等价性全过；dist 头部 `@grant` 恰 5 项）。
+8. **4.9.2 的真机验证部分完成**（`pnpm check` + 51 项导入导出断言 + CSS 等价性全过；dist 头部 `@grant` 恰 5 项）。
    **已在真浏览器跑过仿真页**（`.diag/viewport-harness.html` = GitHub 仿真 DOM + 内联 dist + matchMedia 仿真，
    断言脚本 `.diag/assert-viewport.js`；两者都在 gitignore 的 `.diag/` 下，可重跑）：窄视口载入**零痕迹**
    （无自造节点/无 `gsm-*` 类/无内联 display/无标记，Lists 行与原生三个菜单未被动过）；桌面载入网格/顶部翻页器/
@@ -800,9 +945,9 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
 
    **仍需真机确认（只能在真 github.com + TM 上做）**：真·窄窗口下的实际观感、Turbo 导航路径、
    安装页/面板里本脚本的授权清单是否恰为 5 项、导出仍能触发 `GM_download`、TM 菜单项齐全（实测 8 处注册）。
-7. **原生 `fetch` 语言色通道有一个新观察项**：它现在受页面 CSP `connect-src` 约束（已实测该主机在白名单内），
+9. **原生 `fetch` 语言色通道有一个新观察项**：它现在受页面 CSP `connect-src` 约束（已实测该主机在白名单内），
   且失败是静默降级（灰圈）。GitHub 若收紧 CSP，表现是语言色全部变灰点 —— 届时把 `gmFetchText` 加回来即可。
-8. **4.10.0 的验证（T9，2026-10-02 已跑完）**：静态 = `pnpm check` 绿、`node scripts/verify-css.cjs` EXIT 0、
+10. **4.10.0 的验证（T9，2026-10-02 已跑完）**：静态 = `pnpm check` 绿、`node scripts/verify-css.cjs` EXIT 0、
    `pnpm test:exportimport` 51/0、dist 头部 `@grant` **恰 5 项**、dist 内 `gsm-pager-loading` 0 命中 / 无 SMIL /
    有 `prefers-reduced-motion`。
    **仿真页断言全绿**（工装 `.diag/gen-jump-harness.cjs` → `jump-harness.html` + `assert-jump-{a,b,c,d,e,f,g,h}.js`，
@@ -849,7 +994,7 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
    **一处刻意的实现收窄**（与方案 T6 的措辞不同）：**被并发丢弃的同步不广播 `failed`**，只留 console ——
    改成 failed 会把正在转的按钮停下、谎报失败（见 D23）。
 
-9. **4.11.0 的验证（T9，2026-10-02 已跑完）**：静态 = `pnpm check` 绿（tsc + build）、
+11. **4.11.0 的验证（T9，2026-10-02 已跑完）**：静态 = `pnpm check` 绿（tsc + build）、
    `node scripts/verify-css.cjs` **EXIT 0**、`pnpm test:exportimport` **51/0** 不回归、
    dist 头部 `@grant` **恰 5 项**、dist 内 `gsm-pager-loading` 0 命中、新增类/键均在产物里
    （`gsm-account-banner` 5 命中、`stars_account_identity` 1、`api.github.com/user` 4 处）；
@@ -944,3 +1089,8 @@ node scripts/ratelimit-probe.cjs --repo <me/repo>   # 限流实测探针（默�
   `tabs` 列表把 URL 截断到 ~65 字符），以及「隐藏标签页冻结过渡 ⇒ computedStyle 报起点值」这条。
 - 夹具与断言可重复运行：`node .diag/gen-otherstars-harness.cjs` 后用 `file://.../?tab=stars&scenario=<名>`
   打开，再 `agent-browser-cli exec --tab <id> --file .diag/assert-otherstars.js`（场景名见该文件头部注释）。
+- **改 `src/` 后必须重新 `node .diag/gen-otherstars-harness.cjs`** —— 夹具是把 dist 内联进去生成的，
+  不会自动跟随 `pnpm build`。
+- 批量跑场景时**按 `document.title` 找 tab**（夹具把场景名写进 title，形如 `GSM harness: <scenario><hash>`）：
+  `tabs` 把 URL 截断到 ~65 字符，而所有 `file://` 夹具的 URL 前缀完全一样，按 URL 分不出场景。
+  **跑完顺手关掉自己开的夹具标签页**（本会话攒了 20 个才清）。

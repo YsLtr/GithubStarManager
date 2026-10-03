@@ -11,14 +11,12 @@ import { getNativeFilterBar, getNativeFilterRow, getStarsMainColumn, hideNativeN
 import { filterState, hasActiveFilter } from './state';
 import { loadAllNotes } from './storage/notes';
 import { loadRepoCache } from './storage/repoCache';
-import { hasApiData } from './fullSync';
-import { getViewerId } from './pageScope';
-import { renderNotesReadOnly, renderTagsReadOnly } from './readonly';
-import { getOtherPageRepos, getViewStarOverride, isReadOnlyView } from './viewContext';
+import { isStarredByViewer, loadViewerCacheForView } from './cardState';
+import { renderCardTagAndNoteAreas } from './cardAreas';
+import { getOtherPageRepos, isReadOnlyView } from './viewContext';
 import { loadAllTags } from './storage/tags';
 import { buildCardFromCache, createStarButtonForCached } from './ui/cards';
-import { renderNotes } from './ui/notes';
-import { refreshTagFilterBar, refreshTagPillStates, renderTags } from './ui/tagFilter';
+import { refreshTagFilterBar, refreshTagPillStates } from './ui/tagFilter';
 import { escapeHtml, isDesktop } from './utils';
 import type { FilteredRepo, RepoData, TypeFilter } from './types';
 
@@ -243,13 +241,17 @@ export function renderBrowsePage(page: number): number {
   const gridContainer = document.querySelector('.stars-grid-container');
   if (!gridContainer) return 0;
 
-  // 他人 star 页（4.13.0）：与本方自己的页三处差异（其余完全复用同一套卡片）：
+  // 他人 star 页（4.13.0；4.14.0 起「只读」不再全页一刀切）：与本方自己的页三处差异
   //   1. 星标按钮：**本人整表缓存可用时照建**（4.13.0 修订，用户要求「卡片上要有 star 按钮」）。
   //      状态来源必须是**本人缓存成员关系**，不是页面 DOM —— 真机实测：他人页原生星按钮显示的
   //      是**页面主人**的状态（`mattn?tab=stars` 30 条全是 `Starred`/`/unstar` 表单，而本人缓存里
   //      一条都没有），照抄它等于把「对方收藏了」当成「我收藏了」。看不到本人缓存（从未同步）时
   //      无从得知 ⇒ 退回不建按钮，宁缺勿假。
-  //   2. 标签/备注走只读渲染器（无 × / + / textarea，点击无反应）；
+  //   2. 标签/备注**逐仓库**决定可编辑性（`cardState` 三态，4.14.0）：本人 star 了的卡片可编辑，
+  //      没 star 的只读；已 unstar 但数据仍在 24h 宽限期备份里的，**只读但仍然显示**标签与备注。
+  //      分派在 `cardAreas.renderCardTagAndNoteAreas`（唯一入口）。此前这里是页级布尔
+  //      `readOnly ? 只读渲染器 : 可编辑渲染器`，而 `starCheck.syncCardAfterStarChange` 另有一处
+  //      无判据的调用 ⇒ 「点一下 star 整页变可编辑」。
   //   3. 不做本地分页：数据只有页面这一页，脚本也不挂分页器（V3）——翻页交给 GitHub 原生分页器。
   // 第 3 条顺带避免一个真实事故：若某路由一页超过 NATIVE_PAGE_SIZE(30) 条，
   // 按 30 分页会让多出来的条目**静默消失**且没有分页器可供翻页。
@@ -259,12 +261,14 @@ export function renderBrowsePage(page: number): number {
   // 星按钮的两个前提：① 有本人整表缓存（否则无从知道状态）；② **有登录者身份**
   // （`octolytics-actor-id`）—— 未登录访客没有「我」这个概念，缓存可能还是上一个会话/账号的，
   // 建出来的按钮既发不出请求也代表不了任何人 ⇒ 不建（宁缺勿假）。
-  const canShowStar = !readOnly || (hasApiData() && !!getViewerId());
-  const viewerCache = readOnly && canShowStar ? loadRepoCache() : null;
-  const isStarredByViewer = (repoId: string): boolean => {
-    const override = getViewStarOverride(repoId);
-    return override !== undefined ? override : !!viewerCache?.[repoId];
-  };
+  // 4.14.0：同一条成员关系也决定**标签/备注是否可编辑**（见上方第 2 条）——
+  // `canShowStar` 与 `viewerCache` 同源，故「不建星按钮」与「不可编辑」在不该猜的场景下同时成立。
+  // 4.14.0：这两条**只有一份实现**（`cardState.loadViewerCacheForView`）——
+  // 此前这里内联了 `hasApiData() && !!getViewerId()`，而 `cardState` 里又写了一遍，
+  // 正是「两处各判一次、判据漂移」的同一种缺陷模式（本次要修的就是它）。
+  // `viewerCache === null` 同时意味着「星按钮不建」与「全部卡片只读」，两者同源。
+  const viewerCache = readOnly ? loadViewerCacheForView() : null;
+  const canShowStar = !readOnly || viewerCache !== null;
   const results = queryRepos();
   const pageSize = readOnly ? Math.max(results.length, 1) : NATIVE_PAGE_SIZE;
   const totalPages = Math.max(1, Math.ceil(results.length / pageSize));
@@ -282,18 +286,10 @@ export function renderBrowsePage(page: number): number {
   for (const { repoId, data } of results.slice(start, start + pageSize)) {
     const card = buildCardFromCache(repoId, data);
     gridContainer.appendChild(card);
-    const tagsContainer = card.querySelector<HTMLElement>('.stars-card-tags');
-    if (tagsContainer) {
-      if (readOnly) renderTagsReadOnly(tagsContainer);
-      else renderTags(tagsContainer);
-    }
-    const notesContainer = card.querySelector<HTMLElement>('.stars-card-notes');
-    if (notesContainer) {
-      if (readOnly) renderNotesReadOnly(notesContainer);
-      else renderNotes(notesContainer);
-    }
+    // 标签/备注：唯一分派点（他人页逐仓库三态，本方自己的页永远可编辑）
+    renderCardTagAndNoteAreas(card, readOnly ? 'other' : 'own', viewerCache);
     if (readOnly) {
-      if (canShowStar) createStarButtonForCached(card, data, isStarredByViewer(repoId));
+      if (canShowStar) createStarButtonForCached(card, data, isStarredByViewer(repoId, viewerCache));
       continue; // 他人页没有搜索 UI（terms 恒为空）⇒ 不做高亮
     }
 
@@ -433,6 +429,16 @@ export function applyFilters(opts: { keepPage?: boolean } = {}): void {
   // 回滚之前排的队（如 search.ts 的 50ms 定时器），而 applyFilters 会往 GitHub 原生筛选行
   // 里插控件、把原生菜单设成 display:none；在手机宽度上发生这些就是纯残留。
   if (!isDesktop()) return;
+  // 他人 star 页（4.14.0）：同样一行都不跑。它没有脚本筛选栏（D26/V2），`queryRepos()` 对投影来源
+  // 也刻意忽略 `filterState` —— 这里插进去的控件没有任何作用，却会落到**页面主人**的原生筛选行上
+  // （`updateLocalFilterControls` 会把原生三个菜单设成 `display:none`、`refreshTagFilterBar` 会插入
+  // Tags 按钮、筛选信息条也会冒出来）。
+  //
+  // 为什么需要这道门：`filterState` 是**跨页共享的模块态**（`viewContext.ts` 明确进他人页不清、
+  // 离开也不清），而 `starCheck.syncCardAfterStarChange` 会在「有激活筛选」时调本函数 ⇒
+  // 「在自己页筛过标签 → Turbo 切到别人的 stars 页 → 在卡片上点 star」就会踩中。
+  // 此前唯一的防护是「他人页入口刻意直调 renderBrowsePage 绕过 applyFilters」，属实现约定而非不变量。
+  if (isReadOnlyView()) return;
   document.querySelectorAll('.stars-grid-card-cached').forEach((el) => el.remove());
 
   // 2. 常驻本地控件（Type / Language / Sort+方向）原位刷新，同时保证原生菜单持续隐藏

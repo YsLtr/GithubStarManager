@@ -36,7 +36,7 @@ import { notifyTokenIssue } from './tokenConfig';
 import { pushRestoreNotice } from './restore';
 import { loadPendingDelete, markRepoStarred } from './storage/pendingDelete';
 import { pushNotice } from './ui/notifications';
-import { loadRepoCache, saveRepoCache, saveRepoData } from './storage/repoCache';
+import { hasApiData, loadRepoCache, saveRepoCache, saveRepoData } from './storage/repoCache';
 import type { FullSyncMeta, RepoCache, RepoData } from './types';
 import { currentGeneration, ifCurrent } from './lifecycle';
 import { isDesktop } from './utils';
@@ -958,11 +958,12 @@ function renderSyncButton(btn: HTMLElement, host: HTMLElement, state: SyncState)
     : SYNC_DEFAULT_TITLE;
 }
 
-/** API 数据就绪 = 至少完整整表过一次（全量缓存可渲染 = API 主模式前提） */
-export function hasApiData(): boolean {
-  const meta = gmGet<FullSyncMeta>(STORAGE_KEYS.fullSyncMeta, {});
-  return !!meta.lastFullSyncAt && (meta.count ?? 0) > 0;
-}
+/**
+ * API 数据就绪 = 至少完整整表过一次（全量缓存可渲染 = API 主模式前提）。
+ * 定义已迁到存储层（`storage/repoCache.ts` 的 `hasApiData`，4.14.0）：那里是它唯一的数据来源，
+ * 且 `cardState.ts` 需要在**不依赖 fullSync** 的前提下用它，避免导入环。此处只做转发。
+ */
+export { hasApiData };
 
 /** 进页自动同步（transform 成功后触发）：延迟 2s 让首屏渲染先完成 */
 export function scheduleProbeSync(): void {

@@ -416,3 +416,187 @@ R7（`R7_gridMarker=false` + `R7_starredOpacity=0`）。
 **残留（未修，已登记为风险 18）**：`/stars/{login}` 路由上没有 `.Layout` 元素（真机
 `querySelectorAll('.Layout').length === 0`）⇒ 该路由从不进入三栏接管，这是**既有行为**；
 `.container-xl{max-width:1600px}` 作用于布局的祖先，无法用后代标记限定。
+
+---
+
+## 追加 7：只读**不再是整页一刀切** —— 逐仓库三态（4.14.0）
+
+### 起因：一个真实缺陷
+
+用户报：「他人 star 页面的卡片会因为点了 star 就变成可编辑状态。」
+
+根因不在只读本身，而在**「只读」被判成了页级单一布尔**，且分派写了两处、判据不一致：
+
+- `filters.renderBrowsePage`：`readOnly ? renderTagsReadOnly : renderTags`（这一处是对的）；
+- `starCheck.syncCardAfterStarChange`：**无条件**调 `renderTags` / `renderNotes`（可编辑渲染器，
+  直接绑 `saveTags` / `saveNote`），全函数**没有任何只读判断**。
+
+于是「在他人页点一下 star」→ 写成功 → `syncCardAfterStarChange` → 标签/备注被换成带 `+` / `×` /
+`textarea` 的可编辑控件。两处判据不一致**就是**这个缺陷。
+
+### 决策：可编辑性与可见性解耦，都按**逐仓库**事实判定
+
+| 状态 | 判据 | 数据来源 | 编辑控件 |
+|---|---|---|---|
+| `editable` | 本人 star 了它（内存覆盖表 → 本人整表缓存） | 活区 `stars_tags_*` / `stars_notes_*` | 有 |
+| `locked-pending` | 不在缓存，但 `stars_pending_delete` 里有它且 **未超 24h** | **宽限期备份**的 `_tags` / `_note` | 无（**数据仍显示**，用户裁定） |
+| `locked-empty` | 两者都不是 | 活区（多半为空；导入的标签可能在此） | 无 |
+
+- 判定层 = 新模块 `src/cardState.ts`（纯判定：不碰 DOM、不发请求、不写存储）；
+  渲染分派 = 新模块 `src/cardAreas.ts` 的 `renderCardTagAndNoteAreas(card, 'own' | 'other', viewerCache)`，
+  **唯一入口**（`filters` 与 `starCheck` 都只走它）。
+- **可编辑性只认「已提交」状态**：不读星按钮的 DOM class、不读在途请求。乐观翻转与「排队中撤销」
+  都不改变可编辑性 —— 否则写失败回滚后会留下「星星已回退、标签却已改过」的不一致。
+- **前置条件**与既有 `canShowStar` 同源且是它的子集：`hasApiData() && getViewerId()`。
+  任一不满足 ⇒ 一律不可编辑（未登录访客、从无整表缓存）。**宁缺勿假**。
+- **他人页点标签不再切换筛选**：`renderTags` 新增上下文开关 `filterToggle`（默认 `true` =
+  本方自己的页逐字不变；他人页传 `false`）。由此顺带**必须**给 `applyFilters()` 补一道
+  `isReadOnlyView()` 早退门 —— `filterState` 是跨页共享模块态（进他人页不清、离开也不清），
+  而 `starCheck` 会在「有激活筛选」时调它 ⇒「在自己页筛过标签 → 切到别人的 stars 页 → 点 star」
+  会往**页面主人**的原生筛选行插脚本控件、把原生菜单设成 `display:none`。此前唯一的防护是
+  「他人页入口刻意直调 `renderBrowsePage` 绕过 `applyFilters`」，属实现约定而非不变量。
+
+### 口径收窄：「零存储写入」→「**渲染路径**零写入」
+
+4.13.0 的硬约束是「全程零网络、零存储写入」。4.14.0 按用户需求收窄为：
+
+- **零网络：不变**（连间接的 linguist 色表请求也仍然被 `setLangColorFetchEnabled(false)` 关掉）；
+- **零存储写入：收窄为「页面加载与渲染路径零写入」** —— 只有**用户显式动作**（点星、增删标签、
+  写备注）才写，且只写**登录者**自己的命名空间（`stars_tags_<登录者 id>` / `stars_notes_<登录者 id>`）。
+  仍然不写 `stars_repo_cache`（除既有的 `markRepoUnstarred/Starred` 语义外）、不写
+  `stars_full_sync_meta`、**不新增任何他人页专属缓存键**；页面投影仍只存内存。
+
+### `markRepoUnstarred` 的判据从「缓存里有它」改为「**有东西要保全**」
+
+旧实现 `if (!cache[repoId]) return;` 在他人页会漏：那页允许「点 star（只在 `viewContext` 的
+内存覆盖里，**不进缓存**）→ 加标签 → 点 unstar」，此时缓存里没有该仓库 ⇒ 直接 return ⇒
+① 数据不备份（宽限期里看不到标签）、② 活区**不被清空** ⇒ 标签永久留在存储里，而只读卡片
+又没有删除入口，用户再也清不掉它。现在只要满足任一条就建备份：缓存有该条目 / 调用方给了
+`seed`（他人页卡片上的投影数据）/ 该仓库当下有非空标签或备注。三者皆无 = 无物可保 ⇒ 什么都不做。
+
+**连带的行为变化**：在他人页 unstar 一个从未进入整表缓存的仓库会产生一条 `pending` 条目；
+若随后 re-star，该仓库会**进入本人整表缓存**（`markRepoStarred` 的既有行为）。这是**正确**的：
+此刻「我」确实 star 了它。
+
+### 观感与可访问性（两条**有证据的「不做」**）
+
+- 只读卡片**不渲染任何编辑控件**，也**不加** ARIA 只读语义：`aria-readonly` 只对 9 个 widget role
+  有效（把「标签 + 备注」这一簇编辑入口包进 `role="textbox"` 是错误语义）；`inert` 无默认视觉提示；
+  `aria-disabled` 的禁用态会踩到低对比 / 不可聚焦 / 像坏了等全部负面项。
+  详见 `.pi/tmp/research-other-stars-editable-cards.md`（含 W3C / MDN / USWDS / Smashing 的原文引用）。
+- **不加可见说明行、不加徽章**（沿用用户既往裁定）。唯一的提示是只读节点上的原生 `title`，
+  按状态分叉：宽限期内 =「已取消 star：标签与备注保留 24 小时，期间不可编辑」，其余为默认文案。
+- 状态切换时**加一条焦点回收**（重绘前记 `card.contains(document.activeElement)`，重绘后把焦点
+  交还该卡片的星按钮）：最常见的路径（点星按钮）不会丢焦点，这条兜的是「后台同步判定外部取关时
+  用户正聚焦在本卡片的标签输入框 / 备注 textarea 上」——浏览器实测移除焦点元素会一律回退 `<body>`。
+- 一条**状态驱动**的样式：不可编辑卡片的备注区 `cursor: default`（`base.css`，4.14.0）。
+  `.stars-card-notes` 原有的 `cursor: text` 对本方自己的页是对的，但对点了没反应的只读卡片
+  是明摆的谎。规则认 `[data-gsm-card-state='locked-*']`，该属性**只存在于他人页**（自有页走
+  `view: 'own'` 分支、不写），故自有页观感一字不变。放 `base.css` 而非 `readonly.css`：
+  后者是**按需**注入的，而「卡片上什么都没有」的 `locked-empty` 恰恰也需要这条。
+
+### 工装（`.diag/otherstars-harness.html` + `assert-otherstars.js`）
+
+新增三个场景与 `R21` 断言组，并把既有断言按新口径重述：
+
+| 场景 | 覆盖 |
+|---|---|
+| `other-editstate` | 同一页上 `editable` 与 `locked-pending` 并存；宽限期卡片**显示备份数据**且 0 控件；点标签不产生筛选副作用；加标签只写 `stars_tags_999` |
+| `other-pending-expired` | 备份超 24h ⇒ 判据**现算**、不再显示（`locked-empty`，无徽章） |
+| `other-nocache-edit` | 无整表缓存 ⇒ 全部 `locked-empty`（活区数据仍只读显示）、无星按钮、零写入 |
+
+口径重述（**不是**放松）：`R2_controlsInLockedCards` 必须恒为 0、`R2_inputs`/`R2_textareas` 恒为 0
+（没有「默认打开」的编辑器）、`R2_fetch`/`R2_writes` 恒为 0；`R5_ownerDataLeaked` 恒为 false
+（页面主人命名空间的数据一个字符都不许出现在网格里）。4.13.0 那句「他人页编辑控件必须为 0」
+只在「页面条目与本人缓存**无交集**」时成立 —— 那正是 `other-nocache` 场景。
+
+`R16`（`other-starstate`）补上了这个缺陷的**正面断言**：点 star ⇒ 该卡片 `locked-empty → editable`
+（另一张不受影响）；再点 unstar ⇒ `editable → locked-pending`、控件归零、`pending` 里出现该仓库、
+存储写入恰为 `stars_pending_delete` + `stars_tags_999` + `stars_notes_999`（**只落登录者命名空间**），
+全程 `fetch` 增量为 0。
+
+### 一条工装教训（本机窗口宽度）
+
+`agent-browser-cli` 没有视口控制，而夹具伪造的是 `matchMedia`（JS 侧判宽屏真）、**真实 CSS 媒体查询
+看的是 `window.innerWidth`**。本机窗口一度只有 604px ⇒ 两张布局表（都在 `@media (min-width:768px)` 里）
+一条都不生效，`R12_gridDisplay` 读出 `block`、`R13_ownerAvatarW` 读出 260，与实现对错无关。
+处置：把与视口有关的断言要么**先确认 `innerWidth ≥ 768`**（夹具现会记录 `R21_viewportWide`），
+要么改用**与视口无关**的观测量 —— 例如「哪些规则声明了 `cursor` 且实际匹配该元素」
+（`R21_betaNotesCursorRules`），这与 R19 的 transition 计数是同一手法。
+
+另一个坑：`tabs` 列表把 URL 截断到约 65 字符，而所有 `file://` 夹具的 URL 前缀完全相同 ⇒
+无法按 URL 区分场景。已在夹具里把场景名写进 `document.title`（`GSM harness: <scenario><hash>`），
+外部按 title 找 tab。**注意**：生成脚本整段在模板字符串里，注释中**不许出现反引号**（会截断外层串）。
+
+### 追加 7 的发布前独立审查轮（外部 reviewer，只读复核 + 自建复现实验）
+
+结论：**1 P1 + 4 P2**。P1 与两条 P2 已修，另两条登记为已知项（下方逐条）。
+
+#### P1（已修）：只读卡片的备注区**仍可点开编辑器并写盘**
+
+- **成因**：备注的编辑入口是挂在**容器本身**上的 click 监听（`ui/notes.ts`），而容器在重绘之间是
+  **复用**的（`innerHTML = ''` 只换内容）。`renderNotesReadOnly()` 只清 `innerHTML`，
+  **摘不掉容器上的监听** ⇒ 从 `editable` 切到 `locked-*` 之后，点一下被宣称为「只读」的卡片照样弹出
+  `textarea`，blur 后**真的写盘**，随后重绘又只按只读渲染 ⇒ 用户输入被静默吞掉（re-star 时还会被
+  宽限期备份覆盖）。对照：`ui/tagFilter.renderTags` 的监听都在**子节点**上，`innerHTML = ''` 一并销毁
+  ⇒ 只有备注这一路有该问题。
+- **修法**：`ui/notes.ts` 用 `WeakMap<HTMLElement, handler>` 记住那枚监听，导出
+  `disposeNotesEditor(container)`；`renderNotes` 每次渲染前先摘旧监听（顺带修掉「反复重绘在同一容器上
+  **叠加**监听」这个一直存在的行为），`cardAreas.renderCardTagAndNoteAreas()` 在**唯一分派点**上，
+  不论哪个分支都先摘 —— 不把这条正确性只寄托在 `renderNotes` 的内部实现上。
+- **为什么既有断言全绿**：`R16_betaLockedControlsAfterUnstar` / `R21_betaLockedControlCount` 都是
+  **静态快照**（「此刻 DOM 里没有控件」），而缺陷只在**点了之后**才显现。这是「按静态形状断言」的教训，
+  与 4.13.0 那次 transition 回归同源（见上文「审查轮追加」）。
+- **新增动态断言 `R25`**（`other-editstate` / `other-pending-expired` / `other-nocache-edit` 三场景）：
+
+  | 观测量 | 修复后 | 说明 |
+  |---|---|---|
+  | `R25_lockedEditorAfterClick` | `0` | 点只读卡片的备注区，**不得**出现 `.stars-card-notes-edit` |
+  | `R25_lockedControlsAfterClick` | `0` | 同卡片控件总数仍为 0 |
+  | `R25_lockedNoteStillShown` | `缓冲期备注` | 只读文本原样还在 |
+  | `R25_lockedWritesDelta` | `0` | 该次点击零写入 |
+  | `R25_editableEditorAfterClick` | `1` | **对照组**：同样手法点可编辑卡片，必须真的进编辑态 |
+  | `R25_editableEditorAfterEscape` / `R25_notesWritesTotal` | `0` / `0` | Escape 取消不留写入 |
+  | `R25_fetchTotal` | `0` | 全程零网络 |
+
+  另补 `R27`（`own` 场景）：自己的页上「点击 → 输入 → blur 提交」仍然落盘
+  （`R27_editorOpened=1`、`R27_editorClosedAfterBlur=0`、`R27_noteTextAfterCommit='R27 写入验证'`、
+  `R27_writes=['stars_notes_999']`）—— 证明修复只摘监听，没有顺手关掉编辑能力。
+
+#### P2-1（已修）：登出页显示了 `stars_pending_delete` 里的数据
+
+`stars_pending_delete` 是**单份全局键**，不按账号分片（与 D27 的 `stars_tags_<id>` 命名空间键不同），
+它属于**上一个登录的人**。未登录访客照常查它 ⇒ D26 明文要求的「登出页无徽章」被破坏。
+修法：`cardState.hasViewerIdentity()`（= `!!getViewerId()`）作为**唯一身份判据**，
+没有它时 `getCardState` 判 `locked-empty`、`readCardDisplayData` 也不看备份。
+
+**A/B 实证**（新增夹具场景 `other-logout-pending`：body 登出 + 身份清空 + 备份里带着私密串，
+且该仓库**不在**本人缓存里 —— 否则会先命中 `editable` 而掩盖问题）：
+
+| 观测量 | 修复后 | 钳合（`hasViewerIdentity()` 恒为 true = 修复前） |
+|---|---|---|
+| `R26_leaksPendingTags` / `R26_leaksPendingNote` | `false` / `false` | **`true` / `true`** |
+| `R26_roBadges` / `R26_roTagPills` | `0` / `0` | **`2` / `1`** |
+| `R26_grid` / `R26_cards` | `1` / `2` | `1` / `2`（登出页仍接管，只读网格照出） |
+| `R26_starButtons` / `R26_fetch` / `R26_writes` | `0` / `0` / `0` | `2`（钳合副作用：身份被强行伪造）/ `0` / `0` |
+
+#### P2-2（已修）：`isStarredByViewer` 有两份实现
+
+`filters.ts` 里内联了一份 `override ?? viewerCache[repoId]`，`cardState.ts` 里又有一份 ——
+「两处各判一次、判据漂移」**正是本次要修的缺陷模式**。现在 `filters` 直接 import `cardState` 的版本；
+顺带把 `canShowStar` 也改为由 `loadViewerCacheForView()` 的结果派生（`viewerCache !== null`），
+`hasApiData() && getViewerId()` 那串判据在 `filters.ts` 里**不再出现第二遍**。
+
+#### P2-3（登记，未改）：逐卡存储读取次数偏多
+
+实测约 5 次 `GM_getValue` / 卡（`getTags` + `getNote` + `loadPendingDelete`，各自还会读一次
+localStorage 镜像），30 条约 150+ 次同步 IPC。**本轮不改**：真正省下来要靠给三个存储模块加
+「读缓存 + 写失效」，那会改动**全脚本**共用的存储层新鲜度语义，风险与收益不匹配（本版本的主题是
+他人页的正确性）。登记为观察项，将来若真机感到卡顿再单独立项。
+
+#### P2-4（登记，未改）：他人页上 D12 的「同步后立即重渲染」不生效
+
+`rerenderAfterSync` 走 `applyFilters()`，而后者现在被他自己的 `isReadOnlyView()` 早退门挡住 ⇒
+他人页同步完成后网格不重绘。这是**净收益**（他人页的筛选栏/分页器本就不该被脚本驱动），
+但 D12 的措辞是全局的，故在此显式登记：**D12 只适用于本方自己的 stars 页**。
+他人页刷新数据的路径是「重新投影原生条目」（`domRepos` + `queryRepos`），不由同步驱动。

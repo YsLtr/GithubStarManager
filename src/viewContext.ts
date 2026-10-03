@@ -15,7 +15,11 @@
  *
  * ## 只读与筛选的语义（重要）
  *
- * - 他人页**永远是只读**：`readOnly: true` 时渲染层不建星标按钮、不建标签/备注编辑控件。
+ * - 他人页的渲染分派走**逐仓库三态**（4.14.0，`cardState.ts` + `cardAreas.ts`）：
+ *   本人 star 了的卡片标签/备注可编辑，没 star 的只读；已 unstar 但数据仍在 24h 宽限期备份里的
+ *   只读**但仍显示**。星按钮本身照旧只建在「本人整表缓存可用」时（状态取自缓存成员关系）。
+ *   `isReadOnlyView()` 现在的语义收窄为「这是投影来源」——它仍是他人页分支的总开关，
+ *   但**不再**单独决定标签/备注可不可编辑。
  * - 他人页**不套用脚本筛选状态**（`filterState` 里的 tags/langs/types/search 一概不参与）：
  *   他人页没有筛选 UI（V2），若沿用我自己页上残留的筛选条件，网格会莫名其妙变空 ——
  *   那不是「筛选」，那是「看起来坏了」。他人页的顺序就按页面上原生条目的顺序（= GitHub 的
@@ -66,7 +70,12 @@ export function getOtherPageRepos(): OtherPageSource | null {
   return otherPage;
 }
 
-/** 是否处于他人页只读模式（渲染层据此决定建不建可交互控件） */
+/**
+ * 是否处于「他人页投影」视图（= 表格来自内存投影，不是本人整表缓存）。
+ *
+ * 4.14.0 起语义**收窄**：它只表示「数据来源是投影」，不再单独决定标签/备注可不可编辑
+ * —— 那是 `cardState.getCardState()` 的逐仓库三态。`applyFilters` 与渲染分派仍用它做总开关。
+ */
 export function isReadOnlyView(): boolean {
   return otherPage !== null;
 }

@@ -22,8 +22,9 @@ import { getNote, saveNote } from './storage/notes';
 import { loadPendingDelete, savePendingDelete } from './storage/pendingDelete';
 import { loadRepoCache, saveRepoCache } from './storage/repoCache';
 import { getTags, saveTags } from './storage/tags';
-import { renderNotes } from './ui/notes';
-import { renderTags } from './ui/tagFilter';
+import { loadViewerCacheForView } from './cardState';
+import { renderCardTagAndNoteAreas } from './cardAreas';
+import { isReadOnlyView } from './viewContext';
 import type { PendingDeleteMap, RepoCache } from './types';
 
 import {
@@ -126,8 +127,20 @@ function confirmExternalUnstar(repoId: string, path: string): boolean {
 }
 
 /**
- * 视图同步：把某个仓库的卡片星标态改成 `isStarred` 并刷新其标签/备注（与手动点星星按钮的表现一致）。
- * 恢复（up）与外部取关（down）共用；`updateGridCard` 是它的 down 特例。
+ * 视图同步：把某个仓库的卡片星标态改成 `isStarred`，并按**视图**刷新其标签/备注。
+ *
+ * 三条调用路径共用：卡片星按钮点击成功后（`ui/cards.ts`）、确认外部取关（`applyExternalUnstar`）、
+ * 恢复（`restore.ts`）。
+ *
+ * ## 4.14.0 修正：本函数必须视图感知
+ *
+ * 此前它**无条件**调 `renderTags` / `renderNotes`（可编辑渲染器，直接绑 `saveTags` / `saveNote`），
+ * 全函数没有任何只读判断。于是「在他人 stars 页点一下 star」→ 成功回调 → 这里 → 标签/备注被换成
+ * **可编辑**控件 —— 这就是「点了 star 就变成可编辑状态」的缺陷成因。
+ *
+ * 现在统一交给 `cardAreas.renderCardTagAndNoteAreas`（唯一分派点）：
+ * 他人页逐仓库三态（本人已 star ⇒ 可编辑；已 unstar 但数据还在 24h 宽限期备份 ⇒ 只读但仍显示），
+ * 本方自己的页照旧永远可编辑。
  */
 export function syncCardAfterStarChange(repoId: string, isStarred: boolean): void {
   const card = document.querySelector<HTMLElement>(`.stars-grid-card[data-repo-id="${repoId}"]`);
@@ -144,10 +157,13 @@ export function syncCardAfterStarChange(repoId: string, isStarred: boolean): voi
     }
   }
 
-  const tagsEl = card.querySelector<HTMLElement>('.stars-card-tags');
-  if (tagsEl) renderTags(tagsEl);
-  const notesEl = card.querySelector<HTMLElement>('.stars-card-notes');
-  if (notesEl) renderNotes(notesEl);
+  // 他人页：只重画这张卡片的标签/备注，**绝不**往下走到 applyFilters。
+  if (isReadOnlyView()) {
+    renderCardTagAndNoteAreas(card, 'other', loadViewerCacheForView());
+    return;
+  }
+
+  renderCardTagAndNoteAreas(card, 'own');
 
   // 有筛选激活（tags/langs/types/search 任一）时：仓库的成员关系变了，重算筛选结果；
   // 无筛选（browse 态）不动。keepPage: 结果集变但条件没变，不把用户拉回第 1 页（🟡-3）

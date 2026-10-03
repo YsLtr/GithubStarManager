@@ -177,10 +177,31 @@ export function refreshTagPillStates(): void {
   });
 }
 
+/** `renderTags` 的渲染上下文（4.14.0） */
+export interface TagRenderOptions {
+  /**
+   * 是否把标签点击接到**筛选**上（默认 `true` = 本方自己的 stars 页的既有行为）。
+   *
+   * 他人 star 页传 `false`，隔离三件事：
+   * ① 点胶囊不切换 `filterState`；
+   * ② 不加 `stars-tag-active` 选中高亮；
+   * ③ 保存后不调 `applyFilters()` / `refreshTagPillStates()`。
+   *
+   * 为什么必须隔离：他人页**没有**脚本筛选栏（D26），而 `filterState` 是**跨页共享的模块态**
+   * （进他人页不清、离开也不清，见 `viewContext.ts`）。若沿用筛选语义，在他人页点一下标签
+   * 就会改写一份用户看不见的筛选状态，回到自己的页时列表莫名其妙变少；
+   * 更糟的是 `applyFilters()` 会往**别人的**原生筛选行插脚本控件、把原生菜单设成 `display:none`
+   * —— 它此前唯一的门是 `!isDesktop()`，没有只读门。
+   */
+  filterToggle?: boolean;
+}
+
 /** 渲染单个卡片上的标签 pill + 内联新增输入框 */
-export function renderTags(tagsContainer: HTMLElement): void {
+export function renderTags(tagsContainer: HTMLElement, opts: TagRenderOptions = {}): void {
   const repoId = tagsContainer.dataset.repoId || '';
   if (!repoId) return;
+  // 默认 true：本方自己的页逐字沿用既有行为（筛选联动 + 保存后刷新候选）
+  const filterToggle = opts.filterToggle !== false;
 
   const tags = getTags(repoId);
   tagsContainer.innerHTML = '';
@@ -188,22 +209,24 @@ export function renderTags(tagsContainer: HTMLElement): void {
   tags.forEach((tag, idx) => {
     const span = document.createElement('span');
     span.className = 'stars-tag';
-    if (filterState.tags.includes(tag)) {
+    if (filterToggle && filterState.tags.includes(tag)) {
       span.classList.add('stars-tag-active');
     }
     span.textContent = tag;
 
-    span.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const fidx = filterState.tags.indexOf(tag);
-      if (fidx >= 0) {
-        filterState.tags.splice(fidx, 1);
-      } else {
-        filterState.tags.push(tag);
-      }
-      applyFilters();
-      refreshTagPillStates();
-    });
+    if (filterToggle) {
+      span.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const fidx = filterState.tags.indexOf(tag);
+        if (fidx >= 0) {
+          filterState.tags.splice(fidx, 1);
+        } else {
+          filterState.tags.push(tag);
+        }
+        applyFilters();
+        refreshTagPillStates();
+      });
+    }
 
     const del = document.createElement('span');
     del.className = 'stars-tag-del';
@@ -213,9 +236,11 @@ export function renderTags(tagsContainer: HTMLElement): void {
       const current = getTags(repoId);
       current.splice(idx, 1);
       saveTags(repoId, current);
-      renderTags(tagsContainer);
-      // applyFilters 会按需创建/收窄/撤条（4.3.5 删冗余直调）
-      applyFilters();
+      renderTags(tagsContainer, opts);
+      if (filterToggle) {
+        // applyFilters 会按需创建/收窄/撤条（4.3.5 删冗余直调）
+        applyFilters();
+      }
     });
 
     span.appendChild(del);
@@ -244,9 +269,11 @@ export function renderTags(tagsContainer: HTMLElement): void {
         if (current.includes(val)) { input.remove(); addBtn.style.display = ''; return; }
         current.push(val);
         saveTags(repoId, current);
-        renderTags(tagsContainer);
-        // 新标签入库后 applyFilters→refreshTagFilterBar 会建条/收窄（4.3.5 删冗余直调）
-        applyFilters();
+        renderTags(tagsContainer, opts);
+        if (filterToggle) {
+          // 新标签入库后 applyFilters→refreshTagFilterBar 会建条/收窄（4.3.5 删冗余直调）
+          applyFilters();
+        }
       } else {
         input.remove();
         addBtn.style.display = '';

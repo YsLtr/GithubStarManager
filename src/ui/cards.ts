@@ -168,7 +168,9 @@ export function createStarButtonForCached(card: HTMLElement, data: RepoData, isS
       // 成功：先落本地权威数据（宽限期备份进出），再刷新卡片
       if (repoId) {
         if (target) markRepoStarred(repoId);
-        else markRepoUnstarred(repoId);
+        // unstar 时把卡片数据一并交出去：他人页上新 star 过（只在内存覆盖里）的仓库不在整表缓存，
+        // 少了这份数据就没东西可备份，标签会永远留在活区（详见 markRepoUnstarred 的注释）
+        else markRepoUnstarred(repoId, data);
         // 他人页：把本次写入的结果记进视图内存，供后续重渲染沿用（非他人页是 no-op）
         setViewStarOverride(repoId, target);
       }

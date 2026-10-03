@@ -350,6 +350,19 @@
     min-height: 20px;
     cursor: text;
   }
+
+  /* 不可编辑的卡片：备注区不能保留「可编辑」的光标暗示（4.14.0）。
+     `.stars-card-notes` 上面那条 `cursor: text` 对本方自己的页是对的（整片可点进编辑态），
+     但他人 star 页上「本人没 star」的卡片点了没有任何反应 —— 光标说「这里能打字」是明摆的谎。
+     选择器认的是 `cardAreas.ts` 写在两个区域容器上的状态属性；它**只存在于他人页**
+     （本方自己的页走 `view: 'own'` 分支、不写该属性）⇒ 自有页观感一字不变。
+     规则放 base.css 而不是 readonly.css：后者是**按需**注入的（只有真的渲染出徽章时才注入），
+     而「卡片上什么都没有」的 locked-empty 恰恰也需要这条 —— 放在按需表里会漏掉它。
+     该属性随卡片节点一起销毁，不需要回滚登记。 */
+  .stars-card-notes[data-gsm-card-state='locked-pending'],
+  .stars-card-notes[data-gsm-card-state='locked-empty'] {
+    cursor: default;
+  }
   .stars-card-notes-text {
     font-size: 12px;
     line-height: 1.5;
