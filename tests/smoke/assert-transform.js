@@ -9,7 +9,7 @@
     out.gridExists = !!document.querySelector('.stars-grid-container');
     out.paginatorCloned = document.querySelectorAll('.stars-grid-container .paginate-container').length;
     out.rightSidebarTopics = text(document.querySelector('.stars-right-sidebar'));
-    out.rightSidebarInsideLayout = !!document.querySelector('.Layout--sidebarPosition-start > .stars-right-sidebar');
+    out.rightSidebarInsideLayout = !!document.querySelector('.gsm-stars-layout > .stars-right-sidebar');
     out.tagFilterBtn = !!document.getElementById('stars-tag-filter-button');
     // Lists 区块必须整行隐藏（标题行带 d-flex，内联 display:none 会被 !important 压过）
     const listsHeading = Array.from(document.querySelectorAll('#user-profile-frame h2.f3-light'))

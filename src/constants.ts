@@ -64,6 +64,19 @@ export const GSM_HIDDEN_ATTR = 'data-gsm-hidden';
  *  把右栏里的陈旧内容倒进去就是重复的 topics（见 transform.ts 的搬运点与 viewTeardown.ts 的回填点）。 */
 export const GSM_TOPICS_SRC_ATTR = 'data-gsm-topics-src';
 
+/** 「承载 stars 内容的那个 `.Layout`」的标记类（4.13.0）。
+ *
+ *  **为什么必须标记**：profile 页上 `.Layout.Layout--sidebarPosition-start` 可能**不止一个** ——
+ *  登出的页面有两个：第 0 个是**页头**（头像 + 标签栏），第 1 个才是**内容**布局（`#user-starred-repos` 在它里面）。
+ *  布局样式表（base.css / wide.css / persistent.css）里的 `--Layout-sidebar-width: 180px`、
+ *  `grid-template-columns: 180px 1fr 220px`、`.Layout-sidebar{width:180px}` 等等原本按
+ *  `.Layout--sidebarPosition-start` 选元素 ⇒ 两代骨架下会**连页头一起改写**（不是我们的内容却动了它的布局）。
+ *  绑上本标记后语义变成「只接管承载我们网格的那个布局」，页头原样不动（真机：登出页 `mattn?tab=stars`）。
+ *
+ *  与 `GSM_HIDDEN_ATTR` 的区别：这个标记打在**我们自己选中的布局**上（元素本身仍是 GitHub 的，
+ *  但我们只加一个 class，不改它的任何内联样式）⇒ 回滚就是摘掉 class，不必记录「原来长什么样」。 */
+export const STARS_LAYOUT_CLASS = 'gsm-stars-layout';
+
 /* ---------------- 导出包（4.7.0 导入导出） ---------------- */
 
 /** 导出包协议身份：**永不随脚本改名变动**（改名只影响文件名 slug）。校验「这是不是本项目的文件」靠它 */

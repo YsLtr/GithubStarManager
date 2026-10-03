@@ -1,0 +1,36 @@
+/* 只读模式（4.12.0）：非本人 / 无法判定归属的 stars 列表页上的就地装饰。
+ *
+ * 只描述脚本**自建**的节点（.gsm-ro-*）。本文件不包含任何对 GitHub 原生节点的规则 ——
+ * 只读模式的铁律是「不碰 GitHub-owned 节点的属性」（见 readonly.ts 与 AGENTS.md D20）。
+ *
+ * 与 base.css 一样整体包在桌面断点里（JS 侧另有 isDesktop() 门）：只读模式本就只在桌面生效，
+ * 万一有残留节点，窄视口下这些规则也不会生效（D18「窄视口 = 脚本没装过」）。
+ *
+ * ⚠️ 断点写死在这里，与 base.css / persistent.css / wide.css 的三处保持一致（改一处要同步）。 */
+@media (min-width: 768px) {
+
+  /* 标签行（只读）：形态对齐卡片的 .stars-card-tags，但不可点、不显示删除按钮 */
+  .gsm-ro-tags {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--base-size-4, 4px);
+    margin-top: var(--base-size-8, 8px);
+    cursor: default;
+  }
+
+  .gsm-ro-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: var(--base-size-2, 2px) var(--base-size-8, 8px);
+    border-radius: var(--base-size-12, 12px);
+    font-size: var(--text-body-size-small, 12px);
+    font-weight: var(--base-text-weight-normal, 400);
+    line-height: 1.4;
+    background: var(--bgColor-accent-muted, #ddf4ff);
+    color: var(--fgColor-accent, #0969da);
+    white-space: nowrap;
+    cursor: default;
+  }
+
+}

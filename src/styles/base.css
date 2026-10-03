@@ -10,21 +10,29 @@
   }
 
   /* ===== 2. 缩小左侧个人资料侧边栏 ===== */
-  .Layout.Layout--sidebarPosition-start {
+  .Layout.gsm-stars-layout {
     --Layout-sidebar-width: 180px !important;
   }
-  .Layout-sidebar {
+  .gsm-stars-layout .Layout-sidebar {
     width: 180px !important;
     min-width: 180px !important;
   }
 
-  /* 缩小头像 */
-  .Layout-sidebar .avatar-user,
-  .Layout-sidebar a[href*="avatars"] img {
+  /* 缩小头像 —— **只针对页主自己的那一张**。
+     不能用裸 `.gsm-stars-layout .Layout-sidebar .avatar-user`：它会把侧栏里**所有**头像一网打尽，
+     包括 Sponsors 区块里那排小头像（真机实测 mattn 页：13 个 20px 赞助头像被撑成 120px，
+     在 `.d-flex.flex-wrap` 里被迫逐个换行、竖着排成一列，用户报「头像全竖向排列且和页主一样大」）。
+     现有两条各自都只命中 1 个元素，互为冗余（真机计数：`a[href*="avatars"] img` = 1、
+     `.avatar-user.width-full` = 1、裸 `.avatar-user` = 15）：
+     - `.avatar-user.width-full`：页主头像带 `width-full`（铺满容器），小头像不带；
+     - `a[href*="avatars"] img`：页主头像的链接指向头像图片本身（小头像的链接是 `/login`）。
+     两者的失效方向都是**良性的**：都不匹配时头像只是维持容器原宽（180px），不会被撑爆或压扁。 */
+  .gsm-stars-layout .Layout-sidebar .avatar-user.width-full,
+  .gsm-stars-layout .Layout-sidebar a[href*="avatars"] img {
     width: 120px !important;
     height: 120px !important;
   }
-  .Layout-sidebar a[href*="avatars"] {
+  .gsm-stars-layout .Layout-sidebar a[href*="avatars"] {
     width: 120px !important;
     height: 120px !important;
     display: block !important;
@@ -33,47 +41,47 @@
   /* 侧边栏/头像的 transition 规则已移到 persistent.css(常驻表)：
      离开 Stars 时本表整表移除,回弹过渡必须仍然存在。 */
   /* 过渡起点（JS 在解除隐藏前挂一帧 html.gsm-anim-prepare）：临时恢复原始宽度 */
-  html.gsm-anim-prepare .Layout.Layout--sidebarPosition-start {
+  html.gsm-anim-prepare .Layout.gsm-stars-layout {
     grid-template-columns: 296px minmax(0, 1fr) auto !important;
   }
-  html.gsm-anim-prepare .Layout-sidebar {
+  html.gsm-anim-prepare .gsm-stars-layout .Layout-sidebar {
     width: 296px !important;
     min-width: 296px !important;
   }
-  html.gsm-anim-prepare .Layout-sidebar .avatar-user,
-  html.gsm-anim-prepare .Layout-sidebar a[href*="avatars"] img,
-  html.gsm-anim-prepare .Layout-sidebar a[href*="avatars"] {
+  html.gsm-anim-prepare .gsm-stars-layout .Layout-sidebar .avatar-user.width-full,
+  html.gsm-anim-prepare .gsm-stars-layout .Layout-sidebar a[href*="avatars"] img,
+  html.gsm-anim-prepare .gsm-stars-layout .Layout-sidebar a[href*="avatars"] {
     width: 296px !important;
     height: 296px !important;
   }
-  html.gsm-anim-prepare .Layout-sidebar .user-status-circle-badge-container {
+  html.gsm-anim-prepare .gsm-stars-layout .Layout-sidebar .user-status-circle-badge-container {
     top: 262px !important;
     left: 262px !important;
   }
 
   /* 缩小用户名字体 */
-  .Layout-sidebar .vcard-names .p-name,
-  .Layout-sidebar .vcard-names .p-nickname,
-  .Layout-sidebar h1.vcard-names {
+  .gsm-stars-layout .Layout-sidebar .vcard-names .p-name,
+  .gsm-stars-layout .Layout-sidebar .vcard-names .p-nickname,
+  .gsm-stars-layout .Layout-sidebar h1.vcard-names {
     font-size: 16px !important;
   }
-  .Layout-sidebar .p-nickname {
+  .gsm-stars-layout .Layout-sidebar .p-nickname {
     font-size: 14px !important;
   }
 
   /* 确保侧边栏各区域正常显示 */
-  .Layout-sidebar .border-top.pt-3.mt-3.clearfix.hide-sm.hide-md {
+  .gsm-stars-layout .Layout-sidebar .border-top.pt-3.mt-3.clearfix.hide-sm.hide-md {
     display: block !important;
   }
 
   /* 头像状态 emoji 移至头像右下角，防止被裁切 */
-  .Layout-sidebar .js-profile-editable-replace {
+  .gsm-stars-layout .Layout-sidebar .js-profile-editable-replace {
     overflow: visible !important;
   }
-  .Layout-sidebar .user-status-container.position-relative {
+  .gsm-stars-layout .Layout-sidebar .user-status-container.position-relative {
     position: static !important;
   }
-  .Layout-sidebar .user-status-circle-badge-container {
+  .gsm-stars-layout .Layout-sidebar .user-status-circle-badge-container {
     position: absolute !important;
     top: 86px !important;
     left: 86px !important;
@@ -84,26 +92,26 @@
   }
 
   /* 侧边栏内容自适应窄宽度；clip + 16px 缓冲：悬停展开的 Set status 药丸右缘超出 h-card 9px，不能被裁掉（16 < 列间距 24，不会碰到 Stars 网格） */
-  .Layout-sidebar .h-card {
+  .gsm-stars-layout .Layout-sidebar .h-card {
     overflow: clip !important;
     overflow-clip-margin: 16px !important;
     word-wrap: break-word !important;
   }
-  .Layout-sidebar .js-profile-editable-replace {
+  .gsm-stars-layout .Layout-sidebar .js-profile-editable-replace {
     word-wrap: break-word !important;
   }
 
   /* 紧凑按钮与文字 */
-  .Layout-sidebar .btn {
+  .gsm-stars-layout .Layout-sidebar .btn {
     padding: 3px 10px !important;
     font-size: 12px !important;
   }
-  .Layout-sidebar .flex-order-2 {
+  .gsm-stars-layout .Layout-sidebar .flex-order-2 {
     font-size: 13px !important;
   }
 
   /* ===== 3. 扩大主内容区域 ===== */
-  .Layout-main {
+  .gsm-stars-layout .Layout-main {
     flex: 1 1 0% !important;
     max-width: 100% !important;
   }
@@ -603,6 +611,13 @@
   .stars-star-btn.starred {
     color: #e3b341;
   }
+  /* 只读网格（他人 star 页）里**已 star 的实心星常驻可见**（用户 2026-10-03 裁定）。
+     默认观感保持原样：`.unstarred` 常驻、`.starred` 要悬停卡片才现身；他人页卡片是有星/无星混杂的，
+     那个默认会让「已加星的卡片右上角什么都没有」显得像坏了 —— 故按用户要求**只**在只读网格里改成常驻。
+     标记类 `.gsm-other-stars` 由 otherStarsView.ts 挂在网格容器上（本方自己的页没有它）。 */
+  .stars-grid-container.gsm-other-stars .stars-star-btn.starred {
+    opacity: 1;
+  }
   .stars-star-btn.unstarred {
     opacity: 1;
     color: var(--fgColor-muted, #656d76);
@@ -611,22 +626,25 @@
     opacity: 1 !important;
   }
 
-  /* 隐藏原始 Starred topics 列（内容已被 JS 移走） */
-  turbo-frame#user-starred-repos .col-lg-3 {
+  /* 隐藏原始 Starred topics 列 —— **仅在内容确实被搬走之后**（4.13.0 加固）：
+     `[data-gsm-topics-src]` 是 moveTopicsToRightSidebar() 搬运成功后打的出处痕迹。
+     绑上它，语义就变成「搬走了才藏」：搬不动（找不到内容布局 / 结构变了）时原生列照常显示 topics，
+     不会出现「既没搬走又被藏起来 ⇒ topics 凭空消失」。 */
+  turbo-frame#user-starred-repos .col-lg-3[data-gsm-topics-src] {
     display: none !important;
   }
 
   /* ===== 中等桌面屏幕：隐藏左右侧边栏，主内容全宽 ===== */
-  .Layout-sidebar {
+  .gsm-stars-layout .Layout-sidebar {
     display: none !important;
   }
   .stars-right-sidebar {
     display: none !important;
   }
-  .Layout.Layout--sidebarPosition-start {
+  .Layout.gsm-stars-layout {
     grid-template-columns: 1fr !important;
   }
-  .Layout-main {
+  .gsm-stars-layout .Layout-main {
     grid-column: 1 !important;
     max-width: none !important;
   }

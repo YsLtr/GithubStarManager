@@ -21,7 +21,12 @@ const FILES = [
   'storage/notes.ts',
   'storage/repoCache.ts',
   'storage/tags.ts',
-  // 注意：本清单是「依赖闭包」的显式副本，exportImport 新增 import 时必须同步补进来
+  // 注意：本清单是「依赖闭包」的显式副本，被测模块新增 import 时必须同步补进来
+  // 4.12.0：标签/备注的隔离 id 改由 pageScope 提供（登录者 octolytics-actor-id），
+  // 于是 pageScope 及其依赖 boot → utils 也进了被测闭包。
+  'pageScope.ts',
+  'boot.ts',
+  'utils.ts',
 ];
 
 fs.rmSync(tmp, { recursive: true, force: true });

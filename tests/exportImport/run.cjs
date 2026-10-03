@@ -9,11 +9,13 @@ global.GM_setValue = (k, v) => void store.set(k, v);
 global.GM_deleteValue = (k) => void store.delete(k);
 global.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 
-/* ---- 用户 ID：getStarsUserId 读 DOM meta ---- */
+/* ---- 用户 ID：getStorageUserId() 读页面 meta 里的**登录者** octolytics-actor-id ----
+ * 4.12.0 起隔离键改用登录者 id（此前是页面主人 octolytics-dimension-user_id）：
+ * 桩必须跟着改，否则这里测的就是「取不到身份」的降级路径而不是正常路径。 */
 let USER_ID = '111';
 global.document = {
   querySelector: (sel) =>
-    sel.includes('user_id') ? { getAttribute: () => USER_ID } : null,
+    sel.includes('octolytics-actor-id') ? { content: USER_ID } : null,
 };
 
 const { buildExportPackage, validateExportPackage, applyImportPackage } = require('./.build/storage/exportImport.cjs');

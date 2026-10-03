@@ -93,7 +93,25 @@ async function fetchLangColorTable(): Promise<string> {
 }
 
 /** 从数据源获取语言色并写缓存（单飞；成功后回退集重检命中，失败沿用旧数据 + 冷却） */
+/**
+ * 语言色请求开关（4.13.0）。他人 star 页的门是「零网络」，而卡片渲染里的 `getLangColor()`
+ * 在**色表未命中**时会顺手发一次 linguist 请求 —— 这条**间接**路径同样违反零网络
+ * （实测：工装里 `fetchLog` 恰有一条 languages.yml）。故在唯一出口 `fetchLangColors()` 上设闸。
+ *
+ * 关掉后的表现正是 V4 要的「只用已缓存色表；无缓存则灰点」：色表已在缓存 ⇒ 颜色照旧；
+ * 未命中 ⇒ 灰点，不发请求。回滚时必须恢复（`exitOtherStarsView`）。
+ */
+let fetchEnabled = true;
+
+/** 是否允许发起语言色请求（返回设置前的值，便于调用方原样恢复） */
+export function setLangColorFetchEnabled(enabled: boolean): boolean {
+  const prev = fetchEnabled;
+  fetchEnabled = enabled;
+  return prev;
+}
+
 function fetchLangColors(): Promise<void> {
+  if (!fetchEnabled) return Promise.resolve(); // 他人 star 页：零网络（见 setLangColorFetchEnabled）
   if (inflight) return inflight;
   if (Date.now() < nextFetchAt) return Promise.resolve();
   nextFetchAt = Date.now() + FETCH_COOLDOWN_MS;

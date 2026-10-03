@@ -29,6 +29,7 @@
 
 import { STORAGE_KEYS } from './constants';
 import { gmGet, gmSet } from './gm';
+import { getViewerId, getViewerLogin } from './pageScope';
 import { getToken, isClassicCredential, notifyTokenIssue } from './tokenConfig';
 import { hasWebSession } from './starWrites';
 import { isDesktop } from './utils';
@@ -76,39 +77,13 @@ function fingerprint(token: string): string {
   return h.toString(16).padStart(8, '0');
 }
 
-/**
- * 页面 meta 里的**登录者**（viewer）身份。`src/` 此前只有 `getStarsUserId()`，而它取的是**页面主人**。
+/* 4.12.0：`getViewerId()` / `getSessionLogin()` 已上移到 `pageScope.ts`。
  *
- * 实测（登录态真机、只读同源 fetch，见 `.diag/probe-viewer-id.js`）：
+ * 两处都需要「登录者是谁」：本模块（比对 token 归属）与只读模式的归属判定（pageScope 的
+ * getStarsPageScope）。按 D21「没有硬理由就别留第二份」合并到 pageScope 单一真相，
+ * 这里只 import —— **不要**在本地再写一份读 `octolytics-actor-id` 的实现。
  *
- * | 字段 | 自己的页 `/YsLtr?tab=stars` | 他人页 `/mattn?tab=stars` | 语义 |
- * |---|---|---|---|
- * | `user-login` | YsLtr | **YsLtr** | 登录者 login |
- * | `octolytics-actor-id` / `-login` | 130123551 / YsLtr | **130123551 / YsLtr** | **登录者** id / login |
- * | `octolytics-dimension-user_id` / `-login` | 130123551 / YsLtr | **10111 / mattn** | **页面主人** id / login |
- *
- * ⇒ 比对用的「浏览器侧身份」必须取 **`octolytics-actor-id`**。第一版误用了
- * `octolytics-dimension-user_id`（经 `getStarsUserId()`），于是打开任何他人的 stars 页都会把**页面主人**
- * 当登录者，产生假阳性 + 错误引导（「浏览器登录的是 @mattn」）。
- *
- * 取不到 actor-id 时**不回退**到 dimension-*（那是页面主人，回退等于恢复假阳性），一律返回 null ⇒ 判 unknown
- * （功能静默失效，符合 ADR 0007 的降级方向）。
- */
-function getViewerId(): string | null {
-  const meta = document.querySelector('meta[name="octolytics-actor-id"]');
-  const id = meta instanceof HTMLMetaElement ? meta.content.trim() : '';
-  return id || null;
-}
-
-/** 页面 meta 里的登录者登录名（文案用；`user-login` 优先，回退 actor-login）。取不到返回 '' 仅影响文案 */
-function getSessionLogin(): string {
-  for (const name of ['user-login', 'octolytics-actor-login']) {
-    const meta = document.querySelector(`meta[name="${name}"]`);
-    const v = meta instanceof HTMLMetaElement ? meta.content.trim() : '';
-    if (v) return v;
-  }
-  return '';
-}
+ * 字段语义与实测矩阵见 pageScope.ts 的模块头注释。 */
 
 /** 取 token 身份。任何失败都返回 null（= unknown），**不写缓存**，故下个求值点会自然重试 */
 async function fetchTokenIdentity(token: string): Promise<{ id: string; login: string } | null> {
@@ -173,12 +148,12 @@ function unknown(hasToken: boolean): AccountVerdict {
 async function run(): Promise<AccountVerdict> {
   const token = getToken();
   if (!token) return unknown(false); // 组合 C：无 token ⇒ 横幅前提消失（可撤）；本期不判定
-  // 浏览器侧身份必须取**登录者**的 actor-id，不是页面主人（见 getViewerId 注释与实测表）
+  // 浏览器侧身份必须取**登录者**的 actor-id，不是页面主人（见 pageScope.ts 的字段语义与实测矩阵）
   const sessionId = getViewerId();
   if (!sessionId) return unknown(true); // 取不到登录者 id（GHES / meta 变更）→ 静默降级
   if (!hasWebSession()) return unknown(true); // 组合 B：写路径只在 token 上，无错号风险
 
-  const sessionLogin = getSessionLogin();
+  const sessionLogin = getViewerLogin();
   // classic / OAuth 走 REST ⇒ 写落到 token 主人；fine-grained 或无 classic 时走会话 ⇒ 落到登录者。
   // 文案必须据此分叉：否则 classic 场景下会断言一个**不成立**的后果（审查 P1-2）。
   const writeTarget: 'token' | 'session' = isClassicCredential(token) ? 'token' : 'session';

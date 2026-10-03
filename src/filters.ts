@@ -2,16 +2,19 @@ import {
   ARROW_DOWN_SVG,
   ARROW_UP_SVG,
   CHECK_SVG,
-  GSM_HIDDEN_ATTR,
   NATIVE_PAGE_SIZE,
   SORT_OPTIONS,
   TRIANGLE_DOWN_SVG,
   TYPE_OPTIONS,
 } from './constants';
-import { getNativeFilterBar, getNativeFilterRow, getStarsMainColumn } from './dom';
+import { getNativeFilterBar, getNativeFilterRow, getStarsMainColumn, hideNativeNode, showNativeNode } from './dom';
 import { filterState, hasActiveFilter } from './state';
 import { loadAllNotes } from './storage/notes';
 import { loadRepoCache } from './storage/repoCache';
+import { hasApiData } from './fullSync';
+import { getViewerId } from './pageScope';
+import { renderNotesReadOnly, renderTagsReadOnly } from './readonly';
+import { getOtherPageRepos, getViewStarOverride, isReadOnlyView } from './viewContext';
 import { loadAllTags } from './storage/tags';
 import { buildCardFromCache, createStarButtonForCached } from './ui/cards';
 import { renderNotes } from './ui/notes';
@@ -28,20 +31,8 @@ import type { FilteredRepo, RepoData, TypeFilter } from './types';
  * - `updateLocalFilterControls()`：常驻本地 Type/Language/Sort(+方向) 接管原生菜单（4.4.0 起容器只建一次 + 原位刷新）。
  */
 
-/* ---------------- 原生节点的隐藏/还原（4.9.1） ----------------
- * 我们对 GitHub 原生节点只做「藏起来」这一种写入。写下时必须同时打 GSM_HIDDEN_ATTR 标记：
- * 回滚（窄视口收窄 / 离开 Stars）靠标记逐个还原 —— 裸的 inline display 无法与 GitHub
- * 自己的样式区分，猜错就是直接改坏别人的页面（见 viewTeardown.ts 的铁律）。
- * 还原时用 removeProperty 而不是赋空串：不留 `style=""` 残迹。 */
-function hideNativeNode(el: HTMLElement): void {
-  el.style.display = 'none';
-  el.setAttribute(GSM_HIDDEN_ATTR, '1');
-}
-
-function showNativeNode(el: HTMLElement): void {
-  el.style.removeProperty('display');
-  el.removeAttribute(GSM_HIDDEN_ATTR);
-}
+/* 原生节点的隐藏/还原（4.9.1）：4.13.0 上移到 dom.ts，本模块改为 import —— 他人页视图
+ * （otherStarsView.ts）也要隐藏原生条目，两处共用一份实现，标记纪律才不会漂移。 */
 /** facet 候选计算时可跳过的约束维度 */
 type QuerySkip = 'lang' | 'type';
 
@@ -102,6 +93,13 @@ function typeMatches(data: RepoData, type: TypeFilter): boolean {
 
 /** 唯一查询管线：type → lang 约束 → tags AND → search 全文 → 排序。skip = 算该 facet 候选时忽略自身约束（D1 替换语义）。 */
 function queryRepos(skip?: QuerySkip): FilteredRepo[] {
+  // 他人 star 页（4.13.0）：表格是**页面原生条目的内存投影**，顺序即 GitHub 的顺序。
+  // 刻意**不套用** filterState（他人页没有筛选 UI，V2）：沿用我自己页上残留的筛选条件
+  // 会让网格莫名其妙变空 —— 那不是筛选，是看起来坏了。详见 viewContext.ts。
+  const otherPage = getOtherPageRepos();
+  if (otherPage) {
+    return Object.keys(otherPage.repos).map((repoId) => ({ repoId, data: otherPage.repos[repoId] }));
+  }
   const cache = loadRepoCache();
   const allTags = loadAllTags();
   const allNotes = loadAllNotes();
@@ -245,11 +243,34 @@ export function renderBrowsePage(page: number): number {
   const gridContainer = document.querySelector('.stars-grid-container');
   if (!gridContainer) return 0;
 
+  // 他人 star 页（4.13.0）：与本方自己的页三处差异（其余完全复用同一套卡片）：
+  //   1. 星标按钮：**本人整表缓存可用时照建**（4.13.0 修订，用户要求「卡片上要有 star 按钮」）。
+  //      状态来源必须是**本人缓存成员关系**，不是页面 DOM —— 真机实测：他人页原生星按钮显示的
+  //      是**页面主人**的状态（`mattn?tab=stars` 30 条全是 `Starred`/`/unstar` 表单，而本人缓存里
+  //      一条都没有），照抄它等于把「对方收藏了」当成「我收藏了」。看不到本人缓存（从未同步）时
+  //      无从得知 ⇒ 退回不建按钮，宁缺勿假。
+  //   2. 标签/备注走只读渲染器（无 × / + / textarea，点击无反应）；
+  //   3. 不做本地分页：数据只有页面这一页，脚本也不挂分页器（V3）——翻页交给 GitHub 原生分页器。
+  // 第 3 条顺带避免一个真实事故：若某路由一页超过 NATIVE_PAGE_SIZE(30) 条，
+  // 按 30 分页会让多出来的条目**静默消失**且没有分页器可供翻页。
+  const readOnly = isReadOnlyView();
+  // 他人页星标状态：本次会话里本页写入过的以覆盖值为准，否则看本人缓存成员关系
+  // （缓存不可用时 `canShowStar` 为假 ⇒ 不建按钮，见上方第 1 条）
+  // 星按钮的两个前提：① 有本人整表缓存（否则无从知道状态）；② **有登录者身份**
+  // （`octolytics-actor-id`）—— 未登录访客没有「我」这个概念，缓存可能还是上一个会话/账号的，
+  // 建出来的按钮既发不出请求也代表不了任何人 ⇒ 不建（宁缺勿假）。
+  const canShowStar = !readOnly || (hasApiData() && !!getViewerId());
+  const viewerCache = readOnly && canShowStar ? loadRepoCache() : null;
+  const isStarredByViewer = (repoId: string): boolean => {
+    const override = getViewStarOverride(repoId);
+    return override !== undefined ? override : !!viewerCache?.[repoId];
+  };
   const results = queryRepos();
-  const totalPages = Math.max(1, Math.ceil(results.length / NATIVE_PAGE_SIZE));
+  const pageSize = readOnly ? Math.max(results.length, 1) : NATIVE_PAGE_SIZE;
+  const totalPages = Math.max(1, Math.ceil(results.length / pageSize));
   filterState.page = Math.min(Math.max(1, page), totalPages);
   filterState.totalPages = totalPages;
-  const start = (filterState.page - 1) * NATIVE_PAGE_SIZE;
+  const start = (filterState.page - 1) * pageSize;
   const terms = filterState.searchQuery.toLowerCase().split(/\s+/).filter((t) => t.length > 0);
 
   // 底部本地分页器常驻：innerHTML 清空会把它一并删掉（4.4.0 审查 🟡-1：4.0.0 起底部
@@ -258,18 +279,29 @@ export function renderBrowsePage(page: number): number {
   if (bottomPager) bottomPager.remove();
 
   gridContainer.innerHTML = '';
-  for (const { repoId, data } of results.slice(start, start + NATIVE_PAGE_SIZE)) {
+  for (const { repoId, data } of results.slice(start, start + pageSize)) {
     const card = buildCardFromCache(repoId, data);
     gridContainer.appendChild(card);
-    createStarButtonForCached(card, data);
     const tagsContainer = card.querySelector<HTMLElement>('.stars-card-tags');
-    if (tagsContainer) renderTags(tagsContainer);
+    if (tagsContainer) {
+      if (readOnly) renderTagsReadOnly(tagsContainer);
+      else renderTags(tagsContainer);
+    }
     const notesContainer = card.querySelector<HTMLElement>('.stars-card-notes');
-    if (notesContainer) renderNotes(notesContainer);
+    if (notesContainer) {
+      if (readOnly) renderNotesReadOnly(notesContainer);
+      else renderNotes(notesContainer);
+    }
+    if (readOnly) {
+      if (canShowStar) createStarButtonForCached(card, data, isStarredByViewer(repoId));
+      continue; // 他人页没有搜索 UI（terms 恒为空）⇒ 不做高亮
+    }
+
+    createStarButtonForCached(card, data);
     if (terms.length > 0) highlightMatchesInCard(card, terms);
   }
   if (bottomPager) gridContainer.appendChild(bottomPager);
-  updateLocalPagers();
+  if (!readOnly) updateLocalPagers();
   return results.length;
 }
 

@@ -1,13 +1,13 @@
 /* 宽屏三栏布局（断点 1200px；JS 侧只认 768px 那一个断点，此值仅 CSS 使用） */
 @media (min-width: 1200px) {
-  .Layout-sidebar {
+  .gsm-stars-layout .Layout-sidebar {
     display: block !important;
     grid-column: 1 !important;
   }
-  .Layout.Layout--sidebarPosition-start {
+  .Layout.gsm-stars-layout {
     grid-template-columns: 180px 1fr 220px !important;
   }
-  .Layout-main {
+  .gsm-stars-layout .Layout-main {
     grid-column: 2 !important;
     max-width: none !important;
   }

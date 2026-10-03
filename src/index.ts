@@ -1,12 +1,9 @@
-import { gmAddStyle } from './gm';
+import { ensureLayoutStyles, removeLayoutStyles } from './layoutStyles';
 import { beginGeneration, createScope } from './lifecycle';
 import { teardownStarsView } from './viewTeardown';
-import baseCss from './styles/base.css?inline';
-import persistentCss from './styles/persistent.css?inline';
-import wideCss from './styles/wide.css?inline';
 import { installBootHide, isStarsPage, revealBootHide, revealTurboHide } from './boot';
 import { applyHideListsGate, getRepoIdMeta, getStarsMainColumn, hideListsSection, isHideListsEnabled } from './dom';
-import { applyFilters, exitCustomMode, initFiltersFromUrl } from './filters';
+import { applyFilters, exitCustomMode, initFiltersFromUrl, renderBrowsePage } from './filters';
 import { hasApiData, registerSyncMenu, runFullSync, scheduleProbeSync } from './fullSync';
 import { interceptPagination } from './pagination';
 import { registerTokenMenu } from './starCheck';
@@ -34,43 +31,24 @@ import { registerExportImportMenu, setAfterImportHandler } from './ui/exportImpo
 import { registerRestoreMenu } from './ui/restoreMenu';
 import { isDesktop, subscribeBreakpointChange } from './utils';
 
+import { getStarsPageScope, isStarsListingPage } from './pageScope';
+import { enterOtherStarsView, exitOtherStarsViewIfActive } from './otherStarsView';
 /* ============================================================
  * 样式生命周期
  *
- * 布局样式（base+wide，含 180px 侧边栏 / 120px 头像 / 三栏网格）只在 Stars
- * 视图存在：离开 Stars（切到 Repositories 等标签、整页导航走人）时整表移除，
- * GitHub 原生布局与尺寸立即恢复；再次进入时重新挂上。
- *
- * persistentCss 是常驻小表（注入后不移除）：
- * - .stars-right-sidebar 默认隐藏：它是脚本追加到持久 .Layout 上的节点，
- *   主表一撤它会以 display:block 挤进网格轨道残留一块空列；
- * - 侧边栏/头像 transition：离开时宽度 180→296 回弹仍需要过渡。
- *
- * 注入顺序恒为「常驻表 → 主表」，同特异性时后插入的主表在 Stars 视图
- * 正确覆盖常驻表的默认隐藏。
+ * 布局样式（base+wide，含 180px 侧边栏 / 120px 头像 / 三栏网格）只在 Stars 视图存在：
+ * 离开 Stars（切到 Repositories 等标签、整页导航走人）时整表移除，GitHub 原生布局与尺寸
+ * 立即恢复；再次进入时重新挂上。**4.13.0 起实现搬到 `layoutStyles.ts`** —— 他人 star 页的
+ * 只读网格要用同一张表（卡片/网格样式全在里面），两条路径必须共用一份，否则必然漂移。
  * ============================================================ */
-let persistentStyleEl: HTMLStyleElement | null = null;
-let layoutStyleEl: HTMLStyleElement | null = null;
 let starsSetupDone = false;
-
-function ensureStyles(): void {
-  // 窄视口**不注入任何样式**（4.9.1）：CSS 全都在媒体查询里、本来也不生效，但注入本身会
-  // 在页面上留下两个 <style> 节点（且 persistent 那张从不移除）—— 正是要消掉的"残次内容"。
-  if (!isDesktop()) return;
-  if (!persistentStyleEl || !persistentStyleEl.isConnected) {
-    persistentStyleEl = gmAddStyle(persistentCss);
-  }
-  if (!layoutStyleEl || !layoutStyleEl.isConnected) {
-    layoutStyleEl = gmAddStyle(baseCss + '\n' + wideCss);
-  }
-}
 
 /** 幂等：门控类 + 样式 + 一次性存储迁移/清理。profile 页直入（样式从未注入过）也走这里。 */
 function ensureStarsSetup(): void {
   // 门控类在这里对齐（而不是只在 document-start）：跨断点从窄回到桌面时，
   // teardown 已把 gsm-hide-lists 摘掉，这里负责按当前视口 + 开关重新挂上。
   applyHideListsGate();
-  ensureStyles();
+  ensureLayoutStyles();
   // 存储迁移 / 超期备份清理与视口无关（数据不随窗口大小改变，回滚也不回滚数据）
   if (starsSetupDone) return;
   starsSetupDone = true;
@@ -80,7 +58,7 @@ function ensureStarsSetup(): void {
 
 /** 离开 Stars：撤掉布局主表 + 清掉入场标记。幂等。 */
 function deactivateStars(): void {
-  layoutStyleEl?.remove();
+  removeLayoutStyles();
   document.documentElement.classList.remove('gsm-anim-prepare');
   document.documentElement.classList.remove('gsm-turbo-entry');
 }
@@ -92,6 +70,16 @@ function exitStarsView(reason: string): void {
   beginGeneration();
   teardownStarsView(reason);
   deactivateStars();
+}
+/**
+ * 只读 scope 判定（4.12.0）：非本人 / 判定不出归属 / 未登录的 stars 列表页 ⇒ 只读模式。
+ *
+ * 调用方无需先判 isStarsListingPage：`getStarsPageScope()` 对非 stars 列表页返回 'own'（= 不拦）。
+ * 但**读只读页时请用 isStarsListingPage()**（例如要把 `/stars/{login}` 纳入入口），
+ * 因为它与旧的 `isStarsPage()`（只认 `?tab=stars`）不是一回事。
+ */
+function isReadOnlyScope(): boolean {
+  return isStarsListingPage() && getStarsPageScope() !== 'own';
 }
 
 /* 4.9.0（决策 D17）：仓库详情页的 star/unstar 监听已删除 —— 星状态真相只由整表同步判定，
@@ -175,6 +163,28 @@ function transformAndReveal(animate: boolean, retries = 12): void {
     revealAfterTransform(false); // 幂等；窄视口本就没藏过页面，这里只为撤销导航兜底
     return;
   }
+
+  // 他人 star 页（4.13.0）：**零网络只读网格** —— 数据只来自页面已渲染的原生条目，不拉取、
+  // 不落盘、不提供任何写入口。位置要求：必须在 ensureStarsSetup()（注入布局样式表 + 跑存储迁移）
+  // 与任何 hide*/横幅/Sync 按钮之前 —— 他人页只挂网格，不挂脚本筛选栏/分页器/同步按钮
+  // （V2/V3/D7；那些东西都属于「我自己的账号」语境）。
+  if (isReadOnlyScope()) {
+    starsNavPending = false;
+    // 必须在他人页分支里揭示：document-start 的 installBootHide 只按 URL 判定（那时 DOM 还没解析，
+    // 拿不到任何身份 meta），所以它可能已经把这页藏住了。不揭示 = 永久白屏（只有 4s 兜底救）。
+    revealAfterTransform(false);
+    const mounted = enterOtherStarsView();
+    console.log(
+      mounted
+        ? '[github-star-manager] 他人的 stars 页：只读网格（零网络，数据仅来自页面已渲染条目）'
+        : '[github-star-manager] 他人的 stars 页：未接管（页面上没有条目 / 结构未识别）'
+    );
+    return;
+  }
+  // 他人页 → 我自己的页：来源复位。**必须**在这里，且必须是**仅当处于他人页视图时**才清
+  // （无条件清会删掉我自己页上那张网格）—— 见 exitOtherStarsViewIfActive 的注释。
+  exitOtherStarsViewIfActive();
+
   if (animate) {
     // 起点先行：布局样式一注入，侧边栏就会算成 180px。先把 prepare 立好
     // （= 原生 296px），注入与转换全程都停在起点宽度，解除隐藏时一次性过渡。
@@ -390,7 +400,8 @@ function registerNavListeners(): void {
       navScope.guardedTimeout(() => transformAndReveal(arrive), 100);
     } else if (frameId === 'user-profile-frame') {
       navScope.guardedTimeout(() => {
-        hideListsSection();
+        // 只读页绝不动 GitHub 的 DOM（Lists 区块也属于 GitHub 的），且它本就不该进转换管线
+        if (!isReadOnlyScope()) hideListsSection();
         // 兜底：若换进来的不是 Stars 标签内容（无 starred 列表），立即解除并撤样式
         const pf = document.getElementById('user-profile-frame');
         if (!pf) return;
@@ -434,11 +445,13 @@ function registerNavListeners(): void {
     // 窄视口（4.9.1）：脚本完全惰性 —— 既没有要建立的东西，也没有要收尾的东西
     // （运行中收窄的情况已由断点订阅处理，这里不再需要 exitStarsView）。
     if (!isDesktop()) return;
-    if (!isStarsPage()) {
+    if (!isStarsListingPage()) {
       starsNavPending = false;
       exitStarsView('非 Stars 页 turbo:load');
       return;
     }
+    // 新版自己的 /stars 页：结构未支持（无 #user-starred-repos），既不只读也不接管 —— 什么都不做
+    if (!isStarsPage() && !isReadOnlyScope()) return;
     const arrive = starsNavPending;
     navScope.guardedTimeout(() => transformAndReveal(arrive), 200);
   });
@@ -477,8 +490,12 @@ function init(): void {
   // 已经建好的网格、被搬走的侧栏、写下的内联样式都不会自己回退。
   subscribeBreakpointChange((desktop) => {
     if (desktop) {
-      // 回到桌面：重新走转换管线（与「手动同步后重建网格」同一条路径）
-      if (isStarsPage() && !document.querySelector('.stars-grid-container')) transformAndReveal(false);
+      // 回到桌面：重新走转换管线（与「手动同步后重建网格」同一条路径）。
+      // 4.12.0：只读页（含 `/stars/{login}`）也要重进一次 —— 收窄时徽章已被回滚清掉了，
+      // 且 `isStarsPage()` 认不出新路由，所以这里必须并上 isReadOnlyScope()。
+      if ((isStarsPage() || isReadOnlyScope()) && !document.querySelector('.stars-grid-container')) {
+        transformAndReveal(false);
+      }
       return;
     }
     // 收窄到手机宽度：完整回滚成 GitHub 原生页面
@@ -498,6 +515,9 @@ function init(): void {
   // 4.9.0 起**不再自动同步**（ADR 0005：导入是数据搬运，落盘即完成；是否拉远端由用户决定）。
   setAfterImportHandler(() => {
     if (isStarsPage() && document.querySelector('.stars-grid-container')) applyFilters({ keepPage: true });
+    // 他人页（4.13.0）：导入可能带来新的标签/备注 ⇒ 只重绘网格。
+    // 刻意**不**走 applyFilters（它会往原生筛选行插脚本控件，违反 V2「不挂脚本筛选栏」）
+    else if (isReadOnlyScope()) renderBrowsePage(1);
   });
   // 开关切换后重挂已存在的配置面板（🟡-1：关态下面板须挂网格列顶，不占 Lists 槽位）
   setHideListsRepositionHandler(() => {
@@ -549,7 +569,16 @@ function init(): void {
     return;
   }
 
-  if (!isStarsPage()) return; // 纯 profile 页等 turbo 接进来
+  if (!isStarsListingPage()) return; // 纯 profile 页等 turbo 接进来
+
+  // 只读页（非本人 / 判定不出归属）：只做就地装饰 —— **不**跑 ensureStarsSetup（它会注入布局样式表
+  // 与 Lists 门控类，正是「他人页被脚本改造」的样子）。分派与揭示都在 transformAndReveal 内部。
+  if (isReadOnlyScope()) {
+    transformAndReveal(false);
+    return;
+  }
+  // 新版自己的 /stars 页：结构未支持（无 #user-starred-repos），交回 GitHub 原生
+  if (!isStarsPage()) return;
 
   // Stars 直载：样式 + 迁移 + 转换；转换成功才解除 document-start 的隐藏
   ensureStarsSetup();

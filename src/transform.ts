@@ -1,8 +1,8 @@
-import { GSM_TOPICS_SRC_ATTR } from './constants';
-import { getRepoItems, getStarsMainColumn, hideListsSection } from './dom';
+import { getRepoItems, getStarsMainColumn, hideListsSection, moveTopicsToRightSidebar } from './dom';
 import { applyFilters } from './filters';
 import { interceptSearchForm } from './search';
 import { mountSyncButton } from './fullSync';
+import { mountTopPager } from './topPager';
 import { initLangColors } from './langColors';
 import { isDesktop } from './utils';
 
@@ -42,30 +42,13 @@ export function transformStarsList(): boolean {
   gridContainer.appendChild(buildLocalPager());
   colLg9.appendChild(gridContainer);
   // “Starred repositories” 标题行右侧复制一份分页器（免滚动到底部才能翻页）
-  const headerRow = mountTopPager(colLg9, gridContainer);
+  // 标题行右侧的顶部翻页器：克隆**本地分页器**（数据源见 topPager.ts 的模块注释）
+  const headerRow = mountTopPager(colLg9, gridContainer.querySelector<HTMLElement>('.paginate-container'));
   // 同步按钮（4.0.4 恢复）：贴在顶部翻页器左侧
   if (headerRow) mountSyncButton(headerRow);
 
-  // 将 Starred topics 移到右侧边栏
-  const colLg3 = turboFrame.querySelector('.col-lg-3');
-  const layoutEl = document.querySelector('.Layout.Layout--sidebarPosition-start');
-  if (colLg3 && layoutEl) {
-    let rightSidebar = layoutEl.querySelector('.stars-right-sidebar');
-    if (!rightSidebar) {
-      rightSidebar = document.createElement('div');
-      rightSidebar.className = 'stars-right-sidebar';
-      layoutEl.appendChild(rightSidebar);
-    }
-    rightSidebar.innerHTML = '';
-    while (colLg3.firstChild) {
-      rightSidebar.appendChild(colLg3.firstChild);
-    }
-    // 留下的「出处痕迹」（4.9.2 审查补）：teardown 只把内容还回**打了这个标记的那个** `.col-lg-3`。
-    // 单靠 `isConnected` 不够 —— Turbo 原地重渲染 `#user-starred-repos` 后会换出一个**新的**
-    // `.col-lg-3`（内含 GitHub 自己渲染好的 topics），此时把右栏里的陈旧内容倒进去就是重复的 topics。
-    // 新节点的标记是我们清掉的（或从未有过），所以 teardown 见到无标记就直接丢弃右栏内容 —— 那正是对的。
-    colLg3.setAttribute(GSM_TOPICS_SRC_ATTR, '1');
-  }
+  // 将 Starred topics 移到右侧边栏（搬运实现见 dom.ts：他人页视图也要用同一份）
+  moveTopicsToRightSidebar();
 
   // 应用筛选（Tags 候选条由 applyFilters→refreshTagFilterBar 按需创建/收窄/撤条）
   interceptSearchForm();
@@ -112,23 +95,3 @@ function buildLocalPager(): HTMLElement {
   return wrap;
 }
 
-/**
- * 在「Starred repositories」标题行右侧复制一份分页器（顶部快捷翻页）。
- * 克隆网格底部那份（内容一致、状态随页码），保留 `paginate-container` 类
- * → 分页拦截与转圈动画对顶/底两份一视同仁。父容器加 `gsm-header-row` 变
- * flex 两端对齐实现「行右边」。随 transform 完整重建同步（原地翻页后自动更新）。
- */
-function mountTopPager(colLg9: HTMLElement, gridContainer: HTMLElement): HTMLElement | null {
-  const source = gridContainer.querySelector<HTMLElement>('.paginate-container');
-  const h2 = colLg9.querySelector<HTMLElement>('h2.f3-light');
-  const row = h2 && h2.parentElement;
-  if (!source || !row) return null;
-
-  row.classList.add('gsm-header-row');
-  row.querySelector<HTMLElement>('.gsm-top-pager')?.remove();
-
-  const top = source.cloneNode(true) as HTMLElement;
-  top.classList.add('gsm-top-pager');
-  row.appendChild(top);
-  return row;
-}

@@ -8,38 +8,66 @@
 
 ## 当前状态
 
-版本 **4.11.1**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
+版本 **4.13.0**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
 
-> 交接时间：**2026-10-03 09:40 +0800**（本机时钟）。**本轮工作已随本次 handoff 一起提交**（见 `git log` 最新一条）。
+> 交接时间：**2026-10-03 18:32 +0800**（本机时钟）。**4.12.0 + 4.13.0 的改动已全部提交**（`git log` 是历史权威，
+> 提交信息写得很详细）；本文件只留仍生效的口径与下一步。
 
-**4.11.1（本次交接的版本）**：按用户裁定删掉两处**多余且无作用**的按钮。净效果 = 「配置横幅只引导配置，归属横幅只引导去配置」。
+**4.13.0（本次交接的版本）：他人的 star 页 = 零网络只读网格** —— 4.12.0 的「原生列表 + 只读徽章」在真机上确实工作，
+但**用户几乎永远看不到**（实测 mattn 前 100 个 starred 与本人 21 个带标签/备注的仓库**交集为 0**）。
+用户裁定「用脚本网格」，并给出决定性约束：**只获取页面中已有的数据，不拉取，做网格**（见 **D26** 与 `docs/adr/0009`）：
 
-1. **配置横幅的「立即同步」按钮**（`src/index.ts` 的 `showSetupBanner`）：它**永远无效** —— 横幅只在「无缓存」或
-   「Token 失效 / 被清空」时出现，点它 → `runFullSync('button')` → 无 token 分支 `notifyTokenIssue(...)` →
-   `showSetupBanner(detail)` 的 `exist` 分支把**同一条「请配置 Token」文案**原地重写一遍（用户看到的「点了没反应」）；
-   而**有 token** 时横幅本就随保存 / 同步成功被撤除，按钮没有可点的时机。手动同步仍有**两个**等价入口
-   （TM 菜单「🔄 立即全量同步」+ 标题行 Sync 按钮），见 **D8**。
-2. **归属警告横幅的「获取匹配的 Token（classic）」按钮**（`src/ui/accountBanner.ts`）：它等价于
-   `openClassicTokenCreator()` + `openTokenConfig()` 两步，而配置面板里**本就有**同款 classic 深链
-   （`快速获取 Token（classic，推荐）`），且**多给** fine-grained 深链与粘贴行 ⇒ 一步「打开 Token 配置」已覆盖全部出路。
-   横幅控件从三个降为**两个**：`[msg, 打开 Token 配置, 关闭]`。见 **D25** 与 `docs/adr/0007`。
-3. `openClassicTokenCreator` 在 `ui/accountBanner.ts` 的 import 随之删除（该函数现存消费者只剩 `index.ts` 的横幅内联
-   保存路径与 `starCheck.ts` 的失效处理）。
-4. **文档同步**：本文件（D8 / D25 / 4.11.0 断言表 A1 子节点顺序）、`DEVELOPER.md`（同步触发入口「五处」→「四处」）、
-   `docs/adr/0007` 的 UI 口径、`todo`（归属校验勾选完成）。
-5. **验证**（`pnpm check` 绿、`verify-css` EXIT 0、`test:exportimport` 51/0；dist 内 `立即同步` 与 `获取匹配的 Token`
-   各 **0** 命中）：用 `.diag/gen-account-harness.cjs` 重建仿真页后断言 ——
-   `err401` 场景横幅子节点 = `[msg, classic 深链, fine-grained 深链, token-help, token-row]`（无「立即同步」）；
-   `nocache` 场景走「归属横幅 → 打开 Token 配置 → 填 token → 保存并同步」全链路（保存后横幅撤、GM 写入生效、
-   Sync 按钮进 running / failed 态、0 error）；`mismatch` 场景横幅 `role=alert`、子节点
-   `[SPAN.gsm-account-msg, BUTTON.btn, BUTTON.btn.gsm-account-dismiss]`、文案仍含两侧登录名且通道词零命中、
-   点「打开 Token 配置」能出面板。**不回归**：横幅在场点星仍发 1 次写请求且 `/user` 增量 0（不阻断写路径）、
-   关闭态键 `42#999` + 组合变化后重新武装、窄视口收窄 → banner / `gsm-*` 节点 / grid 全 0、拖回 → 横幅重现且
-   `data-gsm-account-pair` 正确、`__errors` 全空。截图 `.diag/account-banner-after.png`。
-6. **唯一未做真机验证的**：删按钮后横幅的真实观感（按钮移走后 `msg` 的 `flex:320px` 与右侧两按钮的相对位置）——
-   仿真页几何与文案已对齐，真机只差肉眼确认。
+1. **投影层**（新模块 `src/domRepos.ts`）：DOM 原生条目 → `RepoData`，两条路线
+   （`div.col-12` 经 `getRepoItems()`；`/stars/{login}` 的 `ul.repo-list > li`）；字段可得性表写在文件头。
+2. **来源只存内存**（新模块 `src/viewContext.ts`）：`queryRepos()` 按来源取表；**零存储写入**、无他人缓存键。
+   **呈现层与本方自己的页完全一致**（用户裁定方案 A）：共用 `src/layoutStyles.ts` 的布局主表（左栏 180px / 满宽多列），
+   并把对方的 Starred topics 搬进脚本右栏（`dom.ts` 的 `moveTopicsToRightSidebar` / `restoreTopicsFromRightSidebar`，
+   本方页与他人页共用）。功能层仍未接管：无星按钮/编辑入口/脚本分页器/筛选栏/同步按钮/横幅。
+3. **只读渲染**：`renderBrowsePage` 跳星按钮、标签/备注走 `readonly.ts` 的只读渲染器、不挂脚本分页器；
+   `cards.ts` 与 `ui/tagFilter.ts` / `ui/notes.ts` **一字未改**。
+4. **只藏原生条目**（`hideNativeNode`，原生分页器/筛选栏/Lists 不动），翻页与筛选**委派原生控件**。
+5. **零网络的隐藏陷阱**：卡片渲染里的 `getLangColor()` 在色表未命中时会**间接**发 linguist 请求
+   ⇒ 加 `setLangColorFetchEnabled(false/true)` 闸门（进入他人页关、退出恢复）。**不设这个闸，零网络断言必挂。**
+6. **`viewContext` 是模块态**：回自己页必须 `exitOtherStarsViewIfActive()` 复位，否则把别人的列表画在我自己的页上。
 
-> **交接第一件事**：`@version` 已变（4.11.0 → 4.11.1）⇒ **用 dev 脚本的人必须重装 dev loader**（重开安装页原地更新），
+> **这一轮的逐条过程**（④-⑩：`!important` 隐藏、布局主表抽出、头像作用域、说明行移除、顶部翻页器与对齐、
+> topics 归宿、未登录兼容、布局标记接管、以及审查轮修掉的 P1）**已全部归入 `git log` 与
+> `docs/adr/0008` / `0009`**，此处不复述。仍然生效、且最容易踩的硬口径只有下面这几条：
+>
+> 1. **隐藏原生条目必须带 `!important`**（`hideNativeNode` 用 `setProperty(...,'important')`）：GitHub 的
+>    `.d-block{display:block!important}` 会压过不带 important 的内联 `display:none`。
+> 2. **布局接管只认 `gsm-stars-layout` 标记**（`markStarsLayout()` 打在承载 stars 内容的那个 `.Layout` 上），
+>    不许按 `.Layout--sidebarPosition-start` 这类骨架类选元素 —— 登出页有两个那种布局，页头会被一起改写。
+> 3. **尺寸规则认标记、过渡规则不认**（方向相反，别为「一致性」统一）：`exitStarsView` 在同一同步任务里
+>    既撤尺寸规则又摘标记，过渡若认标记就没有 after-change 声明 ⇒ 回退尺寸瞬跳（审查轮 P1）。
+> 4. **搬 topics 必须 `closest` 找内容布局**，不许 `document.querySelector` 取第一个；隐藏原生列的 CSS
+>    绑在搬运成功的 `[data-gsm-topics-src]` 上（「搬走了才藏」）。
+> 5. **只读网格的星按钮状态只认本人缓存**：他人页原生星按钮显示的是**页面主人**的状态，照抄就会点出 unstar。
+> 6. **未登录的 stars 页也接管**（无徽章 / 无星按钮 / 仍零网络），但**没有** `user-list-menu[data-repository-id]` ⇒
+>    `repoId` 退回仓库全名。
+
+**验证**（`pnpm check` 绿、`verify-css` EXIT 0、`test:exportimport` 51/0、dist `@grant` 恰 5 项、`@version` 4.13.0）：
+
+- **夹具 13 组场景全绿**（`.diag/gen-otherstars-harness.cjs` → `otherstars-harness.html` + `.diag/assert-otherstars.js`，
+  file://、零真实网络；**URL 必须带 `?tab=stars`**，否则脚本根本不转换，`grid:0` 会被误读成全绿）：
+  `other-profile` / `other-newroute`（`/stars/{login}`）/ `other-newgen`（新代骨架）/ `other-notags` / `other-twolayout`
+  （页头诱饵布局）/ `other-teardown` / `other-starstate` / `other-nocache` / `own` / `unknown` / `logout` /
+  `roundtrip` / `#narrow`；各组 `__errors` 全空，他人页普遍 `fetch=0` / `writes=0`，窄视口全 0（含 `gsm-*` 节点与标记）。
+- **两条审查轮补的断言**（都是「行为观测量」，且**与视口无关** ⇒ 隐藏标签页下也稳定）：**R19** 退出后痕迹清零
+  **且**声明了 transition 的规则仍匹配侧栏/头像（钳合实测认标记版 = 0/0、修复版 = 1/1）；**R20** 标记自愈
+  （摘掉标记后重进必须补回；钳合实测去掉自愈 ⇒ `markerHealed=0`）。R20 在 `/stars/{login}` 记为 N/A（该路由无 frame）。
+- **归属判定 21 项断言**（`.diag/assert-scope.cjs`）：21/21。
+- **真机（登录态，量测前 `getAnimations().finish()` 冻结过渡）**：我自己的页 = `marked=1`、
+  `cols=180px 1088px 220px`、侧栏 180、页主头像 120、30 卡 3 列 352px、右栏 topics、星按钮 30、同步按钮 1、
+  顶部翻页器 1、零错误；`Norman-bury?tab=stars`（新代）= 同款三栏 / `marked=1` / 30 卡 / 无右栏（该代无 topics 列）/ 零错误。
+- **仍需人工确认（只剩观感）**：① 卡片密度是否合适；② TM 安装页里授权清单仍**恰 5 项**；③ 真机 Turbo 导航
+  「本人页 ↔ 他人页」往返的切换手感；④ **登出态**观感（登出页页头现在应保持 GitHub 原样 —— 夹具咬合证明改前
+  页头头像会被压到 120px、轨道被换成我们的三栏；本会话内用户是登录态，无法真机复看）。
+
+**4.11.1 提要**（仍生效的口径已归入 D8 / D25 与 `docs/adr/0007`，此处只留一句）：删掉配置横幅里那个**永远无效**的
+「立即同步」按钮与归属横幅上的 classic 深链按钮，净效果 = 「配置横幅只引导配置，归属横幅只引导去配置」。
+
+> **交接第一件事**：`@version` 已变（4.12.0 → 4.13.0）⇒ **用 dev 脚本的人必须重装 dev loader**（重开安装页原地更新），
 > 否则 TM 菜单整体消失。正式版不受影响。机制见下「dev 模式必须知道的四件事」第 4 条。
 
 **4.11.0 提要**（仍生效的口径已全部归入 **D25** 与 `docs/adr/0007`，此处只留一句）：补上「Token 归属校验」+ 不符时的常驻
@@ -390,6 +418,170 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
   不用 `crypto.subtle`）命中后稳态零请求。
 - **文案**：沿用 ADR 0006「不向用户披露通道」，只讲后果与两条出路，不出现「网页端点 / 浏览器登录会话 / REST」等实现词。
 - 完整口径、依据与已知局限：**`docs/adr/0007-token-account-match-check.md`**。
+
+**D26 · 他人的 star 页 = 零网络只读网格（4.13.0；取代 4.12.0 的「原生列表 + 只读徽章」形态）**
+
+> **4.12.0 的旧形态**（保留此段只为解释历史与排查口径）：只读模式**保留原生列表**、把本人已有的标签/备注
+> 以只读徽章贴进原生命中条目（`.gsm-ro-tags` / `.gsm-ro-notes`）。它在真机上确实工作，
+> 但**用户几乎永远看不到** —— 实测 mattn 前 100 个 starred 仓库与本人 21 个带标签/备注的仓库**交集为 0**。
+> 用户因此裁定「用脚本网格」，随后给出决定性约束：**只获取页面中已有的数据，不拉取，做网格**。
+
+- **判定仍为三态**（`src/pageScope.ts` 的 `getStarsPageScope()`）：`own` / `other` / `unknown`。
+  主判据 = `octolytics-actor-id`（登录者）vs `octolytics-dimension-user_id`（页面主人）；id 取不到退到 login 比对；
+  `/stars/{login}` 路由没有 dimension-* 元数据，只能比路径段。**取不到就判 `unknown`，绝不回退成 `own`**；
+  `unknown` 与 `other` 同处置（都不接管）。
+- **零网络 = 硬约束**：数据只来自**页面已渲染的原生条目**的一次投影（`src/domRepos.ts`），
+  不调 API、不预取、不做条件请求、不做归属校验请求。**必须**同时压住那条**间接**请求：
+  卡片渲染里的 `getLangColor()` 在色表未命中时会顺手发一次 linguist 请求 ——
+  故 `otherStarsView` 进入时调 `setLangColorFetchEnabled(false)`、退出时恢复（否则零网络断言必挂）。
+  工装判据：他人页 `__gsmFetchLog.length === 0` **且** `__gmWrites.length === 0`（零网络 + 零存储写入）。
+- **零存储**：投影只存内存（`src/viewContext.ts`）；不写任何键、不碰 `stars_repo_cache` / `stars_full_sync_meta`；
+  标签/备注仍读**我自己的**命名空间（D27）。**没有**他人缓存键，也**不**进导出包。
+- **只读渲染**：`filters.renderBrowsePage` 的只读分支跳过星标按钮、标签/备注改走 `readonly.ts` 的
+  `renderTagsReadOnly` / `renderNotesReadOnly`、**不挂脚本分页器**（`updateLocalPagers` 不调用）。
+  `cards.ts` / `ui/tagFilter.ts` / `ui/notes.ts` 的构建逻辑**一字未改**（后两者直接绑 `saveTags`/`saveNote`，
+  属「我自己的页」的写路径 ⇒ 只共享卡片容器，不共享渲染器）。
+- **只藏原生条目**：经 `dom.ts` 的 `hideNativeNode`（打 `GSM_HIDDEN_ATTR`，由 `viewTeardown` 第 5 项还原）；
+  **原生分页器、原生筛选栏**（以及`/stars/{login}` 上那个**第二个** `ul.repo-list` = Starred topics 列表）
+  **一律不动** —— 翻页是对齐 GitHub 自己那套 `after`/`before` 游标（实测 HTML stars 页 `?page=N` 被忽略），
+  脚本自造分页器只会给出无法兑现的页码。
+  **必须带 `!important`**：原生条目挂着 Primer utility 类 `col-12 d-block width-full`，而
+  `.d-block{display:block!important}` 会压过不带 important 的 inline `display:none` —— 真机实测「30 个条目
+  标记与 inline style 全写对、computed 仍是 block」，页面变成「网格在上、原生列表照旧跟在下面」。
+  本方自己的页没踩到这条，是因为它用**类 + CSS** 隐藏（`.stars-original-hidden{display:none!important}`）。
+- **侧栏头像只缩页主那一张**（4.13.0 真机事故）：布局表里的头像规则**不能**用裸
+  `.Layout-sidebar .avatar-user` —— 它会把侧栏里**所有**头像一网打尽，包括 Sponsors 区块里那排小头像
+  （真机 mattn 页：13 个 35px 头像被撑成 120px，在 `.d-flex.flex-wrap` 里被迫逐个换行、竖排成一列）。
+  现在用 `.avatar-user.width-full`（页主头像带 `width-full`）与 `a[href*="avatars"] img`
+  （页主头像的链接指向头像图本身，小头像指向 `/login`）两条，各只命中 1 个元素、互为冗余。
+  `persistent.css` 的 transition 同族选择器必须一起改，否则过渡仍落在那排小头像上。
+  **真机对照**：同一用户的 Overview 页（脚本不生效）赞助头像也是 35px ⇒ 现在与原生完全一致；
+  页主头像 296px → 120px（这是本脚本的既有意图）。
+- **不加说明行/提示条**（用户裁定）：曾有一行 `@login 的 star · 本页 N 个 · 只读`，
+  用户判定是多余的描述文字 ⇒ 移除。页面标题（GitHub 自己的「Starred repositories」）已经说清这是什么。
+- **未登录访客的 stars 页也接管**（用户 2026-10-03 要求「继续兼容未登录的 stars 页」）。原先
+  `enterOtherStarsView()` 以 `!getViewerId()` 直接放弃（理由：没有登录者则标签/备注无从归属）——
+  那只是**装饰缺省**，不该连网格一起放弃：页面条目是公开渲染的，只读网格本身仍有用。现在的缺省是：
+  无徽章（命名空间为空，**不是**读错别人的）、无星按钮（没有「我」也没有凭据 ⇒ `canShowStar` 为假）、
+  依旧零网络零写入。真机实测（`body.logged-out`）：**登出页没有 `user-list-menu[data-repository-id]`**
+  （30 条 `h3 a` 齐全而它 0 个），所以 `domRepos` 的 `repoId` 多了「退回仓库全名」的兜底，
+  而 `li` 路线的仓库特征改用 `a[href$="/stargazers"]`（不能用 `h3 a` 的 href 像不像 `owner/repo`
+  —— `/topics/{name}` 也是 `a/b` 形状）。
+- **搬 topics 必须认「内容布局」，不能取文档里第一个 `.Layout`**（4.13.0 真机事故：用户报
+  「Starred topics 怎么跑 header 上了」）。**登出的 profile 页上有两个 `.Layout.Layout--sidebarPosition-start`**：
+  第 0 个是**页头**（左栏头像 + 右栏标签栏，实测 y96 / 高 192 / 不含 stars 内容），第 1 个才是**内容**布局
+  （y289 / 高 2320，`#user-starred-repos` 在它里面）。`moveTopicsToRightSidebar()` 原用
+  `document.querySelector` ⇒ 把右栏塞进了页头布局（实测 `hasSidebar:true, hasGrid:false`，topics 出现在
+  header 区）。现改为 `colLg3.closest('.Layout.Layout--sidebarPosition-start')`（从被搬的那一列往上找，
+  必然是内容布局），找不到就**不搬**。配套加固：隐藏原生 `.col-lg-3` 的 CSS 绑上出处标记
+  `[data-gsm-topics-src]` ⇒ 语义变成「**搬走了才藏**」，搬不动时原生列照常显示 topics（不会凭空消失）。
+  修后真机：右栏 `layoutIndex 1` / x1480（第三栏）/ 与内容同顶，页头布局仍是 2 个子节点未被碰。
+- **布局接管只认标记类 `gsm-stars-layout`，不许按骨架类选元素**（用户 2026-10-03 要求「继续兼容未登录的
+  stars 页」时暴露的真问题）：profile 页上 `.Layout.Layout--sidebarPosition-start` **可能不止一个** ——
+  登出的页面有两个（#0 页头「头像 + 标签栏」、#1 内容布局），而 base/wide/persistent 三张表里的
+  `--Layout-sidebar-width: 180px`、`grid-template-columns: 180px 1fr 220px`、`.Layout-sidebar{width:180px}`、
+  连带头像与侧栏内部的一堆规则原本都按 `.Layout--sidebarPosition-start` 选元素 ⇒ **页头被一起改写**
+  （夹具咬合实测：页头布局被标上标记、`grid-template-columns` 变成我们的轨道，页头头像被
+  `.Layout-sidebar a[href*="avatars"] img` 压到 **120px**）。现在：`ensureLayoutStyles()` 调 `markStarsLayout()`（`dom.ts`），标记只打在
+  **承载 stars 内容的那个 `.Layout`** 上（`findStarsLayout()` 从 `#user-starred-repos` / 网格 / 原生条目
+  往上 `closest`，找不到就不标），CSS 全部改按 `.Layout.gsm-stars-layout` / `.gsm-stars-layout .Layout-sidebar`
+  选元素；`removeLayoutStyles()` 同步 `unmarkStarsLayout()`。**`markStarsLayout()` 必须留在
+  `!isDesktop()` 早退之后**（首版误插到函数外 = 模块顶层执行 ⇒ 窄视口也留了 class，违反 D18 的零痕迹）。
+- **分工：尺寸规则认标记，过渡规则不认**（4.13.0 发布前审查抓到的回归，见 ADR 0009 追加 6）。
+  `persistent.css` 里那四条 `transition`（`.Layout--sidebarPosition-start` 的 `grid-template-columns`、
+  `.Layout-sidebar` 的 width、页主头像的宽高、状态徽章位置）**故意不带** `gsm-stars-layout` 标记。
+  理由：`exitStarsView` 的顺序是 `removeLayoutStyles()` —— 撤尺寸规则（180 → 原生）**并且**摘标记，
+  全在**同一个同步任务**里；过渡若也认标记，after-change style 里就没有 transition 声明 ⇒ 回弹不启动、
+  尺寸**瞬跳**。夹具 A/B（可观测量 = 「声明了 transition 且实际匹配该元素的规则数」）：认标记时退出后为
+  **0**、不认标记时为 **1**；侧栏实测 180 → 1584 一帧完成。反过来，**尺寸规则必须继续认标记** —— 那才是
+  「不改写页头布局」的关键。两者看着像同一件事，其实是两个相反的要求，**不要为了「一致」把它们统一**。
+  过渡选择器与 4.13.0 之前**逐字相同**（真机实测两代 `?tab=stars` 承载 stars 内容的布局都带
+  `Layout--sidebarPosition-start`）。
+- **`enterOtherStarsView()` 的幂等早退要顺带补标记**（自愈）：早退在 `ensureLayoutStyles()` **之前**，
+  而「接管中途抛错 → `deactivateStars()` 撤表撤标记 → 网格已留在页面上」之后，再进会走早退 ⇒ 永久停在
+  「有网格、布局却是 GitHub 原生」的半吊子状态（实测 `marked=0 / cols=none / 侧栏被原生拉到 1263px`）。
+- **卡片上的星按钮：建，但状态只认本人缓存**（用户 2026-10-03 要求「卡片上要有 star 按钮」，含两轮修正）。
+  状态来源**必须**是本人整表缓存的成员关系 —— 真机实测：他人页**原生**星按钮显示的是**页面主人**的状态
+  （`mattn?tab=stars` 30 条全是 `Starred`/`/unstar` 表单，而本人缓存里一条都没有），照抄它等于把
+  「对方收藏了」当成「我收藏了」，点一下就会发出 unstar。本人缓存不可用（从未同步）⇒ 退回**不建按钮**（宁缺勿假）。
+  两轮用户裁定：① **已 star 的实心星不许再靠 hover 才现身**（旧 CSS 只给 `.unstarred` 写了 `opacity:1`，
+  `.starred` 只在卡片 hover 时出现 ⇒ 屏幕上恰恰是「已加星的看不到按钮」）。**该常驻可见被用户明确限定在
+  只读网格上**：规则写成 `.stars-grid-container.gsm-other-stars .stars-star-btn.starred{opacity:1}`，
+  标记类由 `otherStarsView.ts` 挂在只读网格容器上 ⇒ **本方自己的页保持原观感**（已 star 悬停才现身，
+  真机实测自己的页 `opacity:0`、他人页 `1`）。② 本页写入过的结果记进 `viewContext` 的**内存覆盖表**
+  （`setViewStarOverride`，`resetViewContext` 时清空），否则一次重渲染就退回未加星外观
+  （`markRepoStarred` 只在待删除区有该条目时才恢复，不污染整表缓存是刻意的）。
+- **只读备注与自己卡片的备注「同款」**（用户两轮裁定：不要「备注：」前缀、不要左侧竖线）：
+  `readonly.ts` 直接给节点挂 `stars-card-notes-text gsm-ro-notes` —— 样式来自自己卡片那一条规则，
+  `readonly.css` 里**不再有任何 `.gsm-ro-notes` 声明**。同一个类而非复制声明 ⇒ 两者不可能漂移。
+  `.gsm-ro-notes` 只作身份标记（回滚清单与断言按它找人）。
+- **原生分页器在标题行右侧也放一份克隆件**（用户要求）：原生那份只在页面**底部**，翻到一半想翻页得先滚到底。
+  实现走 `src/topPager.ts` 的 `mountTopPager(scope, source)`（**两条路径共用**：本方自己的页传
+  `.gsm-local-pager`，他人页传原生 `.paginate-container`）。克隆件保留原生 href（`after`/`before` 游标），
+  点击行为与点底部那份一致 —— 真机实测点顶部「Next」→ 页面 2 的 30 个条目渲染出来、克隆件随帧重渲染
+  重新挂上（带上了「Previous」）、**无重复**。**底部那份原样不动**（V5/D6）。
+  克隆前会摘掉 `id`（避免页面出现重复 id）；回滚按 `.gsm-top-pager` 删节点、按 `.gsm-header-row` 摘类。
+- **克隆件竖向对齐到同一行里的筛选控件（用户要求「把分页器和其他筛选项对齐」）**。成因：新版页面把 GitHub
+  自己的筛选栏塞进了标题行，包装节点带 `tmp-mt-3 mb-n1`（上 16px / 下 −4px，**上下不等**）；本行是
+  `align-items: center`，flex 对齐的是**外边距盒** ⇒ 包装节点整体下移 (16 − (−4))/2 = **10px**，而没有这些
+  外边距的克隆件就比筛选控件高出 10px（真机实测：克隆件 y156 / 筛选控件 y166）。
+  处置：把该兄弟节点的**计算外边距原样抄到克隆件的内联样式**上（`getComputedStyle(ref).marginTop/Bottom`），
+  两者外边距盒等高同中心 ⇒ 可视盒精确对齐（真机修正后 delta = 0）。**不碰 GitHub 自己的节点**，
+  只写我们自有节点的内联样式 ⇒ 回滚随节点一起消失，不需要 data 标记。旧代页面标题行里只有 h2（无筛选栏）
+  ⇒ 找不到兄弟节点、保持纯居中，行为不变（真机 mattn 页实测克隆件内联外边距为空）。
+- **已知并接受：`.gsm-header-row` 的 flex 会把新代页面的两行并成一行**。新代骨架原生是
+  「标题一行 / 筛选栏一行」（实测行高 74、标题占满 1056、筛选栏 y182 另起一行），我们加 flex 后变成
+  「标题 + 筛选栏 + 分页器同一行」（行高 64、标题被挤到 166、筛选栏挤到 707）。这是用户要的形态
+  （分页器与筛选项同一行且对齐），属方案 A「接管呈现层」的一部分，不是缺陷。
+- **呈现层与本方自己的页完全一致**（用户裁定，方案 A）：注入 `base + wide` 两张布局表
+  （`src/layoutStyles.ts` 的 `ensureLayoutStyles` / `removeLayoutStyles`，与自己的页共用）⇒ 左栏收窄 180px、
+  ≥1200px 三栏、网格满宽多列；并把对方的 **Starred topics 搬进脚本右栏**（原生 `.col-lg-3` 由 CSS 隐藏）。
+  搬运/归还实现住在 `dom.ts`（`moveTopicsToRightSidebar` / `restoreTopicsFromRightSidebar`），
+  本方页、他人页、`viewTeardown` 第 1 项三处共用。**卡片/网格的样式全在这两张表里** ——
+  不注入就只是「一堆没有样式的行」（真机：`display:block`、单列、卡片无描边）。
+  `/stars/{login}` 没有 `#user-starred-repos` / `.Layout` ⇒ 搬不动也不搬（topics 留原处，无害）。
+- **刻意不套用 `filterState`**：他人页没有脚本筛选栏，若沿用我自己页上残留的筛选条件，网格会莫名变空
+  —— 那不是筛选，是看起来坏了。他人页顺序 = 页面条目顺序。
+- **不接管的情形**（一律什么都不做）：未登录（无登录者身份 ⇒ 标签/备注无从归属）、
+  取不到页面主人、条目数为 0、宿主两条路线都认不出。GitHub 自己的空态/错误态比我们造一个更合适。
+- **`exitOtherStarsView()` 负责收干净**（`viewTeardown` 第 11 项 + 往返入口都调它）：抹网格、
+  **归还 topics**、撤布局主表、复位来源、恢复语言色请求。归还 topics 必须在**这里**做，不能只靠
+  `viewTeardown` 第 1 项 —— `exitOtherStarsViewIfActive()` 在「他人页 → 我自己的页」路径上不经过 teardown。
+- **`viewContext` 是模块态，Turbo 换 DOM 冲不掉它** ⇒ 回到自己的页必须复位，否则
+  `queryRepos()` 仍读上一次的投影，**把别人的列表画在我自己的页上**（工装 `scenario=roundtrip` 抓到的真实缺陷）。
+  复位入口是 `exitOtherStarsViewIfActive()`：**只在处于投影态时**退出（无条件调会顺手删掉我自己页上那张网格）。
+- **分派点**：`transformAndReveal()` 的 `!isDesktop()` 早退之后、`ensureStarsSetup()` 之前（先于一切注入）。
+  `document-start` 的 `installBootHide()` **只能按 URL 判断**（那时 head 未解析、读不到任何身份 meta），
+  所以他人页分支必须自己 `revealAfterTransform(false)` —— 不揭示就是永久白屏（只有 4s 兜底救）。
+  他人页**不挂**Sync 按钮、**不显示**配置横幅与归属横幅（那三者属于「我自己的账号」语境）；TM 菜单照常。
+- **排查「脚本没反应」**：先看 `.stars-grid-container` 是否存在 + 控制台那条「只读网格 / 未接管（原因）」日志。
+  另外注意：该页与你的标签/备注**没有交集**时网格本来就不会有徽章 —— 这是预期，不是缺陷（ADR 0009 局限第 1 条）。
+- 完整口径与已知局限：**`docs/adr/0009-other-users-stars-page-readonly-grid.md`**
+  （4.12.0 的旧形态见 `docs/adr/0008`，其只读铁律与回滚纪律仍有效）。
+
+**D27 · 标签/备注的隔离账号 = 登录者（4.12.0，修掉既有风险第 16 条）**
+
+- `getStarsUserId()` → **`getStorageUserId()`**，来源从 `octolytics-dimension-user_id`（页面主人）
+  改为 `octolytics-actor-id`（登录者）。原实现让**他人的 stars 页**读写那个人的命名空间，是实打实的既存缺陷。
+- 本人页上两者数值相等 ⇒ 自有页的键与数据**不变**（无需迁移）；他人页从「读对方」变为「读我的」。
+- **取不到身份时读空表、写 no-op + console warn**，**不回落** `stars_tags` / `stars_notes` 无隔离旧键
+  （回落会把不属于任何账号的存量数据当成自己的显示出来）。旧键只剩 `migrateTagsIfNeeded()` 一处读取。
+- 连带：`exportImport` 的导出包 `user.id` 与导入归属校验同源改用登录者 id（可观察的行为变化，见 ADR 0008）。
+- 「登录者是谁」只有 `pageScope.ts` 一份实现：`accountGuard.ts` 的 `getViewerId` / `getSessionLogin` 已上移到那里复用。
+
+**D28 · 两条与实测不符的旧口径（4.12.0 纠正）**
+
+- `?page=N` 对 **HTML** stars 页**无效**：实测 `page=2/3/9999` 返回的都是第 1 页内容（不是空页），
+  真实翻页是 **`after=` / `before=` 游标**。旧文档写的「远端 `?page=N` 越界静默返回空结果」只对 **API** 成立
+  （`GET /user/starred?page=9999` → `[]`；但 `per_page×page` 超限是 **422**）。
+- `form[action$="/star"]` **不会**误命中 `/unstar`（合成元素 + 真实页面元素双重实测 `false`）；
+  真正会误命中的是**去掉斜杠**的写法（`[action*="star"]` / `[action$="star"]`）。
+  对本脚本而言这条已不重要：写路径早已改用**精确**匹配 `form[action="/{o}/{r}/star"]`（那条口径继续有效，
+  理由从「后缀会误命中」改为「精确匹配更不易随改版漂移」）。
+- 另补一条既有文档未收录的新路由：**`/stars/{login}`**（他人的新版 stars 页，200）。
+  它**缺** `octolytics-dimension-user_id`、`body` 无 `mine`、`<title>` 形态也不同，
+  条目 DOM 与 profile 标签页不一样 ⇒ 任何依赖 `dimension-*` / `mine` / title 的逻辑在该路由上都会失效。
+  `/stars`（本人新版页）同样存在；脚本对它**不做任何接管**（结构未支持）。
 ---
 
 ## dev 模式必须知道的四件事
@@ -427,10 +619,33 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
   把 `clearInterval` 与容器清理一起做完，且**不得**把它当作「样式/行为已生效」的视觉证据。
 - **验证内部函数**：`.diag/gen-notify-test.cjs` 的做法可复用 —— 复制 dist、把 `init();` 注释掉（避免真实行为干扰）、
   在 IIFE 收尾前 `window.__gsmTest = { pushNotice }`，UTF-8 安全解码后注入。用完 `location.reload()` 清场。
+- **隐藏标签页会把过渡冻在起点值**（4.13.0 又踩一次，两次都误判成「布局没生效」）：JS 挂
+  `gsm-anim-prepare` 起手一帧后撤掉，那条 `grid-template-columns` 过渡在**后台标签页里 `currentTime` 恒为 0**
+  （实测 `getAnimations()` = 一条 running 的 CSSTransition，`time: 0`）⇒ `computedStyle` 报的是**起点值**
+  296px，而目标值其实是 180px。量测前先 `document.getAnimations().forEach(a => { try { a.finish(); } catch {} })`
+  把动画一次性推到目标值，再读 computed —— 这样**在后台标签页也能拿到真实值**（`Page.bringToFront` 未必能抢回焦点）。
+- **`agent-browser-cli` 的 `open` / `exec` 返回值里的 `tab_id` 字段不可信**（4.13.0 踩了两次，第二次真的改坏了
+  用户的标签页）：它反映的是**会话态**而不是「本次实际执行/新开的那个标签」。按它去 `Page.navigate` 会导航到
+  别的标签（我因此两次把用户正在用的 `happycoding.xyz` 标签导到 `?tab=repositories`，只能用 `open` 重新打开、
+  丢失原状态）。正确做法：**只用 `agent-browser-cli tabs` 列表按 URL 找 id**；注意 `tabs` 会把 URL
+  **截断到约 65 字符**，所以匹配要用靠前的片段（如 `.diag/`），别用文件名。
+- **夹具伪造 matchMedia，但真实 CSS 媒体查询看的是 `innerWidth`**（4.13.0 的 A/B 被它骗过一次）：夹具的
+  `matchMedia('(min-width: 768px)')` 返回伪造值（JS 以为桌面），而 `@media` 看真实宽度 ⇒ 易出现
+  「JS 注入了样式表、CSS 却不生效」的假象。**量测带媒体查询的 CSS 前先确认 `window.innerWidth`**，
+  且 `Emulation.setDeviceMetricsOverride` 可能在 `Page.navigate` 后丢失（要重新设并回读）。
+  更稳的做法：挑**与视口无关**的观测量（例如 `el.matches(selector)` 数「哪些规则声明了 transition」，
+  忽略媒体查询是否生效），夹具场景因此不受窗口宽度影响。
 - **读 `computedStyle` 前要等过渡结束**：按钮上挂着 `80ms` 的 transition，同步读取会拿到**起点值**，
   极易误判成「hover 监听没生效」。等 ~250ms 再读（实测 rest→hover→active→hover→rest 五态可完整复现）。
 - **`visibilityState` 会自己掉回 hidden**：`Page.bringToFront` 之后页面可能又变 hidden（rAF/scroll/定时器全停）。
   可靠写法是 `{"method":"Page.bringToFront","params":{},"allowFocus":true}`，并在每次量测前回读 `document.visibilityState`。
+- **冻结标签页会返回过期的 `computedStyle`（4.13.0 踩过，代价是一次错误结论）**：后台标签页里布局从不重算，
+  `getComputedStyle` 给的是**最后一次渲染时**的值。判据很硬：**「连 inline `!important` 都改不动 computed 值」
+  = 这不是 CSS 问题，是标签页被冻结了**（inline important 在任何活着的文档里都必胜）。
+  当时据此误判「注入的布局样式不生效」，而同一 URL 在可见标签页上是另一套数值（单列 296px ↔ 三列 180px）。
+  `Page.bringToFront` + `allowFocus` 与 `Page.setWebLifecycleState('active')` **都不保证**变 visible
+  （窗口本身没焦点时仍是 hidden）—— 可靠做法是 `agent-browser-cli open --focus <url>` 新开一个标签页，
+  **先回读 `document.visibilityState === 'visible'` 再量测**。
 - **恢复被覆盖的 `console.log`**：注入工装若改过它，用 `iframe.contentWindow.console.log` 取原生实现再赋回
   （`delete console.log` 会把 `console` 打残）。
 - **仿真页工装的两个坑**（4.9.2 审查轮踩到）：① 构造 URL **必须带 `?tab=stars`**，否则 `isStarsPage()` 为假、
@@ -449,13 +664,18 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
 
 | 位置 | 旧 | 新 |
 |---|---|---|
-| stars 列表项 | `col-12…py-4.border-bottom` | `…tmp-py-4.border-bottom.color-border-muted` |
+| stars 列表项 | `col-12…py-4.border-bottom` | `…tmp-py-4.border-bottom.color-border-muted`。**类里有 `d-block`** ⇒ `.d-block{display:block!important}` 会压过不带 important 的 inline `display:none`（逐条隐藏时必须 `setProperty(...,'important')`） |
 | repoId | `data-toggle-for` / `details-user-list-<id>` | `user-list-menu[data-repository-id]` |
 | 原生筛选栏 | `.TableObject.border-bottom` + `mt-5` | flex 行 + `tmp-mt-5`，锚点 `#stars-language-filter-menu-button` |
 | 详情页 | `.BorderGrid` / `#repo-stars-counter-star` / `.starred form[action$="/unstar"]` | React + CSS-module；star 按钮 `button[data-testid="star-button"]`，状态在 `aria-label`（4.9.0 起脚本**完全不碰详情页** —— 监听与读取器都已删，决策 D17） |
 | 搜索框 | `input[name=q]`、`form[action$="tab=stars"]` | **未变**，原拦截逻辑仍有效 |
 | Lists 标题行 | `.my-3…` + 内联隐藏即可 | `tmp-my-3…`，且 `.d-flex` 的 `!important` 压过内联 `display:none`，必须 `element.style.setProperty('display','none','important')` |
-| 网页写端点表单 | `form[action$="/star"\|"/unstar"]`（后缀选择器） | 只能用**精确**匹配 `form[action="/{o}/{r}/star"]` —— `action$="/star"` 会被 `/unstar` 命中 |
+| 网页写端点表单 | `form[action$="/star"\|"/unstar"]`（后缀选择器） | 仍是**精确**匹配 `form[action="/{o}/{r}/star"]`，但理由变了：2026-10-03 实测**推翻**「`action$="/star"` 会被 `/unstar` 命中」（合成元素 + 真实元素均 `false`；真正会误命中的是去掉斜杠的 `[action*="star"]`）。保留精确匹配是因为它更不易随改版漂移 |
+| 他人页星标状态 | —— | **`div.starring-container` 是否有 `on` 类**（服务端渲染；实测 127 条目零假阳零假阴）。`aria-label` / 按钮文字 / `octicon-star-fill` / `/star`、`/unstar` 表单**都不能**判状态（每条目两表单永远并存 30/30，靠 CSS 显隐）。登出时一个开关都不渲染 ⇒ 只能判 unknown |
+| stars 页骨架（**两代并存**） | —— | 旧代 `#user-starred-repos > .col-lg-9` + `.col-lg-3`，标题「Starred repositories」，搜索框「Search starred repositories」；新代 `#user-starred-repos > .col-lg-12`（**无 topics 列**），标题「Stars」，搜索框「Search stars」。**同一个 `?tab=stars` URL 随账号返回不同代际**（实测 mattn=旧、Kuddev=新）⇒ 选择器必须有退路（`getStarsMainColumn()` 找不到 `.col-lg-9` 就退到 frame/`main`） |
+| 条目内部四块 | （此前只解析标题） | **两条路由的条目内部完全相同**：`div.d-inline-block.mb-1`（标题 `h3 a[href]`）/ `div.float-right.d-flex`（操作）/ `div.py-1`（描述 `p`，可为空）/ `div.f6.color-fg-muted.mt-2`（元信息：`[itemprop=programmingLanguage]`、`a[href$="/stargazers"]`、`a[href$="/forks"]`、`relative-time[datetime]`）。计数文本**含千分位逗号**；元信息块必须按**直接子节点**取（条目内的 Lists 浮层里也有 `div.f6`） |
+| 条目「时间」语义 | —— | **同一位置两条路由语义不同**：`?tab=stars` 是 `Updated`（→ `updatedAt`）、`/stars/{login}` 是 `Starred`（→ `starredAt`）。要读 `relative-time` **前一个文本节点**的标签来分派，不能一律塞 `updatedAt` |
+| stars 页 URL 形态 | 只有 `/{login}?tab=stars` | 另有 **`/stars`**（本人新版页）与 **`/stars/{login}`**（他人新版页，200）。后者**缺** `octolytics-dimension-user_id`、无 `body.mine`，条目 DOM 也不同；`/{login}/stars` 是 404。另：`?page=N` 在 HTML 页被**忽略**（返回第 1 页），真实翻页是 `after=`/`before=` 游标 |
 
 ---
 
@@ -493,33 +713,71 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
    账号无关 = D6），但 `stars_full_sync_meta` **不记录账号归属**，要先加字段才能可靠告警，属独立改动。
 15. **GHES / SAML SSO 下页面身份 meta 行为未确证**（GitHub Docs 全站含各 GHES 版本、`github/docs` 抽查、相关 issue 与
    userscript 社群均无权威来源）：届时本功能可能完全失效，但仍为 `unknown`（不误报）。
-16. **非本人 stars 页的既有缺口（本次实测顺带确证，**未修**）**：`getStarsUserId()` 取的是
-   `octolytics-dimension-user_id` = **页面主人**，而它被用作**标签/备注的存储键命名空间**（`storage/tags.ts` 与 `notes.ts`）
-   与导入包归属校验（`storage/exportImport.ts` 的 `user.id` 比对）。实测（登录态，`/mattn?tab=stars`）该值 = 10111（mattn）而
-   登录者 `octolytics-actor-id` = 130123551（YsLtr），且该页确实含 `#user-starred-repos` + `.col-lg-9`（脚本会转换它）
-   ⇒ 在他人 stars 页上，脚本读写的标签/备注是**那个人的命名空间**而非自己的。这与本功能无关（归属校验已改用 actor-id），
-   属既有行为，见「下一步」第 3 条；动手前先想清「他人页该不该转换」这个更大的问题。
+16. ~~**非本人 stars 页的既有缺口**~~ —— **4.12.0 已修**（见 D26/D27）：
+    `getStarsUserId()` 取的是 `octolytics-dimension-user_id` = **页面主人**，而它被用作标签/备注的存储键命名空间
+    与导入包归属校验；实测（登录态，`/mattn?tab=stars`）该值 = 10111（mattn）而登录者 `octolytics-actor-id` = 130123551（YsLtr）
+    ⇒ 在他人 stars 页上脚本读写的是**那个人的命名空间**。
+    修法：存储键改用登录者 id（`getStorageUserId()`）；他人的 stars 页不再被接管，只做只读装饰（D26）。
+    保留此条是为了记录**曾经的**行为与实测数据（`exportImport` 的 `user.id` 语义随之变化，属可观察变化）。
+17. **零网络只读网格的真实局限**（4.13.0，见 D26 / ADR 0009，全部是**设计属性**而非缺陷）：
+    ① **徽章只在「我也给那个仓库打过标签/写过备注」时出现**：实测 mattn 前 100 个 starred 与本人 21 个带标签/备注的
+       仓库**交集为 0** ⇒ 网格通常一条徽章都没有。**不能**给「对方 star 了但我没 star」的仓库打标签
+       （它不出现在我的列表里，而已有编辑入口只在**我自己的** stars 页）。
+    ② **只有本页数据**：无跨页筛选/搜索，翻页只能靠原生分页器；本条是「不拉取」的直接代价。
+    ③ **字段缺失即降级**：DOM 里没有的就不渲染（例：`/stars/{login}` 的描述实测恒为空 ⇒ 卡片显示「No description」）。
+    ④ **`viewContext` 是模块态**：任何「离开他人页」的路径都必须复位（`exitOtherStarsViewIfActive` / `viewTeardown` 第 11 项），
+       漏了就串数据（往返把别人的列表画在我的页上）。
+    ⑤ **依赖 GitHub 的条目结构**：改版 ⇒ 退化为「不接管」（功能消失、不破坏页面、不留残次网格）。
+    ⑥ **呈现层接管了页面框架**（方案 A，用户裁定）：他人页的左栏被收窄、对方的 Starred topics 被搬进脚本右栏、
+    **页主头像被缩到 120px**（该页 Sponsors/成就徽章等其它图片不受影响 —— 选择器已收窄到页主头像那一个）、
+    Lists 区块按用户的「隐藏 Lists」开关隐藏。**功能层仍未接管**：无星按钮/编辑入口/脚本分页器/筛选栏/同步按钮/横幅，
+    零 API 请求、零存储写入。
+    ⑦ **GitHub 现在有三套并存的 stars 页面骨架**（真机实测同一 `?tab=stars` URL 会随账号返回不同代际）：
+    - **旧代**（如 `mattn`）：`#user-starred-repos > .col-lg-9` + `.col-lg-3`（Starred topics 列），
+      标题「Starred repositories」，搜索框 placeholder「Search starred repositories」，有原生分页器；
+    - **新代**（如 `Kuddev` / `Norman-bury`，仍是 `?tab=stars`）：`#user-starred-repos > .col-lg-12`
+      （**没有 topics 列**），标题只有「**Stars**」，搜索框「Search stars」；**GitHub 自己的筛选栏就在标题行内**
+      （`div.position-relative` 的第 2 个子节点 `div.d-flex.flex-column.flex-lg-row.tmp-mt-3.mb-n1`，
+      原生是「标题一行 / 筛选栏一行」两行）；
+    - **`/stars/{login}`**：`main` 里的 `ul.repo-list`，**没有** `#user-starred-repos` / `.Layout`。
+
+    后果：**任何依赖骨架的选择器都必须有退路**。现状：主列用 `getStarsMainColumn()`（找不到 `.col-lg-9`
+    就退到 frame / `main`）、topics 搬运与 `col-lg-3` 隐藏在新代自动跳过、布局表里针对
+    `#user-starred-repos` / `.Layout` 的规则只在旧代生效 ⇒ 新代是「GitHub 自己的全宽单列 + 我们的卡片网格」，
+    观感与本方页**不完全一致**（这是有意的：不猜它的新骨架）。`/stars/{login}` 的描述字段实测恒为空
+    ⇒ 卡片显示「No description」。
+    排查「脚本没反应」：看控制台那条「只读网格 / 未接管（原因）」+ `.stars-grid-container` 是否存在 +
+    网格 computed `display` 是不是 `grid`（是 `block` = 布局表没注入）。
 
 ---
 
+18. **布局接管已按标记收窄，但仍是「视图级」的写操作**（4.13.0 已修主体，剩两点）：
+    ① 布局表里的 `.container-xl{max-width:1600px}` 是**页面容器**（布局的祖先），没法用后代标记限定 ⇒
+    登出页的页头所在容器也会被加宽（纯宽度，无位置跳变）；
+    ② `/stars/{login}` 路由上**根本没有 `.Layout` 元素**（真机实测 `document.querySelectorAll('.Layout').length === 0`）
+    ⇒ 标记无从落下，该路由从不进入三栏接管（网格整宽 + 2 列），**这是既有行为**（改前那套骨架选择器同样匹配不到）。
+    真要修 ② 得先给那代路由找新的列容器，属独立改动。
+
 ## 下一步
 
-1. **@version 已升到 4.11.1 → 若你在用 dev 脚本，必须重装 dev loader**：重开
+1. **@version 已升到 4.13.0 → 若你在用 dev 脚本，必须重装 dev loader**：重开
    <http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js> 让 TM 原地更新，否则 TM 菜单会整体消失
    （机制见「dev 模式必须知道的四件事」第 4 条：`@version` 变了 → 脚本头变了 → mountGmApi 的 key 对不上）。
    正式版不受影响；`@version` 变了却没重装，表现是「TM 菜单空了」+「同步说未配置 token」。
 2. **`docs/adr/0006` 剩余两项不可观测项**：`?scopes=repo` 预填是否真的勾上（被 sudo/passkey 门拦住，
    **不得**声称可用或不可用）、`context=user_stars` 服务端是否据其分支（实测 200 但不可知）。
    离页仓库 + 仅 VF 头**已实测成立**（见「当前状态」的实测结论），不必重复验。
-3. 后续阶段（详见 `todo` 与 `DEVELOPER.md` §13）：GraphQL 分页调研、周期自动同步、非本人 star 页
-   `GET /users/{u}/starred` 接入。**最后一项因本次实测而更紧迫**：脚本目前**会转换他人的 stars 页**
-   （实测 `/mattn?tab=stars` 含 `#user-starred-repos` + `.col-lg-9`），而网格数据来自**自己的 token**、标签/备注又按
-   **页面主人**的 id 命名空间读写（见「已知风险」第 16 条）。动手前先定「他人页该不该转换」这个更大的问题
-   —— 本次只把归属校验的比对键修正为登录者（`octolytics-actor-id`），没动这个既有缺口。
-4. 未消化的架构建议：单遍 facet 计算、响应式漏斗（见 `starmgr-arch-review-report.md`）。
-5. fine-grained PAT 写他人公开仓库的能力缺口由 GitHub 控制（roadmap#600 NOT_PLANNED、#601 OPEN）——将来若补齐，
+3. **4.13.0 验收状态**：静态 + 夹具 13 组 + 真机（登录态）**全部通过** —— 逐项证据见上「验证」小节与
+   `docs/adr/0009`（含顶部翻页器「点它真能翻页」、新代页面分页器与筛选控件 `delta=0` 对齐、
+   `/stars/{login}` 无原生分页器 ⇒ 克隆按设计空操作）。**只剩观感层面的人工确认**（4 条，见「验证」末条）。
+4. 后续阶段（详见 `todo` 与 `DEVELOPER.md` §13）：GraphQL 分页调研、周期自动同步。
+   ~~非本人 star 页 `GET /users/{u}/starred` 接入~~ —— 4.12.0 已按「只读模式」收口（D26）；
+   若将来要让他人页也显示完整卡片网格，那是一条**新功能**（需要 `GET /users/{u}/starred` 匿名 60/hr 额度 +
+   游标翻页 + 独立缓存键），动手前先重新评估额度与用户价值。
+5. 未消化的架构建议：单遍 facet 计算、响应式漏斗（见 `starmgr-arch-review-report.md`）。
+6. fine-grained PAT 写他人公开仓库的能力缺口由 GitHub 控制（roadmap#600 NOT_PLANNED、#601 OPEN）——将来若补齐，
    可回头简化 `docs/adr/0006` 的网页端点通道。
-6. **4.9.2 的真机验证部分完成**（`pnpm check` + 51 项导入导出断言 + CSS 等价性全过；dist 头部 `@grant` 恰 5 项）。
+7. **4.9.2 的真机验证部分完成**（`pnpm check` + 51 项导入导出断言 + CSS 等价性全过；dist 头部 `@grant` 恰 5 项）。
    **已在真浏览器跑过仿真页**（`.diag/viewport-harness.html` = GitHub 仿真 DOM + 内联 dist + matchMedia 仿真，
    断言脚本 `.diag/assert-viewport.js`；两者都在 gitignore 的 `.diag/` 下，可重跑）：窄视口载入**零痕迹**
    （无自造节点/无 `gsm-*` 类/无内联 display/无标记，Lists 行与原生三个菜单未被动过）；桌面载入网格/顶部翻页器/
@@ -681,4 +939,8 @@ node scripts/ratelimit-probe.cjs --repo <me/repo>   # 限流实测探针（默�
 
 ## 建议技能
 
-- `agent-browser-cli`：真机 DOM 探查、注入验证、截图、受信任点击。
+- `agent-browser-cli`：真机 DOM 探查、注入验证、截图、受信任点击。**先读「真机调试要点」** ——
+  里面记了两个会白费时间的坑（它的 `open`/`exec` 返回值里的 `tab_id` 不可信、会导航到**别的**标签；
+  `tabs` 列表把 URL 截断到 ~65 字符），以及「隐藏标签页冻结过渡 ⇒ computedStyle 报起点值」这条。
+- 夹具与断言可重复运行：`node .diag/gen-otherstars-harness.cjs` 后用 `file://.../?tab=stars&scenario=<名>`
+  打开，再 `agent-browser-cli exec --tab <id> --file .diag/assert-otherstars.js`（场景名见该文件头部注释）。

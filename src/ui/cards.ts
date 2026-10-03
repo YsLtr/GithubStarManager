@@ -7,6 +7,7 @@ import { setStarState, writeFailureMessage, type StarWriteOutcome } from '../sta
 import { markRepoStarred, markRepoUnstarred } from '../storage/pendingDelete';
 import { getToken, notifyTokenIssue } from '../tokenConfig';
 import { pushNotice } from './notifications';
+import { setViewStarOverride } from '../viewContext';
 import { escapeHtml, formatRelative } from '../utils';
 import type { RepoData } from '../types';
 
@@ -109,11 +110,13 @@ function setStarButtonVisual(btn: HTMLButtonElement, isStarred: boolean): void {
  *    取消 star 还额外推一条带「撤销」按钮的通知；
  * 6. 失败 → 回滚外观 + 结果导向的通知（不暴露通道细节；401 照旧上报配置面板）。
  */
-export function createStarButtonForCached(card: HTMLElement, data: RepoData): void {
+export function createStarButtonForCached(card: HTMLElement, data: RepoData, isStarred?: boolean): void {
   const fullName = data.name;
   if (!fullName) return;
   const repoId = card.dataset.repoId || '';
-  const btn = createStarButtonElement(!data.unstarredAt);
+  // `isStarred` 显式给出时以它为准：他人页卡片的状态来自**本人缓存成员关系**（`data.unstarredAt`
+  // 是「本方自己的表」的语义，投影条目根本没有这个字段 ⇒ 不显式传就会全判成已加星）
+  const btn = createStarButtonElement(isStarred ?? !data.unstarredAt);
 
   /** 本卡片当前在途的一次操作（null = 空闲）；用于「排队中再点撤销」与「执行中忽略」 */
   let inflight: { handle: MutationHandle<StarWriteOutcome>; target: boolean } | null = null;
@@ -166,6 +169,8 @@ export function createStarButtonForCached(card: HTMLElement, data: RepoData): vo
       if (repoId) {
         if (target) markRepoStarred(repoId);
         else markRepoUnstarred(repoId);
+        // 他人页：把本次写入的结果记进视图内存，供后续重渲染沿用（非他人页是 no-op）
+        setViewStarOverride(repoId, target);
       }
       syncCardAfterStarChange(repoId, target);
       if (!target) pushRestoreNotice(repoId, fullName, 'manual');

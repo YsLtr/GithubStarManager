@@ -9,7 +9,7 @@
 import { EXPORT_KIND, EXPORT_SCHEMA_VERSION } from '../constants';
 import { loadAllNotes, saveNote } from './notes';
 import { loadRepoCache, saveRepoCache } from './repoCache';
-import { getStarsUserId, loadAllTags, saveTags } from './tags';
+import { getStorageUserId, loadAllTags, saveTags } from './tags';
 import type { RepoCache, RepoData, TagMap } from '../types';
 
 /** 导出包顶层结构（`data` 之外的字段是协议元信息，不参与合并） */
@@ -55,7 +55,7 @@ function isEmptyText(s: string): boolean {
  * 那会把数据写进「下次登录后读不到」的键，等于静默丢数据。
  */
 export function buildExportPackage(): ExportPackage | null {
-  const userId = getStarsUserId();
+  const userId = getStorageUserId();
   if (!userId) return null;
 
   const tags = loadAllTags();
@@ -139,7 +139,7 @@ export function validateExportPackage(raw: unknown): ValidateResult {
   if (!isPlainObject(user) || typeof user.id !== 'string' || !user.id) {
     return { ok: false, reason: '导出包未标注所属用户' };
   }
-  const currentId = getStarsUserId();
+  const currentId = getStorageUserId();
   if (!currentId) return { ok: false, reason: '当前页面取不到 GitHub 用户 ID（未登录？），无法确认归属，已拒绝导入' };
   if (user.id !== currentId) {
     return { ok: false, reason: `导出包属于用户 ${user.id}，当前登录用户为 ${currentId}，不允许跨账号导入` };

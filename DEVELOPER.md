@@ -94,11 +94,51 @@ src/
   utils.ts            escapeHtml / isDesktop（matchMedia 单一真相）/ subscribeBreakpointChange / formatRelative
   gm.ts               GM API 兼容层（调用时判定；localStorage 兜底与迁移；PAT 不写镜像）
   boot.ts             document-start 防闪烁隐藏生命周期（FOUC）
+  viewContext.ts      当前网格来源（4.13.0）：own（读 stars_repo_cache）/ other（读**页面投影**，仅内存）。
+                      `queryRepos()` 按它取表；他人页**不套用 filterState**（无筛选 UI）。
+                      离开他人页必须 `resetViewContext()`（模块态，Turbo 换 DOM 冲不掉）
+  domRepos.ts         DOM → RepoData 投影（4.13.0，纯函数）：他人页的**唯一数据源**。两条条目路线
+                      （div.col-12 / ul>li）、字段可得性表、时间按标签分派，见文件头。
+                      repoId 优先 `user-list-menu[data-repository-id]`，**未登录页面没有它**（实测 0 个）
+                      ⇒ 退回仓库全名；`li` 路线的仓库特征 = `user-list-menu[data-repository-id]`
+                      或 `a[href$="/stargazers"]`（不能用 href 形状判断：`/topics/{name}` 也是 a/b 形状）
+  layoutStyles.ts     布局样式表生命周期（4.13.0，从 index.ts 抽出）：ensureLayoutStyles / removeLayoutStyles
+                      —— 4.13.0 起注入时同步调 `markStarsLayout()`、撤表时同步 `unmarkStarsLayout()`：
+                      **布局规则只认 `gsm-stars-layout` 标记**（见 constants.STARS_LAYOUT_CLASS 与 dom.ts），
+                      不再按 `.Layout--sidebarPosition-start` 这类骨架类选元素（登出页有两个这种布局，
+                      页头会被误改写）。标记调用必须在 `!isDesktop()` 早退**之后**（否则窄视口留 class）
+                      —— **卡片与网格的样式全在 base.css + wide.css 里**，本方自己的页与他人页的只读网格
+                      共用这两张表（他人页的首版漏了注入 ⇒ 卡片无描边、单列 display:block，真机报「网格没应用」）
+  topPager.ts         标题行右侧的顶部快捷翻页器（4.13.0）：mountTopPager(scope, source) —— 两条展示路径
+                      共用同一份实现（本方页克隆 `.gsm-local-pager`，他人页克隆原生 `.paginate-container`）；
+                      克隆件带 `.gsm-top-pager`、标题行加 `.gsm-header-row`，回滚由 viewTeardown 第 2/4 项负责；
+                      对齐：新代页面标题行里还塞着 GitHub 自己的筛选栏（`tmp-mt-3 mb-n1`，上下不等），
+                      克隆件抄它的计算外边距才能与筛选控件同一水平线（否则高 10px）
+  pageScope.ts        页面归属判定（4.12.0）：isStarsListingPage（`?tab=stars` / `/stars` / `/stars/{login}`）
+                      + getStarsPageScope（own/other/unknown，id 优先 → login 兜底 → 路径段）；
+                      与 getViewerId/getViewerLogin（**登录者**身份，accountGuard 也复用这一份）。纯读 DOM/URL，不建节点不发请求
   dom.ts              DOM 查询工具 + Hide Lists 开关引擎（isHideListsEnabled / applyHideListsGate / hideListsSection / clearListsHiddenMarks）
   transform.ts        列表 → 卡片网格转换（藏原生列表与分页器、挂顶部分页器与 Sync 按钮、Starred Topics 迁右栏）；自造分页器：`Previous | <button.gsm-page-info> | Next`（4.10.0 起页码指示器是可点击/可聚焦按钮，见 pagination.ts）
   lifecycle.ts        生命周期层（4.9.1；4.9.2 审查删掉零消费者的 interval / clearTimer）：受管监听/定时器作用域（createScope）+ 世代号（beginGeneration / guardedTimeout / ifCurrent）
                       —— 回滚后旧回调在动手前自我作废，解决「teardown 被自己排的队撤销」
   viewTeardown.ts     窄视口回滚 / 离开 Stars 收尾（4.9.1；4.9.2 审查加第 10 项「解绑原生搜索监听」并把 Lists 隐藏改为仅在窄视口清）：按痕迹逐项撤销脚本对 GitHub DOM 的写入（幂等；见 §6「窄视口完全惰性」）
+  readonly.ts         只读标签/备注渲染器（4.13.0）：renderTagsReadOnly / renderNotesReadOnly —— 填进卡片既有的
+                      .stars-card-tags / .stars-card-notes 容器；无监听器、无编辑控件、不写 storage、不挂提示条
+  otherStarsView.ts   他人 star 页的零网络只读网格（4.13.0）：enterOtherStarsView / exitOtherStarsView ——
+                      投影页面条目 → 只藏原生条目（hideNativeNode）→ 注入布局表 → 搬 topics → 建网格
+                      → 标题行挂原生分页器克隆件（topPager.mountTopPager）；
+                      **不加说明行/提示条**（用户裁定：多余）；
+                      不拉取、不落盘、不挂脚本分页器/筛选栏/同步按钮；零网络还要压住 getLangColor 的**间接**
+                      linguist 请求。exit 负责收干净：归还 topics + 撤布局主表 + 复位来源（不能只靠 viewTeardown）
+  dom.ts 另含         findStarsLayout / markStarsLayout / unmarkStarsLayout（4.13.0）：承载 stars 内容的那个
+                      `.Layout` 的标记三件套，CSS 侧的布局接管全靠它（`closest` 从网格/frame/主列/条目往上找，
+                      找不到就不标记 ⇒ 布局规则整体不生效，原生布局原样保留）。
+  dom.ts 另含         moveTopicsToRightSidebar / restoreTopicsFromRightSidebar（4.13.0 从 transform.ts 上移）：
+                      Starred topics 的搬运与归还，本方页 / 他人页 / viewTeardown 第 1 项三处共用。
+                      **归宿布局用 `closest` 从被搬的那一列往上找，不得用 document.querySelector** ——
+                      登出的 profile 页有两个 `.Layout--sidebarPosition-start`（页头 / 内容），
+                      取第一个会把 topics 塞进页头（真机事故，见 D26 / ADR 0009 追加 5）；
+                      搬不动就不搬，隐藏原生列的 CSS 绑在搬运成功的 `[data-gsm-topics-src]` 上
   filters.ts          筛选引擎：queryRepos 统一查询管线、4 排序键×双向、facet 候选收窄、renderBrowsePage 本地分页、applyFilters、exitCustomMode、initFiltersFromUrl
   search.ts           搜索表单拦截（纯本地）
   pagination.ts       本地分页拦截（只拦自造 data-gsm-page，零网络零 Turbo）+ **跳页唯一提交口径 navigateToLocalPage**（4.10.0：prev/next 与页码输入框共用同一套夹取/越界守卫）
@@ -120,7 +160,7 @@ src/
                      （unmountSyncButton 显式注销订阅）
   storage/
     repoCache.ts      仓库缓存 CRUD
-    tags.ts           标签存储 + 用户 ID 解析 + 备注键规则 + 迁移
+    tags.ts           标签存储 + **隔离账号解析**（getStorageUserId = 登录者 actor-id，4.12.0 起；取不到则拒绝读写）+ 迁移
     notes.ts          备注存储（saveNote 判空 = trim 后为空）
     pendingDelete.ts  待删除区（unstar 宽限期，含标签/备注备份 + listRestorable/formatRemaining 供恢复窗口）
     exportImport.ts   导入导出**纯逻辑**（4.7.0）：buildExportPackage / validateExportPackage / applyImportPackage；不碰 DOM、不弹对话框
@@ -139,6 +179,8 @@ src/
   styles/
     base.css          ≥768px 布局与组件样式（第 4 节 Lists 隐藏规则带 html.gsm-hide-lists 门控前缀）
     wide.css          ≥1200px 三栏布局
+    readonly.css      只读模式节点样式（.gsm-ro-tag(s)；整体包在 ≥768px 里，JS 另有 isDesktop 门）。
+                      备注**不在此文件**：只读备注复用自己卡片的 `.stars-card-notes-text`（见 D26/ADR 0009）
     persistent.css    常驻小表（注入后不移除：右栏默认隐藏 + 侧边栏/头像过渡）
 legacy/
   github-stars-grid.v2.6.user.js   迁移前的单文件版本（冻结，仅供对照/回滚）
@@ -237,7 +279,8 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
 
 ### `stars_tags_<userId>` / `stars_notes_<userId>`
 
-每用户标签 / 备注数据，按 GitHub 用户 ID 隔离（ID 取自 `meta[name="octolytics-dimension-user_id"]`）。
+每用户标签 / 备注数据，按**登录者**的 GitHub 数字 ID 隔离（4.12.0 起取自 `meta[name="octolytics-actor-id"]`；
+此前取的是**页面主人** `octolytics-dimension-user_id`，会让他人的 stars 页读写对方的命名空间 —— 见 D27 与 ADR 0008）。
 
 ```jsonc
 // stars_tags_<userId>
@@ -246,7 +289,8 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
 { "123456": "这是一条备注" }
 ```
 
-> `stars_tags` / `stars_notes`（无用户隔离）是旧键，`migrateTagsIfNeeded()` 负责标签迁移；备注旧键仍作为取不到 userId 时的回退键。
+> `stars_tags` / `stars_notes`（无用户隔离）是旧键，只剩 `migrateTagsIfNeeded()` 一处读取（标签迁移）。
+> **4.12.0 起不再有「取不到 userId 时回退旧键」这条路径**：取不到身份 = 读空表 / 写 no-op（回退会让不属于任何账号的存量数据冒出来）。
 
 ### `github_pat`
 
@@ -323,6 +367,14 @@ Token 归属校验的身份缓存（4.11.0）：`{ [凭证指纹]: { id, login }
 
 脚本只对桌面端有意义，但「窄视口」不等于「脚本不生效」—— 那正是 4.9.1 修的 bug：
 
+- **布局规则一律带 `gsm-stars-layout` 标记**（base.css / wide.css / persistent.css 三张表）：`--Layout-sidebar-width`、
+  `grid-template-columns`、`.Layout-sidebar` / `.Layout-main` 的宽度与轨道，**全部**按标记限定，绝不按骨架类
+  （`.Layout--sidebarPosition-start`）裸选 —— 登出的 profile 页有两个那种布局，页头会被一起改写（D26 / ADR 0009 追加 6）。
+  唯一的例外是 `.container-xl{max-width:1600px}`（祖先无法用后代标记限定，已登记为风险 18）。
+- **`gsm-stars-layout` 标记只管尺寸，不管过渡**：base/wide 的**尺寸**规则（侧栏宽度、三栏轨道、头像大小、
+  侧栏内部排版）必须认标记；`persistent.css` 的**过渡**规则必须**不认**标记 —— 撤尺寸规则与摘标记在
+  `exitStarsView` 的同一个同步任务里，过渡若认标记就没有 after-change 声明可依 ⇒ 回弹不启动、尺寸瞬跳
+  （回归与 A/B 证据见 ADR 0009 追加 6）。两个要求方向相反，别为「一致性」统一它们。
 - **CSS 会自动失效，JS 不会。** 全部布局样式（`base.css` / `wide.css` / `persistent.css`）都包在 `@media` 里，缩到手机宽度时自动退出；但脚本写进页面的东西 —— 自造节点、class、**内联样式**、被搬走的原生节点 —— 一样都不会自己回退。旧版本因此留下一地半吊子 DOM（网格容器、顶部翻页器、原生列表项的 `.stars-original-hidden`、被搬进右栏的 Starred topics、被内联 `display:none !important` 永久藏起来的 Lists 区块）。**内联样式尤其致命：它不受任何媒体查询门控。**
 - **入口门先于一切注入。** `transformAndReveal()` 的第一件事就是 `isDesktop()` 判定，**早于** `ensureStarsSetup()` / `ensureStyles()` / `showSetupBanner()`；其余的门分散在 `applyHideListsGate`、`hideListsSection`（并用 `clearListsHiddenMarks()` 清残留）、`applyFilters`（兜底：拦住回滚前排队的异步回调）、`scheduleProbeSync`（**排队时与 2s 回调内各判一次**，见下条）、`turbo:load` / `turbo:before-visit` / `turbo:before-render` / `turbo:before-frame-render`、原生 Clear filter 点击拦截、`search.ts` 的两个拦截回调。**门的具体数量以 `grep -rn 'isDesktop()' src/` 为准**，别在文档里维护计数（曾写「6 处」，实测 12 处）。
 - **监听也是「JS 写入」，且它连 teardown 都躲得过。** 样式表靠 `@media` 自动失效、节点靠 teardown 删除，但**事件监听两个都不会**。因此挂在 GitHub 原生 form/input 上的监听必须由 `lifecycle` 作用域持有（`search.ts` 的 `searchScope` + `disposeSearchInterception()`，teardown 第 10 项），**不要**用 `data-*` 标记串防重复挂载 —— 标记串防得住重复，却摘不掉已挂的监听（真机上表现为：缩窄后原生搜索框按回车什么都不发生），而且标记本身就是回滚后不该留的痕迹。
@@ -343,9 +395,22 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 
 切片混合模式下，local-only 嫌疑先逐条 `checkStarredGone()`：204 = 切片平局误报（保留）/ 404 = 真取关 / null = 本轮不动 —— 防同秒 `starred_at` 跨 304|200 边界互换造成假取关。
 
-### 每用户标签隔离
+> **改 GitHub 原生元素的尺寸时，选择器必须收窄到「那一个」**（4.13.0 真机教训）：头像规则原来写的是裸
+> `.Layout-sidebar .avatar-user`，结果把侧栏里 Sponsors 区块的小头像一起撑大（13 个 35px → 120px，被迫竖排）。
+> 现在用 `.avatar-user.width-full` + `a[href*="avatars"] img`（各只命中页主那一个）。
+> **`persistent.css` 里的同族 transition 选择器要一起改**，否则过渡仍落在别人身上。
+>
+> **隐藏 GitHub 原生节点一律带 `!important`**（4.13.0 真机教训）：GitHub 的 utility 类（`d-block` / `d-flex`）
+> 是带 `!important` 的，不带 important 的 inline `display:none` 会被它们压过 —— 表现为「标记与 inline style 都写对了，
+> computed 仍是 `block`」。`dom.ts` 的 `hideNativeNode` 已统一 `setProperty('display','none','important')`。
+>
+> **4.13.0 未新增任何存储键**：他人 star 页的网格数据是**页面投影**（`src/domRepos.ts`），只存内存（`src/viewContext.ts`），
+> 不落盘、不进导出包 —— 「只获取页面中已有的数据」这条约束的直接结果。
 
-存储键包含用户 ID，同一浏览器下不同 GitHub 账号的标签 / 备注互不干扰。
+### 每账号标签隔离
+
+存储键包含**登录者**的账号 ID，同一浏览器下不同 GitHub 账号的标签 / 备注互不干扰；
+他人的 stars 页读到的也是**我自己的**标签/备注（4.12.0 起，见 D27）。
 
 ### 导入导出（4.7.0，**不新增存储键**）
 
@@ -415,6 +480,8 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 
 **触发入口**（四处，都只是「触发」）：TM 菜单「🔄 立即全量同步」、标题行 Sync 按钮、Token 保存后的自动同步、进页
 `scheduleProbeSync()`（冷却 60s + 有 PAT → `runFullSync('auto')`）。
+**4.12.0：他人 star 页上只有前三处可用** —— 只读模式不调用 `scheduleProbeSync()`（旧文档的第四处进页自动同步被禁）；
+前三处照常执行且**不拦截**（用户裁定：只动自己的账号；实测菜单入口在他人页仍发 2 次 API 请求）。
 **4.10.0 起反馈不再各写一套**：`runFullSync` 只推进 `fullSync.ts` 内的同步状态并广播（`SyncState` +
 `subscribeSyncState`），头部 Sync 按钮是该状态的**唯一视图** —— 任何入口触发的同步都让按钮内的 octicon
 旋转（文字与按钮几何恒定不变）。旧的「整按钮文字透明 + `::before` 伪元素转圈」（`.gsm-pager-loading`）

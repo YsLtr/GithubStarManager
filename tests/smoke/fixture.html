@@ -36,6 +36,9 @@
 <!-- 复现 GitHub 的陷阱：`.d-flex` 带 !important，会压过内联 display:none -->
 <style>
   .d-flex { display: flex !important; }
+  /* 条目类名里的 d-block 同样是 Primer utility（带 !important）—— 他人页按**条目**隐藏时，
+     不带 important 的 inline display:none 会被它压过（真机实测：网格插上了但原生 30 条原样还在）。 */
+  .d-block { display: block !important; }
   .f3-light { font-size: 18px; font-weight: 600; }
 </style>
 </head>
@@ -48,7 +51,33 @@
   故意保留这些新特征，旧选择器会在这里直接失配。
 -->
 <div class="Layout Layout--sidebarPosition-start">
-  <div class="Layout-sidebar"><span class="p-nickname">smoke-user</span></div>
+  <!-- 侧栏：页主头像 + Sponsors 小头像列表（真机结构：Sponsors 头像链接指向 `/login`，
+       页主头像链接指向头顶像图片本身；两者都带 `.avatar-user`，只能靠 `width-full` / 链接形状区分。
+       4.13.0 真机事故：裸 `.avatar-user` 把 13 个赞助头像撑成 120px 并被迫竖向排列）。 -->
+  <div class="Layout-sidebar">
+    <span class="p-nickname">smoke-user</span>
+    <div class="js-profile-editable-replace">
+      <div class="position-relative d-inline-block col-2 col-md-12">
+        <a class="d-block" href="https://avatars.githubusercontent.com/u/999?v=4">
+          <img alt="View smoke-user's full-sized avatar" class="avatar avatar-user width-full border color-bg-default"
+               src="https://avatars.githubusercontent.com/u/999?v=4" width="260" height="260">
+        </a>
+      </div>
+      <div class="border-top color-border-muted tmp-pt-3 tmp-mt-3 clearfix">
+        <h2 class="f5">Sponsors</h2>
+        <div class="d-flex flex-wrap">
+          <div class="d-flex mb-1 mr-1">
+            <a class="d-inline-block" href="/sponsor-one"><img alt="@sponsor-one" class="avatar avatar-user"
+              src="https://avatars.githubusercontent.com/u/111?s=70&amp;v=4" width="20" height="20"></a>
+          </div>
+          <div class="d-flex mb-1 mr-1">
+            <a class="d-inline-block" href="/sponsor-two"><img alt="@sponsor-two" class="avatar avatar-user"
+              src="https://avatars.githubusercontent.com/u/222?s=70&amp;v=4" width="20" height="20"></a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
   <main class="Layout-main">
     <turbo-frame id="user-profile-frame">
       <div>

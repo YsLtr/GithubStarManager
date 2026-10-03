@@ -11,13 +11,24 @@
     display: none !important;
   }
 
+  /* ===== 过渡规则**刻意保持不带** `gsm-stars-layout` 标记（4.13.0 审查修正）=====
+     本表存在的唯一理由（见文件头）就是「离开 Stars 时尺寸回弹必须仍有过渡」，而 `exitStarsView` 的顺序是
+     `removeLayoutStyles()` —— 撤掉尺寸规则（180 → 原生）**并且**摘掉标记，全在**同一个同步任务**里。
+     若这几条 transition 也认标记，after-change style 里就没有 transition 声明 ⇒ 回弹不启动、尺寸**瞬跳**
+     （夹具 A/B，可观测量 = 「声明了 transition 且实际匹配该元素的规则数」：认标记时退出后为 **0**、
+     不认标记时为 1；侧栏实测 180 → 1584 一帧完成）。
+     过渡声明不改变任何计算值（只在该布局尺寸变化时才可见）⇒ 落在别的布局上无副作用。
+     分工也因此很清楚：**尺寸规则认标记**（那是「不改写页头布局」的关键），**过渡规则不认**（那是「退出时回弹」的关键）。
+     选择器与 4.13.0 之前**逐字相同**（`.Layout--sidebarPosition-start` 这一层把作用面收在 profile 骨架上；
+     真机实测两代 `?tab=stars` 骨架承载 stars 内容的布局都带这个类）。 */
   .Layout.Layout--sidebarPosition-start {
     transition: grid-template-columns 0.35s ease;
   }
   .Layout-sidebar {
     transition: width 0.35s ease, min-width 0.35s ease;
   }
-  .Layout-sidebar .avatar-user,
+  /* 只给页主自己的头像加过渡（裸 `.avatar-user` 会把 Sponsors 区块的小头像也算进来，见 base.css 的说明） */
+  .Layout-sidebar .avatar-user.width-full,
   .Layout-sidebar a[href*="avatars"] img,
   .Layout-sidebar a[href*="avatars"] {
     transition: width 0.35s ease, height 0.35s ease;

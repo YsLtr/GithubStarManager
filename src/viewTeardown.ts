@@ -15,34 +15,22 @@
 // `data-gsm-hidden` 标记；禁止启发式猜测「这个 inline display 大概是我们设的」——
 // 原生节点上的裸 display 无法与 GitHub 自己的样式区分，猜错就是直接改坏别人的页面。
 
-import { clearListsHiddenMarks } from './dom';
+import { clearListsHiddenMarks, restoreTopicsFromRightSidebar } from './dom';
 import { revealBootHide, revealTurboHide } from './boot';
 import { disposeNotificationStack } from './ui/notifications';
-import { GSM_HIDDEN_ATTR, GSM_TOPICS_SRC_ATTR } from './constants';
+import { GSM_HIDDEN_ATTR } from './constants';
 import { unmountSyncButton } from './fullSync';
 import { disposeSearchInterception } from './search';
 import { isDesktop } from './utils';
+import { exitOtherStarsView } from './otherStarsView';
 
 export function teardownStarsView(reason: string): void {
   // 留痕（与链上其它转换一致）：网格消失后能一眼看出是谁撤的、为什么撤
   console.log(`[github-star-manager] teardown（回滚到原生视图）：${reason}`);
-  // 1) 被搬走的原生内容先还回去：`.col-lg-3`（Starred topics）的整棵子树仍在右栏容器里。
-  //    **只还回打了 `GSM_TOPICS_SRC_ATTR` 标记的那个节点**（transform.ts 搬运时打的）。
-  //    不能只判 `isConnected`：Turbo 原位重渲染 `#user-starred-repos` 会换出一个**新的** `.col-lg-3`
-  //    （内含 GitHub 自己渲染好的 topics），把右栏里的陈旧内容倒进去就是重复的 topics。
-  //    无标记 = 不是我们搬过的那一个 ⇒ 直接丢弃右栏内容，什么都不动。
-  const rightSidebar = document.querySelector<HTMLElement>('.stars-right-sidebar');
-  if (rightSidebar) {
-    const colLg3 = document.querySelector<HTMLElement>(
-      `#user-starred-repos .col-lg-3[${GSM_TOPICS_SRC_ATTR}]`,
-    );
-    if (colLg3 && colLg3.isConnected) {
-      while (rightSidebar.firstChild) colLg3.appendChild(rightSidebar.firstChild);
-      colLg3.removeAttribute(GSM_TOPICS_SRC_ATTR);
-    }
-    // 无标记的 `.col-lg-3` 是 Turbo 换进来的新节点：宁可不还原，也不能把陈旧内容塞进别人的原生列。
-    rightSidebar.remove();
-  }
+  // 1) 被搬走的原生内容先还回去：`.col-lg-3`（Starred topics）的整棵子树仍在右栏容器里，
+  //    归还规则（只认 GSM_TOPICS_SRC_ATTR 标记、无标记宁可不还原）见 dom.ts 的
+  //    restoreTopicsFromRightSidebar —— 与他人页视图共用同一份，避免两处漂移。
+  restoreTopicsFromRightSidebar();
 
   // 2) 脚本自造节点。
   //    `unmountSyncButton()` 必须在这里显式调用：同步状态的订阅挂在模块上，
@@ -98,4 +86,10 @@ export function teardownStarsView(reason: string): void {
   // 10) 原生搜索框上的 submit/keydown 监听（search.ts）：必须解绑，否则收窄后脚本仍然
   //     preventDefault 掉原生搜索，而本地搜索已被视口门挡住 ⇒ 按回车「什么都不发生」。
   disposeSearchInterception();
+
+  // 11) 他人页只读网格（4.13.0）：投影来源（内存）+ 网格容器 + 只读样式表 + 归还 topics/布局表。
+  //     原生**条目**的 display 由第 5 项按 GSM_HIDDEN_ATTR 统一还原（我们只藏了条目，
+  //     原生分页器/筛选栏/Lists 从未被改动 ⇒ 没有它们的还原代码）。
+  //     **必须**复位 viewContext：否则回到自己的页会拿着上一次的投影渲染（串数据）。
+  exitOtherStarsView();
 }
