@@ -656,7 +656,7 @@ html.gsm-turbo-entry .stars-grid-container {
   animation: gsm-grid-in 0.3s ease both;
 }
 
-/* 4.0.0 配置横幅（无全量缓存时挂在列表上方：常驻填 token 框 + 快速获取 + 立即同步） */
+/* 4.0.0 配置横幅（无全量缓存时挂在列表上方：常驻填 token 框 + 快速获取 + 保存并同步） */
 .gsm-setup-banner {
   display: flex;
   align-items: center;

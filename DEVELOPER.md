@@ -314,6 +314,7 @@ Token 归属校验的身份缓存（4.11.0）：`{ [凭证指纹]: { id, login }
 - **窄视口惰性**：`evaluateAccountMatch()` 首行判视口 → `unknown`（不建节点、不发请求）。
 - **UI**：`div.gsm-account-banner` 落位**复用** `placeSetupBanner`（注册式回调 `setAccountBannerPlacer`，避免 index↔ui 成环），
   但**不复用** `.gsm-setup-banner` 类名 —— 后者有 4 条撤除路径，复用会让警告在「保存了新 token」「同步成功」时被静默删掉。
+  控件只有**两个**（`打开 Token 配置` / `关闭`；4.11.1 按用户裁定移除了原来的 classic 创建页深链按钮 —— 配置面板里本就有同款深链，还多给 fine-grained 深链与粘贴行）。
   文案沿用 ADR 0006「不向用户披露通道」，只讲后果与两条出路，并**按写通道分叉**（classic / fine-grained 落点不同）。
   注意 classic 分支**不得**断言「一定记到 token 主人」：REST 被 403（非限速）拒绝且存在登录会话时
   `setStarState` 会回落网页端点，那一次写落到登录者名下（`src/starWrites.ts:299`，实测见 `.diag/assert-account-fallback.js`）。
@@ -412,7 +413,7 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 
 **条件请求**：所有 fetch 带 `cache: 'no-store'`（GitHub API 回 `Cache-Control: public, max-age=60`，浏览器缓存会直接回 200 或把本地 304 合并成 200 返回 JS，导致误判「有变化」）。`normEtag()` 剥 `W/` 前缀统一规范形（弱比较等价，实测 304）。正确带 Authorization 的 304 不计主限流。
 
-**触发入口**（五处，都只是「触发」）：TM 菜单「🔄 立即全量同步」、横幅「立即同步」、标题行 Sync 按钮、Token 保存后的自动同步、进页
+**触发入口**（四处，都只是「触发」）：TM 菜单「🔄 立即全量同步」、标题行 Sync 按钮、Token 保存后的自动同步、进页
 `scheduleProbeSync()`（冷却 60s + 有 PAT → `runFullSync('auto')`）。
 **4.10.0 起反馈不再各写一套**：`runFullSync` 只推进 `fullSync.ts` 内的同步状态并广播（`SyncState` +
 `subscribeSyncState`），头部 Sync 按钮是该状态的**唯一视图** —— 任何入口触发的同步都让按钮内的 octicon

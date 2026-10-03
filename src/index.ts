@@ -227,7 +227,7 @@ function transformAndReveal(animate: boolean, retries = 12): void {
 
 /**
  * 4.0.0 配置横幅：无全量缓存（首次升级 / 未配 token）时显示在列表上方。
- * 内联填 token 框常驻（401/403 自动出现）+ 快速获取 + 立即同步按钮（4.0.4 恢复；原「手动设置」
+ * 内联填 token 框常驻（401/403 自动出现）+ 快速获取 + 保存并同步（4.0.4 恢复；原「手动设置」
  * prompt 按钮按用户更正移除）；保存成功自动全量同步 → hasApiData 变 true → 重新出网格。
  */
 function showSetupBanner(issueDetail?: string): void {
@@ -253,7 +253,6 @@ function showSetupBanner(issueDetail?: string): void {
   bar.className = 'gsm-setup-banner';
   bar.innerHTML = '<span class=gsm-setup-msg></span>';
   bar.querySelector('.gsm-setup-msg')!.textContent = bannerMessage(issueDetail);
-  const sync = document.createElement('button');
 
   // 两个快捷入口（4.9.0 用户裁定：两者都给，并说明区别）：
   // classic = 读写都行；fine-grained = 读行、写别人的公开仓库会被 GitHub 拒。
@@ -312,16 +311,8 @@ function showSetupBanner(issueDetail?: string): void {
     notifyTokenSaved();
   });
   tokRow.append(tokInput, tokMsg, tokPaste, tokSave);
-  sync.className = 'btn';
-  sync.type = 'button';
-  sync.textContent = '立即同步';
-  sync.title = '用当前 Token 立即比对 GitHub（逐页 ETag 快筛，无变化零流量）';
-  sync.addEventListener('click', () => {
-    void runFullSync('button');
-  });
 
-
-  bar.append(quickClassic, quickFine, kindHelp, sync, tokRow);
+  bar.append(quickClassic, quickFine, kindHelp, tokRow);
   placeSetupBanner(bar, host);
 }
 

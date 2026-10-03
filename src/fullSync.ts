@@ -20,8 +20,8 @@
 // 完整性红线：分页中断 / 解析失败 / 超页数上限一律整体放弃（catch 里不改任何数据）——
 // 半张表绝不能当整表用，否则未拉到的页会被全部误判成外部 unstar。
 //
-// 触发：TM 菜单「🔄 立即全量同步」/ 配置横幅「立即同步」/ 标题行 Sync（手动，无 token 先弹配置）+ 进页自动（2s 后，60s 冷却，逐页 ETag 快筛）。
-// 「立即同步」各入口；runFullSync 单遍扫描（4.0.8 合并原 quickCheck+pullAllStarred）：逐页 If-None-Match 一把梭，
+// 触发：TM 菜单「🔄 立即全量同步」/ 标题行 Sync（手动，无 token 先弹配置）+ 进页自动（2s 后，60s 冷却，逐页 ETag 快筛）。
+// runFullSync 单遍扫描（4.0.8 合并原 quickCheck+pullAllStarred）：逐页 If-None-Match 一把梭，
 // 全 304 免额度早退；200 页收正文、304 页用本地切片（缓存 starred_at 降序复算）组装，无基线/超 TTL/阀门失守回落无条件整表。
 // 新增/恢复/确认各自走既有管线（写次数 = 差异数）。
 //
@@ -75,8 +75,8 @@ let lastProbeAt = 0;
  * 同步状态（4.10.0）：**模块内单一真相**，头部 Sync 按钮是它唯一的视图。
  *
  * 为什么要有这一层：4.10.0 之前，只有一个入口（标题行按钮）会给自己加
- * `.gsm-pager-loading`，其余四个入口（TM 菜单 / 配置横幅「立即同步」/ Token 保存后
- * 的自动同步 / 进页自动探测）触发时页面上没有任何反馈 —— 用户看到的就是
+ * `.gsm-pager-loading`，其余三个入口（TM 菜单 / Token 保存后的自动同步 / 进页自动
+ * 探测）触发时页面上没有任何反馈 —— 用户看到的就是
  * 「点了没反应，但它其实在跑」。现在改成：`runFullSync` 只负责推进状态并广播，
  * 任何入口触发的同步都会让同一个按钮把它显示出来；旧代码里那套
  * 「整按钮文字变透明 + 伪元素转圈」的写入方式随之删除（4.10.0）。
@@ -815,7 +815,7 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
   }
 }
 
-/** TM 菜单手动同步入口（与横幅「立即同步」、标题行 Sync 按钮等价：都只是触发 runFullSync，
+/** TM 菜单手动同步入口（与标题行 Sync 按钮等价：都只是触发 runFullSync，
  *  反馈统一由头部按钮这一个视图呈现 —— 「入口多处、状态一处、视图一处」） */
 export function registerSyncMenu(): void {
   gmRegisterMenuCommand('🔄 立即全量同步（GitHub API）', () => {

@@ -8,43 +8,46 @@
 
 ## 当前状态
 
-版本 **4.11.0**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
+版本 **4.11.1**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
 
-> 交接时间：**2026-10-02 22:29 +0800**（本机时钟）。**本轮工作已随本次 handoff 一起提交**（见 `git log` 最新一条）。
+> 交接时间：**2026-10-03 09:40 +0800**（本机时钟）。**本轮工作已随本次 handoff 一起提交**（见 `git log` 最新一条）。
 
-**4.11.0（本次交接的版本）**：补上「Token 归属校验」+ 不符时的常驻可关闭警告横幅。规划与验收标准见
-`docs/plans/archive/2026/2026-10-02-补上-token-归属校验环节-比对脚本-token-身份与浏览器当前登录账号-不符时在现有配置.md`
-（已归档；联网查证证据 `.pi/tmp/research-token-identity.md`，决策口径见 **`docs/adr/0007`** 与 **D25**；
-发布前经过**两轮**独立审查，共修 3 P1 + 4 P2）：
+**4.11.1（本次交接的版本）**：按用户裁定删掉两处**多余且无作用**的按钮。净效果 = 「配置横幅只引导配置，归属横幅只引导去配置」。
 
-1. **补上缺失的一环**：4.10.0 及之前全库**没有任何一处**比对「脚本 token 属于哪个账号」与「浏览器当前登录哪个账号」
-   （`getStarsUserId()` 只用于存储键隔离与导入包归属校验；`hasWebSession()` 只判**有没有**会话、从不读 meta 的值；
-   token 侧身份根本不存在——全库无 `GET /user`）。由此存在真实错号路径：**fine-grained token 属 A + 浏览器登录 B**
-   ⇒ 网格数据来自 A、点星操作记到 B，且**方向相反**（显示已 star → 发的是 unstar）。
-2. **判定口径（D25）**：两侧各取**数字 ID**（页面 **`octolytics-actor-id`（登录者）** vs `GET /user` 的 `id`；`login` 只用于文案，
-   因为官方明文 login 可改名、id 持久）；**只在「有 token + 有登录会话 + 两侧 id 都取到」时判定**；
-   取不到任一侧 = `unknown`，**不冒充相符也不误报不符**（`GET /user` 401 走既有 `notifyTokenIssue`，不算归属不符）；
-   **不阻断写路径**（网页端点通道是 fine-grained 用户唯一的写能力，且用户可能刻意双账号）。
-3. **新增两个模块**：`src/accountGuard.ts`（判定 + 凭证指纹缓存，FNV-1a 内联哈希，**不存 token 明文**、不用 `crypto.subtle`）+ 
-   `src/ui/accountBanner.ts`（`div.gsm-account-banner`，`role="alert"`，复用 `placeSetupBanner` 落位但**不复用**
-   `.gsm-setup-banner` 类名——那个类名有 4 条撤除路径，复用会被静默删掉且再无重建时机）。
-4. **关闭态**：`stars_account_banner_dismissed` = `<tokenId>#<sessionId>`，同一对账号不再打扰，**组合一变立刻重新武装**。
-5. **求值点四处**（都 fire-and-forget，不进 `runFullSync` 关键路径、不影响 `SyncState`）：Token 保存成功后、
-   桌面转换成功出口、`runFullSync` 的 `finally`（**不覆盖**无 token 早退）、token-issue handler（**清空 Token 的唯一路径**）。
-   指纹缓存命中后**稳态零请求**（首次仅 +1 次 primary 请求）。异步返回后**必须复判世代 + 视口**（否则慢网下
-   一次 `GET /user` 就能在窄视口建出完整样式的横幅）。
-6. **两轮独立审查修掉的真问题**（都是「看起来对、真实路径上不成立」类）：
-   ① 异步返回缺世代/视口复判 ⇒ 窄视口残留横幅；② classic 场景文案断言了不成立的后果（写通道按次决定，
-   REST 403 时会回落网页端点 ⇒ 那一次落到登录者）；③ **取错身份字段** —— `octolytics-dimension-user_id` 是**页面主人**，
-   用它会让每个他人 stars 页都假阳性（实测 `/mattn?tab=stars`：dimension=10111/mattn，actor=130123551/YsLtr）；
-   ④ 清空 Token 后过期警告不撤（三个常规求值点都覆盖不到）；⑤ 关闭后换回旧组合残留另一对的横幅。
-   逐条口径与实测见 **`docs/adr/0007`** 与本文「下一步」第 9 条。
-7. **窄视口完全惰性**：求值首行判视口直接返回 unknown，不建节点不发请求（横幅样式在 `@media` 之外，靠 JS 门守，同 D18）。
-8. **文案口径**：沿用 ADR 0006「不向用户披露通道」——只讲后果（数据取自谁 / 操作记到谁 / 两边不一致）与两条出路
-   （换匹配的 Token / 改用 token 所属账号登录），不出现「网页端点 / 浏览器登录会话 / GitHub-Verified-Fetch / REST」。
+1. **配置横幅的「立即同步」按钮**（`src/index.ts` 的 `showSetupBanner`）：它**永远无效** —— 横幅只在「无缓存」或
+   「Token 失效 / 被清空」时出现，点它 → `runFullSync('button')` → 无 token 分支 `notifyTokenIssue(...)` →
+   `showSetupBanner(detail)` 的 `exist` 分支把**同一条「请配置 Token」文案**原地重写一遍（用户看到的「点了没反应」）；
+   而**有 token** 时横幅本就随保存 / 同步成功被撤除，按钮没有可点的时机。手动同步仍有**两个**等价入口
+   （TM 菜单「🔄 立即全量同步」+ 标题行 Sync 按钮），见 **D8**。
+2. **归属警告横幅的「获取匹配的 Token（classic）」按钮**（`src/ui/accountBanner.ts`）：它等价于
+   `openClassicTokenCreator()` + `openTokenConfig()` 两步，而配置面板里**本就有**同款 classic 深链
+   （`快速获取 Token（classic，推荐）`），且**多给** fine-grained 深链与粘贴行 ⇒ 一步「打开 Token 配置」已覆盖全部出路。
+   横幅控件从三个降为**两个**：`[msg, 打开 Token 配置, 关闭]`。见 **D25** 与 `docs/adr/0007`。
+3. `openClassicTokenCreator` 在 `ui/accountBanner.ts` 的 import 随之删除（该函数现存消费者只剩 `index.ts` 的横幅内联
+   保存路径与 `starCheck.ts` 的失效处理）。
+4. **文档同步**：本文件（D8 / D25 / 4.11.0 断言表 A1 子节点顺序）、`DEVELOPER.md`（同步触发入口「五处」→「四处」）、
+   `docs/adr/0007` 的 UI 口径、`todo`（归属校验勾选完成）。
+5. **验证**（`pnpm check` 绿、`verify-css` EXIT 0、`test:exportimport` 51/0；dist 内 `立即同步` 与 `获取匹配的 Token`
+   各 **0** 命中）：用 `.diag/gen-account-harness.cjs` 重建仿真页后断言 ——
+   `err401` 场景横幅子节点 = `[msg, classic 深链, fine-grained 深链, token-help, token-row]`（无「立即同步」）；
+   `nocache` 场景走「归属横幅 → 打开 Token 配置 → 填 token → 保存并同步」全链路（保存后横幅撤、GM 写入生效、
+   Sync 按钮进 running / failed 态、0 error）；`mismatch` 场景横幅 `role=alert`、子节点
+   `[SPAN.gsm-account-msg, BUTTON.btn, BUTTON.btn.gsm-account-dismiss]`、文案仍含两侧登录名且通道词零命中、
+   点「打开 Token 配置」能出面板。**不回归**：横幅在场点星仍发 1 次写请求且 `/user` 增量 0（不阻断写路径）、
+   关闭态键 `42#999` + 组合变化后重新武装、窄视口收窄 → banner / `gsm-*` 节点 / grid 全 0、拖回 → 横幅重现且
+   `data-gsm-account-pair` 正确、`__errors` 全空。截图 `.diag/account-banner-after.png`。
+6. **唯一未做真机验证的**：删按钮后横幅的真实观感（按钮移走后 `msg` 的 `flex:320px` 与右侧两按钮的相对位置）——
+   仿真页几何与文案已对齐，真机只差肉眼确认。
 
-> **交接第一件事**：`@version` 已变 ⇒ **用 dev 脚本的人必须重装 dev loader**（重开安装页原地更新），
+> **交接第一件事**：`@version` 已变（4.11.0 → 4.11.1）⇒ **用 dev 脚本的人必须重装 dev loader**（重开安装页原地更新），
 > 否则 TM 菜单整体消失。正式版不受影响。机制见下「dev 模式必须知道的四件事」第 4 条。
+
+**4.11.0 提要**（仍生效的口径已全部归入 **D25** 与 `docs/adr/0007`，此处只留一句）：补上「Token 归属校验」+ 不符时的常驻
+可关闭警告横幅 —— 两侧各取**数字 ID** 比对（页面 `octolytics-actor-id`（**登录者**）vs `GET /user` 的 `id`；**不取**
+`octolytics-dimension-user_id`，那是页面主人，会让每个他人的 stars 页假阳性）、**只告警不阻断**、取不到任一侧即
+`unknown`（不冒充相符也不误报）、指纹缓存命中后稳态零请求。规划与验收标准见归档方案
+`docs/plans/archive/2026/2026-10-02-补上-token-归属校验环节-比对脚本-token-身份与浏览器当前登录账号-不符时在现有配置.md`
+（联网查证证据 `.pi/tmp/research-token-identity.md`；两轮独立审查共修 3 P1 + 4 P2，逐条口径与仿真断言表见本文「下一步」第 9 条）。
 
 **4.10.0 提要**（仍生效的口径已全部归入 D22–D24，此处只留一句）：分页按钮可跳页（原位输入 + window-capture 委托）+
 所有同步入口驱动头部 Sync 按钮（`SyncState` 单一真相、`mountSyncButton` 是唯一视图）+ 删旧的整按钮刷新态 +
@@ -141,7 +144,7 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
 
 **D8 · 同步入口与界面表述**
 
-- 手动同步 = **三个等价入口**：TM 菜单「🔄 立即全量同步」、横幅「立即同步」、标题行 Sync 按钮；一律经条件快筛后才决定是否整表。
+- 手动同步 = **两个等价入口**：TM 菜单「🔄 立即全量同步」、标题行 Sync 按钮；一律经条件快筛后才决定是否整表。（4.11.1 移除了配置横幅里那个「立即同步」按钮：无 token 时它只会把同一条要求配置的提示重写一遍，有 token 时横幅本就随同步成功撤除。）
 - 界面与 TM 菜单**不出现** P2.5 / P4 / 核对 等开发阶段表述（仅控制台日志与代码注释保留）。
 - GitHub **没有**创建个人 PAT 的 API，快捷获取永久只能靠预填 URL 深链。预填参数表（fine-grained 的
   Pre-filling … using URL parameters）见上面的个人访问令牌文档；classic 的 `?scopes=` 预填官方**未文档化**。
@@ -360,11 +363,13 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
 - **`GET /user` 401 不算归属不符**：走既有 `notifyTokenIssue` → 配置横幅。**不阻断写路径**：网页端点通道是 fine-grained 用户
   唯一的写能力，且用户可能**刻意**双账号（个人号读、工作号写）；处置交给用户。**不做写前校验**（会污染写路径失败语义）、
   **不做周期轮询**（纯耗额度）。
-- **UI = `div.gsm-account-banner`**（`role="alert"`，三个控件：classic 深链 / 打开既有配置面板 / 关闭），落位**复用**
+- **UI = `div.gsm-account-banner`**（`role="alert"`，**两个**控件：打开既有配置面板 / 关闭），落位**复用**
   `placeSetupBanner`，但**不复用 `.gsm-setup-banner` 类名** —— 那个类名有 4 条撤除路径（内联保存、保存回调、同步成功后、
   `viewTeardown` 第 3 项），复用会让警告在「保存了新 token」「同步成功」时被静默删掉且再无重建时机。已登记进
   `viewTeardown` 第 3 项选择器串；关闭键 `stars_account_banner_dismissed`（= `<tokenId>#<sessionId>`，组合一变重新武装）
   属**页面级偏好**，不随视口回滚。
+  **横幅上不放开深链按钮**（用户裁定）：classic 深链在配置面板里已有同款入口（`快速获取 Token（classic，推荐）`），
+  且面板同时给出 fine-grained 深链与粘贴行 —— 「打开 Token 配置」一步就能拿到全部出路，横幅不再放只开一条深链的按钮。
 - **求值点三处**：Token 保存成功后（`index.ts` 的 `setTokenSavedHandler`）、桌面转换成功出口（紧随 `scheduleProbeSync`）、
   `runFullSync` 的 `finally`（同步链唯一全覆盖点）。全部 fire-and-forget，**不得**进入同步关键路径或影响 `SyncState`（D23）。
 - **窄视口惰性**：求值首行判视口 → `unknown`（不建节点、不发请求）。横幅样式在 `@media` 之外，靠 JS 门守（同 D18）；
@@ -499,7 +504,7 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
 
 ## 下一步
 
-1. **@version 已升到 4.11.0 → 若你在用 dev 脚本，必须重装 dev loader**：重开
+1. **@version 已升到 4.11.1 → 若你在用 dev 脚本，必须重装 dev loader**：重开
    <http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js> 让 TM 原地更新，否则 TM 菜单会整体消失
    （机制见「dev 模式必须知道的四件事」第 4 条：`@version` 变了 → 脚本头变了 → mountGmApi 的 key 对不上）。
    正式版不受影响；`@version` 变了却没重装，表现是「TM 菜单空了」+「同步说未配置 token」。
@@ -599,7 +604,7 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
 
    | 断言 | 实测结果 |
    |---|---|
-   | A1 不符即弹 | `div.gsm-account-banner` 出现、`role="alert"`、子节点顺序 = `[msg, btn-primary, btn, btn gsm-account-dismiss]`、文案同时含两侧登录名 |
+   | A1 不符即弹 | `div.gsm-account-banner` 出现、`role="alert"`、子节点顺序 = `[msg, btn, btn gsm-account-dismiss]`（4.11.0 时首项曾是 classic 深链按钮，现已按用户裁定移除）、文案同时含两侧登录名 |
    | A1 落位 | 父链 `DIV < TURBO-FRAME#user-profile-frame < MAIN.Layout-main < DIV.Layout` —— 与 `err401` 组里 `.gsm-setup-banner` 的父链**完全一致**（同一 `placeSetupBanner` 分流） |
    | A2 相符不弹 | 冷启动 0 节点 + **0 次 `/user` 请求**；运行中从「不符」改成「相符」后**主动撤掉**已显示的横幅（不留过期警告） |
    | A3 关闭与重新武装 | 点「关闭」→ 节点消失、`stars_account_banner_dismissed = '42#999'`；同组合再求值**不再弹**；把会话 id 改成 777 ⇒ **重新弹出** |

@@ -16,7 +16,6 @@ import { STORAGE_KEYS } from '../constants';
 import { gmGet, gmSet } from '../gm';
 import { accountPairKey, evaluateAccountMatch, type AccountVerdict } from '../accountGuard';
 import { currentGeneration } from '../lifecycle';
-import { openClassicTokenCreator } from '../tokenConfig';
 import { isDesktop } from '../utils';
 /** 落位回调：由 index.ts 用 placeSetupBanner 实现；返回 false = 找不到宿主（不留下游离节点） */
 type BannerPlacer = (bar: HTMLElement) => boolean;
@@ -126,15 +125,9 @@ function showAccountBanner(verdict: AccountVerdict): void {
   msg.className = 'gsm-account-msg';
   msg.textContent = bannerMessage(verdict); // textContent：登录名来自 API/DOM，绝不拼 innerHTML
 
-  const getToken = document.createElement('button');
-  getToken.className = 'btn btn-primary';
-  getToken.type = 'button';
-  getToken.textContent = '获取匹配的 Token（classic）';
-  getToken.addEventListener('click', () => {
-    openClassicTokenCreator();
-    openTokenConfig?.(); // 顺带把粘贴行露出来，省一次点击
-  });
-
+  // 只留「打开 Token 配置 / 关闭」两个控件（用户裁定：原「获取匹配的 Token（classic）」按钮多余）——
+  // 那条 classic 深链在配置面板里已有同款入口（`快速获取 Token（classic，推荐）`），且面板同时给出
+  // fine-grained 深链与粘贴行：走 `openConfig` 一步就能拿到全部出路，不需要横幅再放一个只能开一条深链的按钮。
   const openConfig = document.createElement('button');
   openConfig.className = 'btn';
   openConfig.type = 'button';
@@ -154,7 +147,7 @@ function showAccountBanner(verdict: AccountVerdict): void {
   });
 
   // DOM 顺序铁律（D11）：动作按钮按 append 顺序落位，不要先 appendChild 再统一 append
-  bar.append(msg, getToken, openConfig, dismiss);
+  bar.append(msg, openConfig, dismiss);
 
   if (!placer(bar)) bar.remove();
 }

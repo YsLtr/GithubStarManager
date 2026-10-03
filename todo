@@ -39,7 +39,7 @@
 -[x] sync 实时表格渲染
 -[x] 简化GM权限列表（在改为api调用后）
 -[x] 同步操作与同步按钮完全联动
--[] 当前登录账号与脚本token的相符性检测
+-[x] 当前登录账号与脚本token的相符性检测
 
 -[] 全部功能完成后进行重构
 -[x] REST 变异请求限流实测（L0+L1 已执行，**判定 D1**：`used` 每请求 +1，5 点表不作用于 primary；L2 按协议有意不跑，理由见 `docs/research-ratelimit-measurement.md` §5）

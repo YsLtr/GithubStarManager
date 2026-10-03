@@ -34,7 +34,7 @@
   - 无 token ⇒ 本期不判定（见「已知局限」第 2 条）。
 - **取不到身份 = 不判定（`unknown`），既不冒充「相符」也不误报「不符」**。`GET /user` 返回 401 时**不**走归属告警，而是走既有的 token 失效上报链（`notifyTokenIssue` → 配置横幅）—— 失效与归属不符是两件事。
 - **不阻断写路径**。检测到不符时只显示警告横幅，卡片星按钮与批量恢复照常工作。理由：网页端点通道是 fine-grained 用户获得写能力的唯一现实手段（ADR 0006），且用户可能是**刻意**让 token 与浏览器登录分属两个账号（如个人号读、工作号写）。是否处置交给用户。
-- **警告 UI**：`div.gsm-account-banner`，与配置横幅**同一落位规则**（复用 `placeSetupBanner` 的 Lists 槽位 / 网格列顶分流），**但不复用 `.gsm-setup-banner` 类名** —— 那个类名出现在 4 条撤除路径上（横幅内联保存后、Token 保存回调、同步成功后、`viewTeardown` 第 3 项），而复用会让归属警告在「保存了新 token」「同步成功」时被静默删掉且再无重建时机。横幅 `role="alert"`，只给三个控件：classic 创建页深链、打开既有 Token 配置面板、关闭。
+- **警告 UI**：`div.gsm-account-banner`，与配置横幅**同一落位规则**（复用 `placeSetupBanner` 的 Lists 槽位 / 网格列顶分流），**但不复用 `.gsm-setup-banner` 类名** —— 那个类名出现在 4 条撤除路径上（横幅内联保存后、Token 保存回调、同步成功后、`viewTeardown` 第 3 项），而复用会让归属警告在「保存了新 token」「同步成功」时被静默删掉且再无重建时机。横幅 `role="alert"`，只给两个控件：打开既有 Token 配置面板、关闭（原设计的 classic 创建页深链按钮经用户裁定移除：配置面板里本就有同款深链，且同时给出 fine-grained 深链与粘贴行）。
 - **关闭态持久化** = `stars_account_banner_dismissed` = `<tokenId>#<sessionId>`：同一对账号不再打扰（重开页面也不弹），**组合一变立刻重新武装**。该键属页面级偏好，不随视口回滚。
 - **求值点只有三处**，且都 fire-and-forget、不得进入 `runFullSync` 的关键路径或影响 `SyncState`：Token 保存成功后、桌面转换成功出口、`runFullSync` 的 `finally`（同步链上唯一全覆盖点）。
 - **窄视口完全惰性**：求值首行判视口，窄视口直接返回 `unknown`（不建节点、不发请求）。横幅样式位于 `base.css` 的媒体查询之外，靠 JS 门守（同 D18）。跨断点变宽时由既有 `transformAndReveal(false)` 重新求值。
