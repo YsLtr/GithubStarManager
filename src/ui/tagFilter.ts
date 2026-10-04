@@ -4,6 +4,20 @@ import { filterState } from '../state';
 import { applyFilters, computeTagCandidates, hasAnyTags } from '../filters';
 import { getTags, saveTags } from '../storage/tags';
 
+/** 勾选/取消一个标签筛选条件并重绘。**唯一实现** —— 筛选栏 chip 与卡片标签都走这里 */
+function toggleTagFilter(tag: string): void {
+  const idx = filterState.tags.indexOf(tag);
+  if (idx >= 0) {
+    filterState.tags.splice(idx, 1);
+  } else {
+    filterState.tags.push(tag);
+  }
+  // applyFilters → refreshTagFilterBar 统一原位重绘（候选收窄 + 空态 + 按钮文案）；
+  // pill 选中态同步。**不要**在调用点各写一份。
+  applyFilters();
+  refreshTagPillStates();
+}
+
 /** 同步 Tags 筛选按钮的文案与高亮态 */
 function updateTagFilterButton(): void {
   const btn = document.querySelector('.stars-tag-filter .Button');
@@ -122,16 +136,7 @@ function renderTagFilterList(menuList: HTMLUListElement): void {
     chip.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const idx = filterState.tags.indexOf(tag);
-      if (idx >= 0) {
-        filterState.tags.splice(idx, 1);
-      } else {
-        filterState.tags.push(tag);
-      }
-      // applyFilters → refreshTagFilterBar 统一原位重绘（候选收窄 + 空态 + 按钮文案），
-      // popover 保持打开（R3 验收点）；此处不再手动重绘，防双重替换
-      applyFilters();
-      refreshTagPillStates();
+      toggleTagFilter(tag);
     });
 
     li.appendChild(chip);
@@ -217,14 +222,7 @@ export function renderTags(tagsContainer: HTMLElement, opts: TagRenderOptions = 
     if (filterToggle) {
       span.addEventListener('click', (e) => {
         e.stopPropagation();
-        const fidx = filterState.tags.indexOf(tag);
-        if (fidx >= 0) {
-          filterState.tags.splice(fidx, 1);
-        } else {
-          filterState.tags.push(tag);
-        }
-        applyFilters();
-        refreshTagPillStates();
+        toggleTagFilter(tag);
       });
     }
 

@@ -15,7 +15,7 @@
 //   "User permissions for Starring" 列出全部 5 个 /user/starred* 端点）。
 //
 import { applyFilters } from './filters';
-import { STAR_EMPTY_SVG, STAR_FILL_SVG, STORAGE_KEYS } from './constants';
+import { STORAGE_KEYS } from './constants';
 import { gmRegisterMenuCommand, gmSet } from './gm';
 import { filterState } from './state';
 import { getNote, saveNote } from './storage/notes';
@@ -24,6 +24,7 @@ import { loadRepoCache, saveRepoCache } from './storage/repoCache';
 import { getTags, saveTags } from './storage/tags';
 import { loadViewerCacheForView } from './cardState';
 import { renderCardTagAndNoteAreas } from './cardAreas';
+import { setStarButtonVisual } from './ui/cards';
 import { isReadOnlyView } from './viewContext';
 import type { PendingDeleteMap, RepoCache } from './types';
 
@@ -145,16 +146,10 @@ export function syncCardAfterStarChange(repoId: string, isStarred: boolean): voi
   const card = document.querySelector<HTMLElement>(`.stars-grid-card[data-repo-id="${repoId}"]`);
   if (!card) return;
 
+  // 外观只由一处定义（`ui/cards.ts` 的 setStarButtonVisual）——不要在这里重画一遍，
+  // 「同一概念两处实现、判据漂移」正是 4.14.0 那个缺陷的成因（见 D29 / ADR 0009 追加 7）。
   const btn = card.querySelector<HTMLButtonElement>('.stars-star-btn');
-  if (btn) {
-    const currentlyStarred = btn.classList.contains('starred');
-    if (currentlyStarred !== isStarred) {
-      btn.classList.toggle('starred', isStarred);
-      btn.classList.toggle('unstarred', !isStarred);
-      btn.innerHTML = isStarred ? STAR_FILL_SVG : STAR_EMPTY_SVG;
-      btn.title = isStarred ? 'Unstar' : 'Star';
-    }
-  }
+  if (btn && btn.classList.contains('starred') !== isStarred) setStarButtonVisual(btn, isStarred);
 
   // 他人页：只重画这张卡片的标签/备注，**绝不**往下走到 applyFilters。
   if (isReadOnlyView()) {

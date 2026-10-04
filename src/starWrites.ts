@@ -23,6 +23,7 @@
 // - 失败**不自动重试**、不静默吞掉（ADR 0006「静默分派 ≠ 静默失败」）。
 
 import { isClassicCredential } from './tokenConfig';
+import { getUserLogin } from './pageScope';
 
 type StarWriteVia = 'rest' | 'web';
 
@@ -85,17 +86,19 @@ export function writeFailureMessage(reason: StarWriteFailure, status: number): s
 /* ---------------- 会话与专有名词 ---------------- */
 
 /**
- * 是否处于已登录 github.com 会话。**双重判据**（只看 meta 是否存在是错的——未登录时
- * 该 meta 可能以空串存在）：
- * `body.logged-in` 且 `meta[name="user-login"]` 的 content 非空串。
+ * 是否处于已登录 github.com 会话。**双重判据**：
+ * `body.logged-in` **且** `meta[name="user-login"]` 的 content 非空串
+ * （只看 meta 是否存在是错的——未登录时该 meta 可能以空串存在）。
+ *
+ * meta 那一腿走 `pageScope.getUserLogin()`（**不带** `octolytics-actor-login` 回退）：
+ * 「登录者是谁」全仓只有 `pageScope.ts` 一份实现（D27）；带回归属校验与展示用的回退会
+ * 放宽本判据 ⇒ 没真会话时也去试网页端点写。
  * `form[action$="/unstar"]` 不能当登录判据（它只说明该仓库已 star）。
  */
 export function hasWebSession(): boolean {
   const body = document.body;
   if (!body || !body.classList.contains('logged-in')) return false;
-  const meta = document.querySelector('meta[name="user-login"]');
-  const login = meta instanceof HTMLMetaElement ? meta.content.trim() : '';
-  return login !== '';
+  return getUserLogin() !== '';
 }
 
 /** 网页端点的 form action：**精确**匹配（`$="/star"` 会被 `/unstar` 命中，不能用后缀选择器） */

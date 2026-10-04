@@ -78,23 +78,23 @@ export function buildCardFromCache(repoId: string, data: RepoData): HTMLDivEleme
   return card;
 }
 
-/** 创建星星按钮（仅按钮本身，不含事件） */
-function createStarButtonElement(isStarred: boolean): HTMLButtonElement {
-  const btn = document.createElement('button');
-  btn.className = 'stars-star-btn' + (isStarred ? ' starred' : ' unstarred');
-  btn.type = 'button';
-  btn.title = isStarred ? 'Unstar' : 'Star';
-  btn.innerHTML = isStarred ? STAR_FILL_SVG : STAR_EMPTY_SVG;
-  return btn;
-}
-
-/** 只改按钮外观（不含任何存储/网络副作用）——乐观翻转与回滚都用它 */
-function setStarButtonVisual(btn: HTMLButtonElement, isStarred: boolean): void {
+/** 只改按钮外观（不含任何存储/网络副作用）——创建、乐观翻转、回滚、外部同步共用这一处 */
+export function setStarButtonVisual(btn: HTMLButtonElement, isStarred: boolean): void {
   btn.classList.toggle('starred', isStarred);
   btn.classList.toggle('unstarred', !isStarred);
   btn.innerHTML = isStarred ? STAR_FILL_SVG : STAR_EMPTY_SVG;
   btn.title = isStarred ? 'Unstar' : 'Star';
 }
+
+/** 创建星星按钮（仅按钮本身，不含事件） */
+function createStarButtonElement(isStarred: boolean): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.className = 'stars-star-btn';
+  btn.type = 'button';
+  setStarButtonVisual(btn, isStarred);
+  return btn;
+}
+
 
 
 

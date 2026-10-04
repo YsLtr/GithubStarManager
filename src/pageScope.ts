@@ -62,6 +62,17 @@ export function getViewerLogin(): string {
   return metaContent('user-login') || metaContent('octolytics-actor-login');
 }
 
+/**
+ * `user-login` meta 的原样值（trim 后），**不带回退**。登出 / 缺失返回 ''。
+ *
+ * 与 `getViewerLogin()` 的分工是刻意的：那个带 `octolytics-actor-login` 回退，只用于**展示**
+ * （横幅文案）；本函数是「会话是否可用」的判据，**不回退** —— 回退会放宽写路径的门
+ * （`starWrites.hasWebSession`），在没有真会话时也去试网页端点写。
+ */
+export function getUserLogin(): string {
+  return metaContent('user-login');
+}
+
 /** 页面主人数字 id（`octolytics-dimension-user_id`）。`/stars/{login}` 路由上不存在。 */
 function getPageOwnerId(): string {
   return metaContent('octolytics-dimension-user_id');

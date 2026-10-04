@@ -34,6 +34,11 @@ import type { FilteredRepo, RepoData, TypeFilter } from './types';
 /** facet 候选计算时可跳过的约束维度 */
 type QuerySkip = 'lang' | 'type';
 
+/** 当前搜索词的切分结果（小写、按空白拆词、丢空串）。**唯一实现** —— 查询与高亮共用 */
+function searchTerms(): string[] {
+  return filterState.searchQuery.toLowerCase().split(/\s+/).filter((t) => t.length > 0);
+}
+
 /**
  * 按 filterState.sort/direction 就地排序。
  * 规则（§4.3）：缺失值恒沉底、不随方向翻转；平局按仓库名决胜；全确定性。
@@ -101,7 +106,7 @@ function queryRepos(skip?: QuerySkip): FilteredRepo[] {
   const cache = loadRepoCache();
   const allTags = loadAllTags();
   const allNotes = loadAllNotes();
-  const terms = filterState.searchQuery.toLowerCase().split(/\s+/).filter((t) => t.length > 0);
+  const terms = searchTerms();
   const results: FilteredRepo[] = [];
 
   for (const repoId in cache) {
@@ -275,7 +280,7 @@ export function renderBrowsePage(page: number): number {
   filterState.page = Math.min(Math.max(1, page), totalPages);
   filterState.totalPages = totalPages;
   const start = (filterState.page - 1) * pageSize;
-  const terms = filterState.searchQuery.toLowerCase().split(/\s+/).filter((t) => t.length > 0);
+  const terms = searchTerms();
 
   // 底部本地分页器常驻：innerHTML 清空会把它一并删掉（4.4.0 审查 🟡-1：4.0.0 起底部
   // 分页器实际只活到首帧渲染就被清空）——先摘下、渲染完插回，顶部克隆在标题行不受影响
