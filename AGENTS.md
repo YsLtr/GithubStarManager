@@ -15,7 +15,7 @@
 > 实施计划（含 7 条可变决策的原始口径与验收标准）已归档：
 > `docs/plans/archive/2026/2026-10-03-他人-stars-页的卡片-本人未-star-的仓库卡片为只读-显示标签-备注但不可编辑-本人已.md`。
 
-**4.14.0（当前版本）：他人 stars 页的卡片改为「逐仓库」可编辑** —— 用户报「他人 star 页面的卡片会因为点了
+**4.15.0（当前版本）**：本轮为「按 ponytail 口径精简」批次，**零用户可见行为变化**（见 `docs/plans/2026-10-04-…精简.md`）。上一个功能版本 **4.14.0**：他人 stars 页的卡片改为「逐仓库」可编辑 —— 用户报「他人 star 页面的卡片会因为点了
 star 就变成可编辑状态」。根因是**只读被判成了页级单一布尔**，且分派写了两处、判据不一致：
 `filters.renderBrowsePage` 有判据，而 `starCheck.syncCardAfterStarChange` **无条件**调可编辑渲染器
 （后者在点星成功的回调链上）。详见 **D29** 与 `docs/adr/0009` 的「追加 7」。一句话口径：
@@ -882,7 +882,7 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
 
 ## 下一步
 
-1. **@version 已升到 4.14.0 → 若你在用 dev 脚本，必须重装 dev loader**：重开
+1. **本次升级（`@version` 4.14.0 → 4.15.0）→ 若你在用 dev 脚本，必须重装 dev loader**：重开
    <http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js> 让 TM 原地更新，否则 TM 菜单会整体消失
    （机制见「dev 模式必须知道的四件事」第 4 条：`@version` 变了 → 脚本头变了 → mountGmApi 的 key 对不上）。
    正式版不受影响；`@version` 变了却没重装，表现是「TM 菜单空了」+「同步说未配置 token」。
