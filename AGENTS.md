@@ -66,7 +66,7 @@ star 就变成可编辑状态」。根因是**只读被判成了页级单一布�
 dist 头部 `@grant` 恰 5 项。
 
 - **夹具 URL 必须带 `?tab=stars`**，否则 `isStarsPage()` 为假、脚本根本不转换，`grid:0` 会被**误读成全绿**。
-  场景名以 `.diag/gen-otherstars-harness.cjs` 的 `scenario ===` 分支为准（现 **16 组 + 2 组窄视口**）。
+  场景名以 `.diag/gen-otherstars-harness.cjs` 的 `scenario ===` 分支为准（现 **17 组**：16 个显式场景 + 生成器无分支的隐式 `own`；断言侧另有 `#narrow` 窄视口）。
 - **恒成立的不变量**：各组 `__errors` 全空；他人页 `fetch=0` / `writes=0`；窄视口 `gsm-*` 节点与标记全 0。
   ⚠️ 4.14.0 起「他人页编辑控件必须为 0」**不再**恒成立（本人已 star 的卡片可编辑），它收窄为
   「没有默认打开的编辑器」「只读卡片 0 控件」「渲染路径零写入」「零网络」。
@@ -297,7 +297,7 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
 **D21 · 清理判据与 GM 权限最小化（4.9.2）**
 
 - **删兜底的判据**：有没有实测/官方文档证明它曾经救回过场景；没有就删，并在原地留一句「曾用过什么」。
-  保留的 6 类各有硬理由（`:has()` 退路有 `cssTarget=safari15` 背书；12×150ms 重试 + 双 4s 兜底防白屏；
+  保留的 5 类各有硬理由（`:has()` 退路有 `cssTarget=safari15` 背书；12×150ms 重试 + 双 4s 兜底防白屏；
   GM↔localStorage 镜像层是 dev/非 TM 的唯一数据通道（**仍保留**）；
   `starWrites` 两段式与 `fullSync` 完整性阀门有真机实测/ADR 红线）。
   **4.16.0 更新**：「`tags`/`notes` 旧键迁移」这一条已按 **D30** 删除（原措辞在删除后成为假断言）；
@@ -688,7 +688,7 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
   - **P2（登记，未修）**：他人页上 **D12 的「同步后立即重渲染」不生效**（`rerenderAfterSync` 走
     `applyFilters`，被只读门挡住）。这是净收益，但 D12 的措辞是全局的 ⇒
     **D12 只适用于本方自己的 stars 页**；他人页刷新的路径是重新投影原生条目，不由同步驱动。
-- **验收状态**：静态全绿（`pnpm check` / `verify-css` EXIT 0 / `test:exportimport` 51-0 /
+- **验收状态**：静态全绿（`pnpm check` / `verify-css` EXIT 0 / `test:exportimport` **全过（项数以实际输出为准）** /
   `@grant` 恰 5 项）；夹具 **17 组场景 + 2 组窄视口**全跑过（场景数以 `.diag/gen-otherstars-harness.cjs`
   的 `scenario ===` 分支为准）；`__errors` 全空、他人页 `fetch`/`writes` 为 0、窄视口 `grid=0` 且 `gsm` 节点 0。新增场景：
   `other-editstate`（同一页 `editable` + `locked-pending` 并存）、`other-pending-expired`
@@ -712,10 +712,17 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
   - `isPlausibleLangName` / `DEAD_REPO_FIELDS` / `loadRepoCache` 的清洗与**写回** —— 顺带修掉一处真实误删：
     该正则的字符类不含 `*`，而 linguist 的 `F*` 与 `Pro*C` 是合法顶层语言名；且它只在读路径、
     从不在写路径，从来不是防御。**收益的形状：`loadRepoCache()` 现在是纯读，读函数不再写存储。**
-  - `DATA_REV` / `FullSyncMeta.dataRev` 阀门 + `typeFlagsComplete` 阀门 —— 可达性证明：下面的 `baselineOk`
-    已要求 `lastFullSyncAt` 在 `FULL_SYNC_TTL_MS`（48h）内，更旧的缓存本来就走无条件整表；且导入路径
-    **从不写** `stars_full_sync_meta`，阀门连导入进来的旧语义都看不见。顺带消掉新装用户会看到的一条
-    不成立日志（新装时 `meta.dataRev` 为 `undefined`，原会报「缓存代次旧」）。
+  - `DATA_REV` / `FullSyncMeta.dataRev` 阀门 + `typeFlagsComplete` 阀门 —— 删除依据有两层，**别把第二层说成第一层**：
+    ① **（决定性）** 本前提「开发阶段 / 无已有用户」：阀门唯一能修的是「由 ≤4.7.x 构建写入的缓存」
+    （`dataRev` 生于 4.8.0 且初值就是 2 ⇒ 更早的缓存没有该字段，`undefined !== 2` 恒真、阀门必触发）。
+    ② **（辅助，不足以单独成立）** 48h TTL：`baselineOk` 要求 `lastFullSyncAt` 在 `FULL_SYNC_TTL_MS` 内，
+    所以**超过 48h** 的旧缓存本来就无条件整表。
+    ⚠️ **48h 这条并不足以证明不可达**（4.16.0 发布前审查纠正）：一个「48h 前由 ≤4.7.x 写入」的缓存
+    会同时满足 `baselineOk` 与阀门条件 ⇒ 阀门确实可达。真正堵住这个窗口的是 ①，以及「改过脚本头必须
+    重装 dev loader」这条机制。**下次若在没有 ① 的前提下看到类似阀门，不要引用这段来删它。**
+    另有一条独立事实：导入路径**从不写** `stars_full_sync_meta`，所以阀门连导入进来的旧语义数据都看不见
+    （其覆盖本就不完整）。顺带消掉新装用户会看到的一条不成立日志（新装时 `meta.dataRev` 为 `undefined`，
+    原会报「缓存代次旧（updatedAt 语义=updated_at）」）。
 - **刻意保留的**（都写进了当时那轮方案的拒绝清单，别重开）：
   - `gm.ts` 的 **localStorage → GM 回写**：服务**环境转移**而非版本迁移，且「GM 一时全部缺席」是
     **被本文档记录、且会反复发生**的失败模式（改过脚本头 → dev loader 的 key 对不上）。
@@ -732,6 +739,31 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
 - **新增的动态守卫**：夹具场景 `own-deadfields`（R28）锁住「读路径不写存储」——预置三个死字段后断言
   `__gmWrites` 里没有 `stars_repo_cache`、且三字段原样保留。**已做 A/B 验证该断言不是空转**：把清洗加回去时
   它确实变红（`cacheWrites=['stars_repo_cache']` / `fieldsKept=[]`）。改夹具或动 `loadRepoCache` 时跑它。
+- **发布前独立审查轮（三名审查员并行，覆盖 4.15 Tier A/B + 4.16 迁移 + 跨批次/测试/文档）**：
+  - **抓到 1 个真缺陷（已修）**：读期清洗曾**顺带**挡住一部分非字符串 `lang`（对象的字符串化含 `[`，
+    不合其字符类 ⇒ 被剔），删掉后**导入一枚 `lang` 为对象/数字/布尔的包 ⇒ `getLangColor` 对 `lang?.trim()`
+    抛 TypeError ⇒ 整页转换中断，表现是「网格容器建好、原生条目已隐藏、0 张卡片」的空网格**（不是少显示一块）。
+    修法**不是把清洗搬回来**，而是在信任边界补一行类型校验（`exportImport.validateRepoCache`：
+    `lang` 必须字符串或缺省）+ 4 条断言。**注意这条老守卫本来也不完整**：`RegExp.test(123)` 会强转成 `"123"`
+    并匹配 ⇒ 数字/布尔**一直**是放行的（即该崩溃类别早于 4.16 就存在，4.16 只是又开了对象的那个口子）。
+    其余字段都不抛（`escapeHtml` 走 `textContent` 强转、`Number()`、`Date.parse` 都宽容）——**只有 `lang` 是这一类**。
+  - **纠正了一处我自己写的过度论证（重要教训）**：原墓碑写「两阀门经证明不可达（48h TTL）」，但阀门写在
+    `if (!baselineOk)` **之前**、不受 TTL 约束，且 `typeFlagsComplete` **有一个活的缺标志写入者**（4.14.0 起：
+    他人页 unstar 把 DOM 投影当 seed 存进宽限期备份，re-star 再把该条目写进整表缓存，而投影不产出四标志）。
+    **决定性依据是「开发阶段 / 无已有用户」这一前提，不是 TTL**；那条路径之所以仍可删，是因为它**必然自愈**
+    （re-star 必使该仓库落到列表首位 ⇒ 首页 ETag 变 ⇒ 下次同步必进 freshIds ⇒ branch C 写回四标志），
+    且阀门从未保护过「re-star 到下次同步之间」那个窗口（筛选器读缓存，不读同步结果）。
+    **不要在没有「无已有用户」前提时引用这段来删同类阀门。**
+  - 文档修正 6 处：场景数自相矛盾（`16` vs `17`）、D21「保留的 6 类」实为 5、D30 的过度论证、
+    `DEVELOPER.md` 的「换血路径 = 48h TTL」（实为**三条** `baselineOk` 失败条件）、4 处失效源码注释
+    （`cardState.ts` 称 `loadRepoCache` 会「遍历全表并回写」、`index.ts` 三处「迁移」）、
+    漏掉的第 5 个夹具生成器 `gen-readonly-harness.cjs` 的 `dataRev` 种子。
+  - **顺手拔掉一个地雷**：`.diag/gen-lang-colors.cjs` 会 `fs.writeFileSync('src/langColors.ts', …)`
+    且其模板还是 per-repo `langColor` 时代的 `getLangColor(lang, stored?)` —— **跑一次就把活实现覆盖掉**。
+    它零引用、且其语义随 `DEAD_REPO_FIELDS` 删除彻底作废 ⇒ 已删除（`src/langColors.ts` 里对它的引用同步改写）。
+  - **沿用既有约定抑制计数漂移**：`test:exportimport` 的项数**不再写死数字**（写「以实际输出为准」）——
+    同 D18/D19 对 `isDesktop()` 的处置（「以 `grep` 为准，不要在此维护数量」）。本次就实际踩到：
+    47 → 补 4 条守卫后变 51，写死的数字两次都过时。
 - **决策过程与逐条证据**：`docs/plans/archive/2026/2026-10-04-将此脚本作为开发阶段-无任何已有用户来处理-清理其中冗余的迁移代码.md`。
 
 ## dev 模式必须知道的四件事
@@ -987,7 +1019,7 @@ pnpm check     # tsc --noEmit + build（改完必跑）
 pnpm build     # → dist/github-star-manager.user.js
 pnpm dev       # HMR，需先解决上面 CSP 那条；入口 http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js
 pnpm build && node scripts/verify-css.cjs   # 产物 CSS 与源 CSS 等价性
-pnpm test:exportimport   # 导入导出纯逻辑 51 项断言（无需浏览器）
+pnpm test:exportimport   # 导入导出纯逻辑断言（无需浏览器；项数以实际输出为准，别写死数字）
 node scripts/ratelimit-probe.cjs --repo <me/repo>   # 限流实测探针（默认 dry-run，零网络请求）
 ```
 

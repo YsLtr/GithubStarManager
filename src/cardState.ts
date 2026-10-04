@@ -26,7 +26,7 @@
  *
  * - **纯判定**：不碰 DOM、不发请求、**不写存储**（只读 `gmGet`）。渲染在 `cardAreas.ts`。
  * - **本人整表缓存由调用方一次读好后传入**（`viewerCache`），避免逐卡重复读盘（`loadRepoCache()`
- *   每次都会遍历全表并可能回写清洗结果，逐卡调用是实打实的浪费）。
+ *   是一次 `gmGet` 深拷贝，逐卡调用仍会重复读盘）。4.16.0 起 `loadRepoCache()` 是纯读（不再遍历全表、不再回写）。
  * - `viewerCache === null` = 不可用（从无整表缓存 / 取不到登录者身份）⇒ **一律不可编辑**，
  *   与 `filters.renderBrowsePage` 既有的「宁缺勿假」口径同源（`canShowStar`）。
  * - 宽限期判据**渲染时现算**，不依赖 `cleanupExpiredUnstarred()` 是否跑过（它只在 `init()` 与

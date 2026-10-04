@@ -41,7 +41,7 @@ function loadCache(): void {
 }
 
 /**
- * languages.yml 行扫描提取 语言名 → color。解析式与 .diag/gen-lang-colors.cjs 同源
+ * languages.yml 行扫描提取 语言名 → color。解析式沿用最初一次性生成静态色表时的行扫描规则
  * （已对整份 yml 全量解析出 694 语言）；只认两空格缩进的带引号 color，规避别名/列表里的同名字段。
  */
 function parseLangColors(yml: string): Record<string, string> {

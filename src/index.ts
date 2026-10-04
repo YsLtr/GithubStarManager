@@ -42,7 +42,7 @@ import { enterOtherStarsView, exitOtherStarsViewIfActive } from './otherStarsVie
  * ============================================================ */
 let starsSetupDone = false;
 
-/** 幂等：门控类 + 样式 + 一次性存储迁移/清理。profile 页直入（样式从未注入过）也走这里。 */
+/** 幂等：门控类 + 样式 + 一次性存储清理（4.16.0 起只剩超期备份清扫，迁移已按 D30 删除）。profile 页直入（样式从未注入过）也走这里。 */
 function ensureStarsSetup(): void {
   // 门控类在这里对齐（而不是只在 document-start）：跨断点从窄回到桌面时，
   // teardown 已把 gsm-hide-lists 摘掉，这里负责按当前视口 + 开关重新挂上。
@@ -163,7 +163,7 @@ function transformAndReveal(animate: boolean, retries = 12): void {
   }
 
   // 他人 star 页（4.13.0）：**零网络只读网格** —— 数据只来自页面已渲染的原生条目，不拉取、
-  // 不落盘、不提供任何写入口。位置要求：必须在 ensureStarsSetup()（注入布局样式表 + 跑存储迁移）
+  // 不落盘、不提供任何写入口。位置要求：必须在 ensureStarsSetup()（注入布局样式表 + 清扫超期备份）
   // 与任何 hide*/横幅/Sync 按钮之前 —— 他人页只挂网格，不挂脚本筛选栏/分页器/同步按钮
   // （V2/V3/D7；那些东西都属于「我自己的账号」语境）。
   if (isReadOnlyScope()) {
@@ -578,7 +578,7 @@ function init(): void {
   // 新版自己的 /stars 页：结构未支持（无 #user-starred-repos），交回 GitHub 原生
   if (!isStarsPage()) return;
 
-  // Stars 直载：样式 + 迁移 + 转换；转换成功才解除 document-start 的隐藏
+  // Stars 直载：样式 + 清理 + 转换；转换成功才解除 document-start 的隐藏
   ensureStarsSetup();
   transformAndReveal(false);
 }

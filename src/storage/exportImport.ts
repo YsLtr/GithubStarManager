@@ -118,6 +118,16 @@ function validateRepoCache(v: unknown, path: string): string | null {
     const entry = v[k];
     if (!isPlainObject(entry)) return `${path}.${k} 不是对象`;
     if (typeof entry.name !== 'string') return `${path}.${k}.name 缺失或不是字符串`;
+    // lang 必须是字符串或缺省（4.16.0 补）。**渲染路径会对它调 `.trim()`**
+    // （`langColors.getLangColor`）⇒ 对象/数字/布尔会抛 TypeError，把整页转换打断，
+    // 表现是「网格容器建好、原生条目已隐藏、0 张卡片」的空网格（不是少显示一块）。
+    // 这是删除读期清洗后暴露的信任边界缺口：旧清洗曾**顺带**挡掉一部分非字符串
+    // （对象的字符串化含 `[` 不合其字符类 ⇒ 被剔），但从未完整（数字/布尔会被放行）。
+    // 其它字段（desc/stars/forks/updatedAt）各自都不抛：escapeHtml 走 textContent 强转、
+    // Number(...) 与 Date.parse 都是宽容的 —— 只有 lang 是这一类。
+    if (entry.lang !== undefined && typeof entry.lang !== 'string') {
+      return `${path}.${k}.lang 不是字符串`;
+    }
   }
   return null;
 }

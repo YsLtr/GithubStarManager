@@ -27,7 +27,7 @@ pnpm dev            # 开发服务器：改动走 HMR，无需手动往 Tampermo
 pnpm build          # 产出 dist/github-star-manager.user.js
 pnpm typecheck      # tsc --noEmit
 pnpm check          # typecheck + build
-pnpm test:exportimport   # 导入导出纯逻辑断言（51 项，无需浏览器）
+pnpm test:exportimport   # 导入导出纯逻辑断言（无需浏览器；项数以实际输出为准，别写死数字）
 node scripts/verify-css.cjs                      # 产物 CSS 与源 CSS 等价性
 node scripts/ratelimit-probe.cjs --repo <me/repo> # 限流实测探针（默认 dry-run，零网络请求）
 ```
@@ -464,7 +464,7 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 
 卡片右下角的 `Updated X ago` 不再落盘（`updated` 字段已删），渲染时由 `formatRelative(updatedAt)` 现算——相对时间随渲染刷新，且不再有「2 条缺文本」的空窗。
 
-`updatedAt` 的存量换血路径 = **48h TTL**：`baselineOk` 要求 `lastFullSyncAt` 在 `FULL_SYNC_TTL_MS`（48h）内，更旧的缓存本来就无条件整表。4.16.0 删掉了原来的两个「升级回补阀门」（`DATA_REV` 代次阀门与 `typeFlagsComplete` 标志阀门）与 `loadRepoCache()` 的读取即清洗 —— 前者经证明不可达（且导入路径从不写 `stars_full_sync_meta`，阀门连导入的旧语义都看不见），后者是纯遗留（顺带修掉一处**误删合法数据**：其字符类不含 `*`，会剔掉 linguist 的 `F*` / `Pro*C`）。**`loadRepoCache()` 现在是纯读，读路径不写存储。** 详见 AGENTS.md **D30**。
+`updatedAt` 的存量换血路径 = **无条件整表**，其触发条件（`baselineOk` 为假）有**三条**，不要只记住其中一条：① 没有 `lastFullSyncAt`；② `lastFullSyncAt` 超过 `FULL_SYNC_TTL_MS`（48h）；③ 逐页 `etags` 基线缺失/含空值。4.16.0 删掉了原来的两个「升级回补阀门」（`DATA_REV` 代次阀门与 `typeFlagsComplete` 标志阀门）与 `loadRepoCache()` 的读取即清洗 —— 阀门按 AGENTS.md **D30** 的判据删除（决定性依据是「开发阶段 / 无已有用户」这一前提；**单靠 48h TTL 并不足以证明它不可达**，48h 内由 ≤4.7.x 写入的缓存确实会命中它），后者是纯遗留（顺带修掉一处**误删合法数据**：其字符类不含 `*`，会剔掉 linguist 的 `F*` / `Pro*C`）。**`loadRepoCache()` 现在是纯读，读路径不写存储。** 详见 AGENTS.md **D30**。
 
 ### 同步与进页自动探测
 
@@ -691,7 +691,7 @@ filterState.totalPages    // ceil(count / NATIVE_PAGE_SIZE)
 合并语义与校验拒绝路径直接决定数据安全，因此用无浏览器的 node 断言覆盖（不需要 GitHub 页面）：
 
 ```bash
-pnpm test:exportimport   # = prepare.cjs（编译被测模块 → tests/exportImport/.build/）+ run.cjs（51 项断言）
+pnpm test:exportimport   # = prepare.cjs（编译被测模块 → tests/exportImport/.build/）+ run.cjs（导入导出纯逻辑断言）
 ```
 
 覆盖范围（改动 `storage/exportImport.ts` 或 `storage/notes.ts` 的判空逻辑后必跑）：

@@ -437,10 +437,22 @@ async function scanStarred(tok: string, meta: FullSyncMeta): Promise<ScanOutcome
     !!baseline && baseline.length > 0 && baseline.every((e) => !!e);
   // 曾用过什么（D30 / 4.16.0 删除）：此处原有两个「升级回补阀门」——`meta.dataRev !== DATA_REV`
   // （4.8.0，updatedAt 语义由 updated_at 改 pushed_at 时换血一次）与 `typeFlagsComplete(cache)`
-  // （4.2.0，缓存缺 Type 四标志则整表回补）。删除理由：两者唯一能修的是「≤4.7.x 写入的缓存」，
-  // 而下面的 baselineOk 已要求 lastFullSyncAt 在 FULL_SYNC_TTL_MS（48h）内 —— 更旧的缓存本来就走
-  // 无条件整表（语义与四标志一起补齐），阀门的可触发窗口实际不可复现；且导入路径从不写
-  // stars_full_sync_meta，阀门连导入进来的旧语义数据都看不见。四标志现由 parseItem 在同步时写入。
+  // （4.2.0，缓存缺 Type 四标志则整表回补）。四标志现由 parseItem（:144-155）在同步时写入。
+  //
+  // 删除依据（**逐条说准，别用 48h 那一条当全部理由**）：
+  // · DATA_REV 阀门：`dataRev` 生于 4.8.0 且初值就是 2 ⇒ 只有 ≤4.7.x 写入的缓存会缺该字段。
+  //   决定性依据是「开发阶段 / 无已有用户」这一前提，不是 TTL —— 阀门写在 `if (!baselineOk)`
+  //   **之前**，不受 TTL 约束，一个「48h 内由 ≤4.7.x 写入」的缓存确实会命中它。
+  // · typeFlagsComplete 阀门：**它确实有一个活的缺标志写入者**（4.14.0 起）——他人页 unstar 把
+  //   DOM 投影当 `seed` 存进宽限期备份（ui/cards.ts → pendingDelete.markRepoUnstarred），re-star
+  //   再把该条目写进整表缓存（markRepoStarred），而投影（domRepos.ts）**不产出** private/fork/
+  //   isTemplate/mirror。之所以仍可删：那条路径必然自愈 —— re-star 使该仓库落到列表首位，
+  //   首页正文与 ETag 必变 ⇒ 下一次同步它必进 freshIds ⇒ 下面的 branch C 就把四标志写回。
+  //   故阀门「触发整表」与「不触发走条件扫描」的**修复后状态相同**，它从未保护过
+  //   「re-star 到下次同步之间」那个短暂窗口（筛选器读的是缓存，不是同步结果）。
+  // · 另有一条独立事实：导入路径从不写 stars_full_sync_meta（全仓只有 fullSync 自己写），
+  //   所以阀门连导入进来的旧语义数据都看不见 —— 其覆盖本就不完整。
+  // 顺带消掉一处不成立日志：新装时 meta.dataRev 为 undefined，原会报「缓存代次旧」。
   if (!baselineOk) {
     console.log('[github-star-manager] 无逐页基线/超 48h TTL → 无条件整表拉取（重建基线）');
     return fullPullOutcome(tok);

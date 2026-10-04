@@ -76,6 +76,13 @@ ok('缺 data 被拒', !validateExportPackage(Object.assign({}, good, { data: nul
 ok('tags 值非数组被拒', !validateExportPackage(Object.assign({}, good, { data: { tags: { r1: 'x' }, notes: {}, repoCache: {} } })).ok);
 ok('notes 值非字符串被拒', !validateExportPackage(Object.assign({}, good, { data: { tags: {}, notes: { r1: 5 }, repoCache: {} } })).ok);
 ok('repoCache 缺 name 被拒', !validateExportPackage(Object.assign({}, good, { data: { tags: {}, notes: {}, repoCache: { r1: { stars: 1 } } } })).ok);
+// 4.16.0：lang 必须是字符串或缺省。渲染路径会对它调 .trim()（langColors.getLangColor），
+// 非字符串会抛 TypeError 并打断整页转换 ⇒ 停在没有卡片的空网格（不是少显示一块）。
+// 这是删除读期清洗（isPlausibleLangName）后暴露的信任边界缺口，故在这里补守卫。
+ok('repoCache 的 lang 非字符串被拒（对象）', !validateExportPackage(Object.assign({}, good, { data: { tags: {}, notes: {}, repoCache: { r1: { name: 'o/r', lang: { a: 1 } } } } })).ok);
+ok('repoCache 的 lang 非字符串被拒（数字）', !validateExportPackage(Object.assign({}, good, { data: { tags: {}, notes: {}, repoCache: { r1: { name: 'o/r', lang: 123 } } } })).ok);
+ok('repoCache 的 lang 为字符串放行', validateExportPackage(Object.assign({}, good, { data: { tags: {}, notes: {}, repoCache: { r1: { name: 'o/r', lang: 'F*' } } } })).ok);
+ok('repoCache 的 lang 缺省放行', validateExportPackage(Object.assign({}, good, { data: { tags: {}, notes: {}, repoCache: { r1: { name: 'o/r' } } } })).ok);
 
 USER_ID = '222';
 const cross = validateExportPackage(JSON.parse(JSON.stringify(good)));
