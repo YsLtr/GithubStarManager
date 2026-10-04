@@ -36,24 +36,12 @@ star 就变成可编辑状态」。根因是**只读被判成了页级单一布�
    复用，`innerHTML = ''` 摘不掉监听）→ 已修（`ui/notes.ts` 的 `disposeNotesEditor()` + 唯一分派点先摘）；
    P2 ×2 已修（登出页泄露全局宽限期备份 / `isStarredByViewer` 两份实现），P2 ×2 登记为观察项。
 
-**4.13.0 提要：他人的 star 页 = 零网络只读网格** —— 4.12.0 的「原生列表 + 只读徽章」在真机上确实工作，
-但**用户几乎永远看不到**（实测 mattn 前 100 个 starred 与本人 21 个带标签/备注的仓库**交集为 0**）。
-用户裁定「用脚本网格」，并给出决定性约束：**只获取页面中已有的数据，不拉取，做网格**（见 **D26** 与 `docs/adr/0009`）：
-
-1. **投影层**（新模块 `src/domRepos.ts`）：DOM 原生条目 → `RepoData`，两条路线
-   （`div.col-12` 经 `getRepoItems()`；`/stars/{login}` 的 `ul.repo-list > li`）；字段可得性表写在文件头。
-2. **来源只存内存**（新模块 `src/viewContext.ts`）：`queryRepos()` 按来源取表；**零存储写入**、无他人缓存键。
-   **呈现层与本方自己的页完全一致**（用户裁定方案 A）：共用 `src/layoutStyles.ts` 的布局主表（左栏 180px / 满宽多列），
-   并把对方的 Starred topics 搬进脚本右栏（`dom.ts` 的 `moveTopicsToRightSidebar` / `restoreTopicsFromRightSidebar`，
-   本方页与他人页共用）。**4.13.0 当时**功能层未接管：无星按钮/编辑入口/脚本分页器/筛选栏/同步按钮/横幅。
-   （4.14.0 已改：星按钮要建、本人已 star 的卡片可编辑 —— 见本文开头与 **D29**；仍是零 API 请求。）
-3. **只读渲染**（4.13.0 形态）：`renderBrowsePage` 跳星按钮、标签/备注走 `readonly.ts` 的只读渲染器、
-   不挂脚本分页器。**4.14.0 起**分派改由 `cardAreas.ts` 唯一入口负责（见 D29）。
-4. **只藏原生条目**（`hideNativeNode`，原生分页器/筛选栏/Lists 不动），翻页与筛选**委派原生控件**。
-5. **零网络的隐藏陷阱**：卡片渲染里的 `getLangColor()` 在色表未命中时会**间接**发 linguist 请求
-   ⇒ 加 `setLangColorFetchEnabled(false/true)` 闸门（进入他人页关、退出恢复）。**不设这个闸，零网络断言必挂。**
-6. **`viewContext` 是模块态**：回自己页必须 `exitOtherStarsViewIfActive()` 复位，否则把别人的列表画在我自己的页上。
-
+**4.13.0 提要**（他人的 star 页 = 零网络只读网格）：4.12.0 的「原生列表 + 只读徽章」在真机上确实工作，但**用户几乎
+永远看不到**（实测 mattn 前 100 个 starred 与本人 21 个带标签/备注的仓库**交集为 0**）。用户因此裁定「用脚本网格」，
+并给出决定性约束：**只获取页面中已有的数据，不拉取**。落地形态 = 投影层 `src/domRepos.ts`（DOM 原生条目 → `RepoData`，
+两条路线）+ 只存内存的来源 `src/viewContext.ts`（无他人缓存键）+ 呈现层与本方自己的页共用 `src/layoutStyles.ts` 的
+布局主表 + 只藏原生条目、翻页与筛选**委派原生控件**。
+完整口径见 **D26** 与 **`docs/adr/0009`**（含 4.14.0 的逐仓库可编辑修订）。
 > **这一轮的逐条过程**（④-⑩：`!important` 隐藏、布局主表抽出、头像作用域、说明行移除、顶部翻页器与对齐、
 > topics 归宿、未登录兼容、布局标记接管、以及审查轮修掉的 P1）**已全部归入 `git log` 与
 > `docs/adr/0008` / `0009`**，此处不复述。仍然生效、且最容易踩的硬口径只有下面这几条：
@@ -69,35 +57,34 @@ star 就变成可编辑状态」。根因是**只读被判成了页级单一布�
 > 5. **只读网格的星按钮状态只认本人缓存**：他人页原生星按钮显示的是**页面主人**的状态，照抄就会点出 unstar。
 > 6. **未登录的 stars 页也接管**（无徽章 / 无星按钮 / 仍零网络），但**没有** `user-list-menu[data-repository-id]` ⇒
 >    `repoId` 退回仓库全名。
+> 7. **`viewContext` 是模块态**（Turbo 换 DOM 冲不掉）：回自己页必须 `exitOtherStarsViewIfActive()` 复位，否则把别人的列表画在我自己的页上。
+> 8. **零网络的隐藏陷阱**：卡片渲染里的 `getLangColor()` 在色表未命中时会**间接**发 linguist 请求 ⇒ 进入他人页必须
+>    `setLangColorFetchEnabled(false)`、退出恢复。**不设这个闸，零网络断言必挂。**
 
-**验证**（`pnpm check` 绿、`verify-css` EXIT 0、`test:exportimport` 51/0、dist `@grant` 恰 5 项、`@version` 4.13.0）：
+**验证记录**（4.13.0 / 4.14.0 当时的逐条夹具结果与真机数值已归入 `git log` 与 `docs/adr/0009`；此处只留**仍生效的验
+证口径**，下次改动照这些跑）：
 
+**静态口径**：`pnpm check` 绿（tsc --noEmit + build）、`test:exportimport` 全过、动 CSS 时 `verify-css` EXIT 0、
+dist 头部 `@grant` 恰 5 项。
 
-> **4.14.0 的验证另见 D29 末条**（静态全绿 + 夹具 **16 组场景 + 2 组窄视口**；口径变化：他人页
-> 「编辑控件必须为 0」只在页面条目与本人缓存**无交集**时成立，仍恒成立的不变量是
-> 「没有默认打开的编辑器」「只读卡片 0 控件」「渲染路径零写入」「零网络」）。
-> 下面这一节是 **4.13.0** 当时的记录，保留作回归基线。
-- **夹具 13 组场景全绿**（`.diag/gen-otherstars-harness.cjs` → `otherstars-harness.html` + `.diag/assert-otherstars.js`，
-  file://、零真实网络；**URL 必须带 `?tab=stars`**，否则脚本根本不转换，`grid:0` 会被误读成全绿）：
-  `other-profile` / `other-newroute`（`/stars/{login}`）/ `other-newgen`（新代骨架）/ `other-notags` / `other-twolayout`
-  （页头诱饵布局）/ `other-teardown` / `other-starstate` / `other-nocache` / `own` / `unknown` / `logout` /
-  `roundtrip` / `#narrow`；各组 `__errors` 全空，他人页普遍 `fetch=0` / `writes=0`，窄视口全 0（含 `gsm-*` 节点与标记）。
-- **两条审查轮补的断言**（都是「行为观测量」，且**与视口无关** ⇒ 隐藏标签页下也稳定）：**R19** 退出后痕迹清零
-  **且**声明了 transition 的规则仍匹配侧栏/头像（钳合实测认标记版 = 0/0、修复版 = 1/1）；**R20** 标记自愈
-  （摘掉标记后重进必须补回；钳合实测去掉自愈 ⇒ `markerHealed=0`）。R20 在 `/stars/{login}` 记为 N/A（该路由无 frame）。
-- **归属判定 21 项断言**（`.diag/assert-scope.cjs`）：21/21。
-- **真机（登录态，量测前 `getAnimations().finish()` 冻结过渡）**：我自己的页 = `marked=1`、
-  `cols=180px 1088px 220px`、侧栏 180、页主头像 120、30 卡 3 列 352px、右栏 topics、星按钮 30、同步按钮 1、
-  顶部翻页器 1、零错误；`Norman-bury?tab=stars`（新代）= 同款三栏 / `marked=1` / 30 卡 / 无右栏（该代无 topics 列）/ 零错误。
-- **仍需人工确认（只剩观感）**：① 卡片密度是否合适；② TM 安装页里授权清单仍**恰 5 项**；③ 真机 Turbo 导航
-  「本人页 ↔ 他人页」往返的切换手感；④ **登出态**观感（登出页页头现在应保持 GitHub 原样 —— 夹具咬合证明改前
-  页头头像会被压到 120px、轨道被换成我们的三栏；本会话内用户是登录态，无法真机复看）。
+- **夹具 URL 必须带 `?tab=stars`**，否则 `isStarsPage()` 为假、脚本根本不转换，`grid:0` 会被**误读成全绿**。
+  场景名以 `.diag/gen-otherstars-harness.cjs` 的 `scenario ===` 分支为准（现 **16 组 + 2 组窄视口**）。
+- **恒成立的不变量**：各组 `__errors` 全空；他人页 `fetch=0` / `writes=0`；窄视口 `gsm-*` 节点与标记全 0。
+  ⚠️ 4.14.0 起「他人页编辑控件必须为 0」**不再**恒成立（本人已 star 的卡片可编辑），它收窄为
+  「没有默认打开的编辑器」「只读卡片 0 控件」「渲染路径零写入」「零网络」。
+- **断言要挑与视口无关的观测量**（隐藏标签页下也稳定）：**R19** 退出后痕迹清零 **且**声明了 transition 的规则仍
+  匹配侧栏/头像（钳合实测：认标记版 = 0/0、修复版 = 1/1）；**R20** 布局标记自愈（摘掉标记后重进必须补回；
+  `/stars/{login}` 记为 N/A —— 该路由无 frame）。归属判定另有 `.diag/assert-scope.cjs`（21 项）。
+- **量测前先冻结过渡**：`document.getAnimations().forEach(a => a.finish())`，否则隐藏标签页里读到的是起点值。
+- **仍需人工确认（只剩观感）**：① 卡片密度；② TM 安装页里授权清单仍**恰 5 项**；③ 真机 Turbo 导航
+  「本人页 ↔ 他人页」往返的手感；④ **登出态**观感（页头应保持 GitHub 原样 —— 夹具咬合证明改前页头头像会被压到
+  120px、轨道被换成我们的三栏）。
 
 **4.11.1 提要**（仍生效的口径已归入 D8 / D25 与 `docs/adr/0007`，此处只留一句）：删掉配置横幅里那个**永远无效**的
 「立即同步」按钮与归属横幅上的 classic 深链按钮，净效果 = 「配置横幅只引导配置，归属横幅只引导去配置」。
 
-> **交接第一件事**：`@version` 已变（4.12.0 → 4.13.0）⇒ **用 dev 脚本的人必须重装 dev loader**（重开安装页原地更新），
-> 否则 TM 菜单整体消失。正式版不受影响。机制见下「dev 模式必须知道的四件事」第 4 条。
+> **交接第一件事**：`@version` 一升，**用 dev 脚本的人就必须重装 dev loader**（重开安装页原地更新），否则 TM 菜单整体消失。
+> 机制见下「dev 模式必须知道的四件事」第 4 条。正式版不受影响。
 
 **4.11.0 提要**（仍生效的口径已全部归入 **D25** 与 `docs/adr/0007`，此处只留一句）：补上「Token 归属校验」+ 不符时的常驻
 可关闭警告横幅 —— 两侧各取**数字 ID** 比对（页面 `octolytics-actor-id`（**登录者**）vs `GET /user` 的 `id`；**不取**
@@ -700,8 +687,8 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
     `applyFilters`，被只读门挡住）。这是净收益，但 D12 的措辞是全局的 ⇒
     **D12 只适用于本方自己的 stars 页**；他人页刷新的路径是重新投影原生条目，不由同步驱动。
 - **验收状态**：静态全绿（`pnpm check` / `verify-css` EXIT 0 / `test:exportimport` 51-0 /
-  `@grant` 恰 5 项 / `@version` 4.14.0）；夹具 **15 组场景 + 2 组窄视口**全跑过（`__errors` 全空、
-  他人页 `fetch`/`writes` 为 0、窄视口 `grid=0` 且 `gsm` 节点 0）。新增场景：
+  `@grant` 恰 5 项）；夹具 **16 组场景 + 2 组窄视口**全跑过（场景数以 `.diag/gen-otherstars-harness.cjs`
+  的 `scenario ===` 分支为准）；`__errors` 全空、他人页 `fetch`/`writes` 为 0、窄视口 `grid=0` 且 `gsm` 节点 0。新增场景：
   `other-editstate`（同一页 `editable` + `locked-pending` 并存）、`other-pending-expired`
   （超 24h ⇒ 不再显示）、`other-nocache-edit`（无缓存 ⇒ 全只读）、
   `other-logout-pending`（登出 + 备份里有私密数据 ⇒ 一个字符都不许出现）。
@@ -899,7 +886,7 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
    <http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js> 让 TM 原地更新，否则 TM 菜单会整体消失
    （机制见「dev 模式必须知道的四件事」第 4 条：`@version` 变了 → 脚本头变了 → mountGmApi 的 key 对不上）。
    正式版不受影响；`@version` 变了却没重装，表现是「TM 菜单空了」+「同步说未配置 token」。
-2. **4.14.0 的真机确认（只能在真 github.com + TM 上做；行为层已由夹具 15 组场景覆盖）**：
+2. **4.14.0 的真机确认（只能在真 github.com + TM 上做；行为层已由夹具 16 组场景覆盖）**：
    - 他人 stars 页上，本人缓存与页面**有交集**时才看得到效果 —— 若交集为 0（实测常见），
      可用 TM 菜单先「立即全量同步」把当前账号的 star 拉进缓存，再打开自己的 stars 页给其中一两个加标签，
      然后去任意他人的 stars 页看那几张卡片是否可编辑；
@@ -907,13 +894,11 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
      打开 TM 菜单 →「恢复取消的 star」⇒ 回到可编辑且数据完好；
    - 全程 DevTools Network 面板**零 `api.github.com` 请求**；
    - TM 安装页里的**授权清单仍恰 5 项**（dist 头部已核为 5 项，但 TM 的展示需真机确认）。
-   （以上行为层已由夹具 15 组场景覆盖；真机只补观感与安装页核对。）
+   （以上行为层已由夹具 16 组场景覆盖；真机只补观感与安装页核对。）
 3. **`docs/adr/0006` 剩余两项不可观测项**：`?scopes=repo` 预填是否真的勾上（被 sudo/passkey 门拦住，
    **不得**声称可用或不可用）、`context=user_stars` 服务端是否据其分支（实测 200 但不可知）。
    离页仓库 + 仅 VF 头**已实测成立**（见「当前状态」的实测结论），不必重复验。
-4. **4.13.0 验收状态**：静态 + 夹具 13 组 + 真机（登录态）**全部通过** —— 逐项证据见上「验证」小节与
-   `docs/adr/0009`（含顶部翻页器「点它真能翻页」、新代页面分页器与筛选控件 `delta=0` 对齐、
-   `/stars/{login}` 无原生分页器 ⇒ 克隆按设计空操作）。**只剩观感层面的人工确认**（4 条，见「验证」末条）。
+4. ~~4.13.0 验收状态~~ —— 已全部通过，逐项证据在 `docs/adr/0009` 与 `git log`；只剩**观感层面**的人工确认（4 条，见上「验证记录」末条）。
 5. 后续阶段（详见 `todo` 与 `DEVELOPER.md` §13）：GraphQL 分页调研、周期自动同步。
    ~~非本人 star 页 `GET /users/{u}/starred` 接入~~ —— 4.12.0 已按「只读模式」收口（D26）；
    若将来要让他人页也显示完整卡片网格（**已实现**：4.13.0 的零网络投影网格 + 4.14.0 的逐仓库可编辑），
@@ -922,146 +907,32 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
 6. 未消化的架构建议：单遍 facet 计算、响应式漏斗（见 `starmgr-arch-review-report.md`）。
 7. fine-grained PAT 写他人公开仓库的能力缺口由 GitHub 控制（roadmap#600 NOT_PLANNED、#601 OPEN）——将来若补齐，
    可回头简化 `docs/adr/0006` 的网页端点通道。
-8. **4.9.2 的真机验证部分完成**（`pnpm check` + 51 项导入导出断言 + CSS 等价性全过；dist 头部 `@grant` 恰 5 项）。
-   **已在真浏览器跑过仿真页**（`.diag/viewport-harness.html` = GitHub 仿真 DOM + 内联 dist + matchMedia 仿真，
-   断言脚本 `.diag/assert-viewport.js`；两者都在 gitignore 的 `.diag/` 下，可重跑）：窄视口载入**零痕迹**
-   （无自造节点/无 `gsm-*` 类/无内联 display/无标记，Lists 行与原生三个菜单未被动过）；桌面载入网格/顶部翻页器/
-   同步按钮/右栏照旧；运行中收窄 → 痕迹全清且 layout 样式表归零（persistent 表按设计常驻，规则全在 `@media` 内）、
-   Starred topics 回到原生列、原生菜单 display 复原；再拖回桌面 → 网格重建且无重复节点；收窄后挂机 10s 无新
-   `<style>` 注入（世代号生效）；语言色经**原生 fetch** 拿到 694 语言（验证 `GM_xmlhttpRequest` 可删）。
-
-   **审查轮的 5 个修复各自实测**（工装 `.pi/tmp/gen-harness.cjs` → `viewport-harness.html?tab=stars`
-   + `.pi/tmp/assert-fixes.js` / `assert-cycle.js`，均在 gitignore 下，可重跑；注意 URL 必须带 `?tab=stars`，
-   否则 `isStarsPage()` 为假、脚本根本不转换，会误读成「全绿」）：
-
-   | 修复 | 实测证据 |
-   |---|---|
-   | R1 搜索监听 | 桌面 `enterPrevented/submitPrevented = true`（拦截有效，无回归）→ 收窄后**双双 false**（原生行为放行）；`data-gsm-search-bound` 计数 0 |
-   | R2 2s 自动同步 | `#autoshrink`（700ms 收窄）时间线：收窄前 grid=1（说明确实排过队），此后到 t=6.7s 抓包数**恒为 1**（仅 linguist 色表），无任何 `api.github.com` 请求；审查员修复前实测在同场景有 `2120ms → /user/starred?per_page=100&page=1` |
-   | R3 Lists 偏好 | 桌面进 Stars：门控类 true / 标记 2 / 标题行 `display:none` → 触发 `turbo:load` 离开 Stars：门控类**仍 true** / 标记**仍 2**（不再被误清）→ 再收窄：双双清零 |
-   | R4 首次安装 | `#nocache`：横幅出现、`listsMarks:2`、标题行 `display:none` 且高度 0（修复前 `flex` / 54px） |
-   | 幂等回归 | 桌面→窄→桌面→窄→桌面两轮：`grid/topPager/rightSidebar` 恒为 1、topics 只被搬走一次、搜索拦截每轮都恢复、`__errors` 空 |
-   | topics 痕迹标记 | 桌面转换后 `[data-gsm-topics-src]` = 1 → 收窄后 = 0（标记被摘且内容确实回到原生列） |
-
-   **仍需真机确认（只能在真 github.com + TM 上做）**：真·窄窗口下的实际观感、Turbo 导航路径、
-   安装页/面板里本脚本的授权清单是否恰为 5 项、导出仍能触发 `GM_download`、TM 菜单项齐全（实测 8 处注册）。
+8. ~~4.9.2 / 4.10.0 / 4.11.0 的验证记录~~ —— 三批已全部跑完（静态 + 仿真页断言 + 部分真机），逐条断言表与
+   审查轮表格在 `git log` 与对应的 `docs/plans/archive/2026/` 方案里。**仍生效的只有这些**：
+   - 可重跑的仿真工装：`.diag/gen-viewport-harness.cjs`（窄视口/跨断点）、`.diag/gen-jump-harness.cjs`（跳页）、
+     `.diag/gen-account-harness.cjs`（归属横幅），以及各自的 `assert-*.js`。**URL 必须带 `?tab=stars`**。
+   - 4.9.2 的 R1–R4 修复、4.10.0 的 T9 断言、4.11.0 的 A1–A11 断言都已是**回归基线**，
+     没有具体要复现的缺陷时不必重跑。
+   - 仍待真机确认（行为层已由仿真覆盖，真机只做观感与安装页核对）：真·窄窗口观感、Turbo 导航面板、
+     **TM 安装页授权清单恰 5 项**、导出能触发 `GM_download`、TM 菜单项齐全。
+   - ⚠️ 改工装后必须先用探针确认夹具状态：**场景不生效的表现是「断言全绿」**（4.11.0 第二轮审查踩过 ——
+     反引号把外层模板字符串截断成 `SyntaxError`、以及一次替换留下空的前置分支 `else if (c) {}`）。
 9. **原生 `fetch` 语言色通道有一个新观察项**：它现在受页面 CSP `connect-src` 约束（已实测该主机在白名单内），
   且失败是静默降级（灰圈）。GitHub 若收紧 CSP，表现是语言色全部变灰点 —— 届时把 `gmFetchText` 加回来即可。
-10. **4.10.0 的验证（T9，2026-10-02 已跑完）**：静态 = `pnpm check` 绿、`node scripts/verify-css.cjs` EXIT 0、
-   `pnpm test:exportimport` 51/0、dist 头部 `@grant` **恰 5 项**、dist 内 `gsm-pager-loading` 0 命中 / 无 SMIL /
-   有 `prefers-reduced-motion`。
-   **仿真页断言全绿**（工装 `.diag/gen-jump-harness.cjs` → `jump-harness.html` + `assert-jump-{a,b,c,d,e,f,g,h}.js`，
-   全部在 gitignore 的 `.diag/` 下，可重跑；**URL 必须带 `?tab=stars`**，否则脚本根本不转换、`grid:0` 会被误读成全绿；
-   夹具含 70 个仓库 = 3 页，fetch 用桩、零真实网络）：
+10. ~~4.10.0（分页跳页 + 同步按钮联动）的验证记录~~ —— 已跑完，逐条断言表与发布前审查表（1 P0 / 3 P1 / 7 P2）
+   在 `git log` 与 `docs/plans/archive/2026/` 的方案里。**仍生效的只有这一条**：
+   **被并发丢弃的同步不广播 `failed`**，只留 console —— 改成 failed 会把正在转的按钮停下、谎报失败（见 D23）。
 
-   | 断言 | 实测结果 |
-   |---|---|
-   | 跳页入口 | 点击页码指示器（顶/底两份都测）→ 原位出 `<input>`：已聚焦、已全选、`type=text` + `inputmode=numeric` + `pattern` + `enterkeyhint=go` |
-   | 几何不跳动 | 输入框 42×21 vs 按钮 41.9×21、BtnGroup 157.6 vs 157.5 ⇒ 一致（曾用固定 `3.5em` 导致 +21px 横向跳动，已改为按被顶替单元格实测宽度写内联值） |
-   | 越界/非法 | `999`→末页 `3 / 3` 且顶底同步；`0`/`-1`→第 1 页；`abc`/空→不跳；**全程 fetch 增量为 0** |
-   | 同页不重绘 | 跳当前页后首卡 DOM 引用不变 |
-   | Escape / blur | Escape 取消不回退页码；blur 提交生效（与备注编辑同口径） |
-   | 编辑态保护 | 输入框开着时经原生搜索 Enter 触发一次真实渲染 → 输入框仍在、值未丢、仍聚焦 |
-   | 同步联动（他入口） | 从 **TM 菜单**触发 → 按钮 `aria-busy=true` + `aria-disabled=true` + `.octicon-sync` 动画 `gsm-spin` + live 区「正在同步…」 |
-   | 并发丢弃 | 同步中再点按钮 ⇒ **0 个新请求**且仍 busy（不谎报失败） |
-   | 失败可见 | 桩网络错 ⇒ busy 清除、`gsm-sync-failed` 上色、title = 「上次同步失败：boom-network（点此重试）」、动画停、live 清空 |
-   | a11y 结构 | 同步前/中/后 `outerHTML`（剥属性）**完全一致**、文字恒为 `Sync`、宽度恒 69px |
-   | 完整同步 + 简报 | 桩「无变化」整表 ⇒ 通知栈出现「同步完成：无变化（共 70 个 star）」、按钮回 idle 且 title 换成摘要 |
-   | 窄视口零残留 | 载入与运行中共测：grid=0、`.gsm-*`/`.stars-*` 节点 0、无 live 区、无通知栈；页面仅有的 3 个内联 `display` 全是夹具自身（无 `data-gsm-hidden`）、2 个 `<style>` 是夹具与 CLI 注入的 |
-   | 通知栈视口门 | 窄视口里把一次同步**跑完**（元数据写盘 = 最后一步）⇒ `.gsm-notify-stack` 仍为 0（简报被拦） |
-   | 订阅不泄漏 | 收窄回滚后改变状态（running→failed）⇒ **游离按钮的 `aria-busy` 保持 "true"、未染 failed 类**（订阅确已注销） |
-   | 挂载即对齐 | 拖回桌面后新按钮立即渲染**当前**状态（running 时 busy+旋转；failed 时上色+title 带原因） |
-   | 幂等 | 桌面↔窄视口往返 3 轮：grid/topPager/rightSidebar/syncBtn/infoButtons/topicsMark 恒为 1/1/1/1/2/1，窄侧全 0；往返后跳页与状态驱动仍正常；`__errors` 空 |
-   | 动效门 | CDP `Emulation.setEmulatedMedia` 切 `prefers-reduced-motion: reduce` ⇒ 动画 `none`（busy 与文字仍在）；切回 ⇒ `gsm-spin` 1s infinite |
-
-   **发布前独立审查轮**（外部 reviewer，只读复核 + 自建复现实验）抓到 1 P0 / 3 P1 / 7 P2，**P0+P1 已修**，
-   P2 修了 5 条（重复注释、陈旧 CSS 注释、无消费者的 `export`、`getSyncState` 可变引用、超长数字串）。
-   修复后另跑 **断言 I**（`.diag/assert-jump-i.js`，同一工装，全绿）：
-
-   | 审查项 | 修复后的实测 |
-   |---|---|
-   | P0 编辑态与内容一致性 | 底部输入框开着 + 触发一次与用户无关的渲染 ⇒ 文字两份都是 `2 / 3` **且**网格首卡 = 第 2 页首卡（修复前：文字 `2 / 3`、内容是第 1 页） |
-   | P1 编辑态下 prev/next | 顶部编辑态中渲染把页重置到 1 ⇒ `prev` 带 `disabled`、`next` 可用（此前整份跳过，停在旧禁用态） |
-   | P1 焦点归还 | Escape 与 Enter 之后 `document.activeElement` 都是 `BUTTON.gsm-page-info`（修复前是 `BODY`） |
-   | P1 `-1` 口径 | 从第 3 页输入 `-1` ⇒ 第 1 页（现已与文档一致） |
-   | P2 超长数字 | 400 位 `9` ⇒ 末页 `3 / 3`（修复前「不跳」） |
-   | P2 IME | `isComposing: true` 的 Enter ⇒ 输入框仍在、页码未变 |
-   | 无回归 | A / B / E / F / G / H 六组旧断言全部复跑通过；`pnpm check` 绿、`verify-css` EXIT 0、51/0、dist `@grant` 恰 5、旧类零命中 |
-   **仍需真机确认（只能在真 github.com + TM 上做）**：① 真窗口下点击页码跳页的实际手感（仿真里几何是
-   精确对齐的，但字体/缩放的真实观感只能肉眼看）；② TM 安装页/面板里本脚本的授权清单是否恰 5 项
-   （dist 头部已核为 5 项，但 TM 的展示需真机确认）；③ 真机 Turbo 导航路径下跳页与同步按钮的观感
-   （①②的行为层已由仿真断言覆盖，真机只做观感与安装页核对）。
-   **一处刻意的实现收窄**（与方案 T6 的措辞不同）：**被并发丢弃的同步不广播 `failed`**，只留 console ——
-   改成 failed 会把正在转的按钮停下、谎报失败（见 D23）。
-
-11. **4.11.0 的验证（T9，2026-10-02 已跑完）**：静态 = `pnpm check` 绿（tsc + build）、
-   `node scripts/verify-css.cjs` **EXIT 0**、`pnpm test:exportimport` **51/0** 不回归、
-   dist 头部 `@grant` **恰 5 项**、dist 内 `gsm-pager-loading` 0 命中、新增类/键均在产物里
-   （`gsm-account-banner` 5 命中、`stars_account_identity` 1、`api.github.com/user` 4 处）；
-   dist 内两处通道词（`GitHub-Verified-Fetch` 头、`浏览器会话` console）经定位确认**都在既有代码里**、
-   不在新增文案中（新增横幅文案零命中）。
-
-   **仿真页断言全绿**（工装 `.diag/gen-account-harness.cjs` → `account-harness.html` +
-   `.diag/assert-account.js`，均在 gitignore 下可重跑；**URL 必须带 `?tab=stars`**，否则脚本不转换、
-   `grid:0` 会被误读成全绿；夹具含 3 个仓库 + 身份 meta，`fetch` 全用桩、零真实网络）：
-
-   | 断言 | 实测结果 |
-   |---|---|
-   | A1 不符即弹 | `div.gsm-account-banner` 出现、`role="alert"`、子节点顺序 = `[msg, btn, btn gsm-account-dismiss]`（4.11.0 时首项曾是 classic 深链按钮，现已按用户裁定移除）、文案同时含两侧登录名 |
-   | A1 落位 | 父链 `DIV < TURBO-FRAME#user-profile-frame < MAIN.Layout-main < DIV.Layout` —— 与 `err401` 组里 `.gsm-setup-banner` 的父链**完全一致**（同一 `placeSetupBanner` 分流） |
-   | A2 相符不弹 | 冷启动 0 节点 + **0 次 `/user` 请求**；运行中从「不符」改成「相符」后**主动撤掉**已显示的横幅（不留过期警告） |
-   | A3 关闭与重新武装 | 点「关闭」→ 节点消失、`stars_account_banner_dismissed = '42#999'`；同组合再求值**不再弹**；把会话 id 改成 777 ⇒ **重新弹出** |
-   | A4a 窄视口零痕迹 | `#narrow` 载入：`.gsm-*` 节点 **0**、`.stars-*` 节点 0、`grid` 0、无配置横幅、**0 次 `/user` 请求**、`__errors` 空 |
-   | A4b 无登录会话 | 摘掉 `body.logged-in` ⇒ 不弹、**不发请求** |
-   | A5 取不到页面身份 | 删掉 `octolytics-dimension-user_id` ⇒ 不弹、**不发请求** |
-   | A6a 401 | 桩 401 ⇒ 不弹归属横幅、**不写身份缓存**，并走既有链弹出配置横幅（「🔑 401 Bad credentials：Token 已失效或被撤销…」） |
-   | A6b 网络错 | 桩 reject ⇒ 不弹、不写缓存、无 unhandled rejection |
-   | A7 稳态零请求 | 缓存为空时首次恰 **1** 次 `GET /user` 且写入指纹缓存；再求值 ⇒ 计数**仍为 1**（增量 0） |
-   | A8 不阻断写路径 | 横幅在场时点卡片星按钮 ⇒ **1 次写请求**发出、`/user` 增量 **0**、横幅仍在（`setStarState` 未被改） |
-   | A9 回滚与重现 | 横幅在场 → 收窄 ⇒ 节点 0、grid 0 → 拖回 ⇒ 横幅重现 + grid 重建、无重复节点、`__errors` 空 |
-   | A11 文案不披露通道 | 横幅 DOM 文本与 HTML 对「网页端点 / 浏览器会话 / GitHub-Verified-Fetch / REST」**零命中** |
-
-   **踩到并已修掉的测工装缺陷（值得记住）**：`gm.ts` 的 `gmGet` 有一条迁移路径
-   「GM 值 == 默认值 **且** localStorage 镜像有数据 → 把镜像写回 GM」，于是工装只清 GM 侧会被镜像**原地复活**
-   ——表现是「横幅刚出现就被关掉」。包装 `GM_setValue` 抓栈定位到调用链 `isDismissed → gmGet → GM_setValue(迁移)`，
-   而非任何 dismiss 点击。修法：工装把 `github-star-manager::` 前缀下的 `Storage.prototype.getItem` 一律视为空
-   （GM 层成为唯一真相）。**这正是 AGENTS.md 早记过的「双清」坑，只是这次发生在测工装侧。**
-
-   **仍需真机确认**：① 真机上「用另一个账号的 token」触发时的实际观感（横幅位置 / 配色 / 关闭手感）；
-   ② TM 安装页里授权清单是否恰 5 项（dist 头部已核为 5 项）。行为层已由仿真断言覆盖。
-   **一处「不可做」**：真机验证归属校验必须**真的换成另一个账号的 token**（或改本地缓存 `stars_account_identity`）——
-   相符时它按设计不产生任何可见痕迹，这是特性不是缺陷。
-
-   **发布前独立审查轮**（外部 reviewer，只读复核 + 自建复现实验）抓到 2 P1 + 3 P2，**全部已修**，
-   修复后另跑针对性断言（`.diag/assert-account-fixes.js`，同一工装，全绿）：
-
-   | 审查项 | 修复后的实测 |
-   |---|---|
-   | P1 在途收窄残留（违反 D18） | `/user` 挂起期间收窄 → teardown 后 banner 0 / grid 0 / `gsm-*` 节点 0 → **释放请求（延迟 resolve mismatch）后仍为 0**（修复前为 1）；拖回桌面横幅正常重现（1）|
-   | P1 文案错断言（classic 场景） | classic（`ghp_`）⇒「**通常**也记到 @tokenuser（不会改动 @smoke-user）……若 @tokenuser 的 Token 被 GitHub 拒绝，操作会改以 @smoke-user 的身份进行」，`saysWritesToSession=false`；fine-grained（`github_pat_`）⇒ 仍为「会记录到 @smoke-user」 |
-   | P1 复审 · classic 确实会回落 | `.diag/assert-account-fallback.js`：classic + REST 403(非限速) ⇒ `DELETE /user/starred/owner3/repo3`（403）后紧跟 `POST /owner3/repo3/unstar`，`fellBackToWebEndpoint=true`。**用户质询后复审推翻了自己第一版的修法** —— 当时写「都会记到 @tokenuser（不会改动 @smoke-user）」同样是过度断言（写通道是按次决定的，classic 可回落）|
-   | P2 清空 token 后横幅不撤 | `github_pat=''` + 重新求值 ⇒ banner 0（`hasToken=false` 才允许撤，其余 unknown 仍不抹） |
-   | P2 Hide Lists 切换不重挂 | 触发菜单项后 banner 仍为 1（`repositionAccountBanner` 已接入） |
-   | P2 零消费者 export | `AccountMatch` 改回模块内类型（`AccountVerdict` 仍 export，有消费者） |
-   | 无回归 | 原 8 组场景全组复跑通过（mismatch/match/nocache/nomseata/nosession/err401/errnet/#narrow，`errors` 全空）；`pnpm check` 绿、`verify-css` EXIT 0、51/0、dist `@grant` 恰 5 |
-
-   **一处口径变化**：mismatch 场景的文案现在按凭证类型分叉（夹具用的是 `ghp_`，故走 classic 分支）。
-
-   **第二轮独立审查轮**（外部 reviewer，只读复核 + 端到端实测）抓到 **2 P1 + 1 P2，全部已修**，
-   修复后另跑针对性断言（`.diag/assert-account-fixes2.js`，全绿）：
-
-   | 审查项 | 修复后的实测 |
-   |---|---|
-   | **P1 取错了身份字段**（假阳性） | `/mattn?tab=stars` 实测：`user-login`/`octolytics-actor-id` = YsLtr/130123551（**登录者**），而 `octolytics-dimension-user_id` = 10111（**页面主人 mattn**），且该页含 `#user-starred-repos` + `.col-lg-9`（脚本会转换）。第一版用后者作比对键 ⇒ 每个他人 stars 页都假阳性并断言「浏览器登录的是 @mattn」。改用 `octolytics-actor-id`（`getViewerId()`），**取不到时不回退**（回退＝恢复假阳性）。实测：他人页 + token 属 42（≠登录者 999）⇒ 弹且文案说 @smoke-user、**不**说 @page-owner；他人页 + token 属 999 ⇒ **不弹**（无假阳性）|
-   | **P1 清空 Token 后不撤** | 走**真实 TM 菜单入口** + 真实 `promptForToken`（prompt 返回空）⇒ `pat=""`、归属横幅 **0**、配置横幅显示「🔑 Token 已清除」（修复前横幅仍在）。根因：三个常规求值点都覆盖不到这条路径（`runFullSync` 的无 token 早退发生在 `try` 之前）⇒ 改在 `setTokenIssueHandler` 内复评 |
-   | **P2 残留另一对的横幅** | 「不符(42#999) → 关闭 → 换 token(77#999) → 换回 42」：修复后 banner **0**、pair `null`（修复前屏幕上停在 77#999 的横幅，宣称「Token 属于 @other-user」）|
-   | 顺带（🟢） | `showAccountBanner` 收回模块内；`fullSync.ts` 注释从「同步链上唯一全覆盖点」改为「成功 / 304 早退 / 抛错三条路径」并显式注明**不覆盖**清空 Token |
-
-   **工装自身的两个缺陷也一并修了（教训）**：① 夹具只有 `octolytics-dimension-user_id` / `_user_login`，**缺登录者的
-   `octolytics-actor-id`** —— 于是「夹具全绿」掩盖了取错字段这个问题；现已补齐并新增 `otherpage` / `otherpage-match` 两个
-   场景（把登录者与页面主人拆开）。② 生成脚本里插入的注释/字符串用了**反引号**，把外层模板字符串截断（`SyntaxError`），
-   必须用字符串拼接；另有一次替换留下了**空的前置分支**（`else if (c) {} else if (c) {...}`）导致场景静默失效 ——
-   **场景不生效的表现是「断言全绿」**，所以改工装后必须先用探针确认夹具状态（本次靠 `.diag/probe-nomseata.js` 抓到）。
+11. ~~4.11.0（Token 归属校验 + 不符警告横幅）的验证记录~~ —— 已跑完（A1–A11 断言表 + 两轮独立审查表），
+    逐条证据在 `git log` 与 `docs/plans/archive/2026/` 的方案里。**仍生效的只有这几条**：
+    - **归属校验不可能产生「相符」的可见证据**（相符时按设计零痕迹）：真机验证只能真的换成另一个账号的
+      token，或改本地缓存 `stars_account_identity`。这是特性，不是缺陷。
+    - **两处夹具自身缺陷**（比被测代码的缺陷更值得记住）：① 夹具缺 `octolytics-actor-id` ⇒「夹具全绿」掩盖了
+      「取错身份字段」；② 生成脚本里的反引号截断外层模板字符串、以及一次替换留下空的前置分支
+      `else if (c) {}` ⇒ **场景静默失效**。**改工装后先用探针确认夹具状态**（`.diag/probe-nomseata.js` 抓过）。
+    - **「双清」坑会发生在测工装侧**：`gm.ts` 的 `gmGet` 有「GM 值 == 默认值且镜像有数据 → 写回 GM」的迁移路径，
+      只清 GM 侧会被 localStorage 镜像**原地复活**（表现是「横幅刚出现就被关掉」）。
+    - 真机只补：横幅观感（位置 / 配色 / 关闭手感）与 **TM 安装页授权清单恰 5 项**。
 
 ## 快速构建约定
 

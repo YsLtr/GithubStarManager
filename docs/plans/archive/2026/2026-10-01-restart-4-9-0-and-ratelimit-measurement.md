@@ -1,6 +1,12 @@
+---
+title: 重新规划 4.9.0（变化简报 + 恢复 + 写路径）并新增 REST 限流实测
+status: done
+created: 2026-10-01
+archived: 2026-10-04
+---
 # 重新规划 4.9.0（变化简报 + 恢复 + 写路径）并新增 REST 限流实测
 
-> 方案路径：`docs/plans/2026-10-01-restart-4-9-0-and-ratelimit-measurement.md`
+> 方案路径：`docs/plans/archive/2026/2026-10-01-restart-4-9-0-and-ratelimit-measurement.md`（4.15.0 时归档）
 > 生成方式：deep-plan 闭环（P1 自问自答 → P2 子代理查证 → P3 成文 → P4 单一审查）。
 > ⚠️ 本机 `deep_plan_*` 工具**未暴露**给本次会话（扩展已注册于 `~/.pi/agent/settings.json:24`，但工具表缺失），因此**harness 级写保护未生效**，纪律靠自觉执行；其余产物契约（方案路径规则、`.pi/tmp/` scratch、决策记录 + 可变决策表、单一审查）保持一致。
 

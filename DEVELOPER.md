@@ -109,6 +109,11 @@ src/
                       页头会被误改写）。标记调用必须在 `!isDesktop()` 早退**之后**（否则窄视口留 class）
                       —— **卡片与网格的样式全在 base.css + wide.css 里**，本方自己的页与他人页的只读网格
                       共用这两张表（他人页的首版漏了注入 ⇒ 卡片无描边、单列 display:block，真机报「网格没应用」）
+  cardState.ts         逐仓库三态判定（4.14.0，纯判定：不碰 DOM、不发请求、不写存储）：
+                      判据 = 本人 star（活区） / 已 unstar 但数据仍在 24h 宽限期备份 / 两者都不是；
+                      `readCardDisplayData` 取数（活区优先，活区为空再看备份 —— 宽限期卡片的标签在备份里）
+  cardAreas.ts         标签/备注区的**唯一分派点**（4.14.0）：renderCardTagAndNoteAreas(card, 'own' | 'other', viewerCache)
+                      —— 禁止再出现第二处 `readOnly ? A : B`（两处判据不一致就是 4.14.0 那个缺陷）
   topPager.ts         标题行右侧的顶部快捷翻页器（4.13.0）：mountTopPager(scope, source) —— 两条展示路径
                       共用同一份实现（本方页克隆 `.gsm-local-pager`，他人页克隆原生 `.paginate-container`）；
                       克隆件带 `.gsm-top-pager`、标题行加 `.gsm-header-row`，回滚由 viewTeardown 第 2/4 项负责；
@@ -524,10 +529,16 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 - 卡片语义：点击 → **乐观翻转** → 入队；**排队中再点 = 撤销**（回滚外观，请求不发出）；执行中点击忽略。
 - 卡片在途操作用 `inflight: {handle, target}` 记录，且 `.then` 里**必须做身份校验**（`inflight.handle === handle`）——否则「撤销 → 重新点击」会让旧条目的回调清掉**新操作**的护栏，同一仓库被重复入队。
 
-### REST 限流实测（4.9.0 阶段 A，**尚未执行**）
+### REST 限流实测（4.9.0 阶段 A，**已于 2026-10-01 执行**）
 
-队列的 1000ms 间隔目前来自官方 best-practices 与 Octokit 默认值（两个独立来源一致），**没有本地实测数据**。
-`scripts/ratelimit-probe.cjs` 是按 `docs/research-ratelimit-protocol.md` §4 实现的最小风险探针，用来回答
+> 判定 **D1**：`used` 每请求 +1、primary 按**请求数**计 —— 官方文档那张「5 点/次」表**不作用于 primary**；
+> 仓库自有的写入成本 = **1 点/请求**。1s 间隔（60 写/分钟）距文档化的 900 点/分钟有 15× 余量。
+> **结论不据此改动 1000ms 默认值**（实测规模不足以推翻官方 best-practices；1s 同时满足「串行」与「≥1s」两条独立要求）。
+> 证据：`docs/research-ratelimit-measurement.md` 与同目录 `.jsonl`（逐次 `x-ratelimit-*` 原始记录）。
+> L2（二级限流）按协议**有意未跑**，理由见该文 §5。两条写通道的可观测性不对称：API 侧完全可观测、
+> 网页端点**零限流响应头**。
+
+队列的 1000ms 间隔来自官方 best-practices 与 Octokit 默认值（两个独立来源一致）；上表的实测只是**验证**它有余量，不是它的依据。`scripts/ratelimit-probe.cjs` 是当时用的最小风险探针（复跑须显式 `--run`），用来回答
 「`PUT/DELETE /user/starred` 会不会触发二级限流、primary 记账是 1 还是 5」：
 
 - **默认 `--dry-run`：零网络请求**，只打印计划、硬约束与判定矩阵；真发请求必须显式 `--run`。
@@ -720,6 +731,7 @@ agent-browser-cli exec --tab <id> --file tests/smoke/assert-search.js
 3. 跑第 11 节的两项验证。
 4. 用 `dist/github-star-manager.user.js` 覆盖安装，或作为 release 附件发布。
 
-## 13. 待办
+## 13. 待办与调研索引
 
-见仓库根目录 `todo`。
+见仓库根目录 `todo`（功能待办）；调研证据文档的「结论去向 / 是否仍被引用」见 **`docs/research-index.md`**。
+
