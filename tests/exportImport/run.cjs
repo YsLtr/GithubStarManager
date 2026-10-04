@@ -147,27 +147,17 @@ saveTags('r2', ['u222']);
 USER_ID = '111';
 eq('切回原用户数据仍在', loadAllTags().r1, ['u111']);
 
-/* ================= 7. 读取即清洗：死字段 / 脏 lang（4.9.0） ================= */
-console.log('\n[7] loadRepoCache 读取即清洗');
+/* ================= 7. 导出包的 repoCache 归属（D9 契约） ================= */
+// 4.16.0 删除「读取即清洗」后本节的 6 条死字段断言已随之删除（loadRepoCache 现在是纯读，
+// 不再剔 updated/langColor/ts 与脏 lang，也不再写回持久化）。这里只保留与迁移无关的 D9 契约。
+console.log('\n[7] 导出包只含有标签或有非空备注的仓库');
 reset();
 saveTags('r1', ['a']);
 saveNote('r1', 'n');
 saveRepoData('r1', { name: 'one' });
 saveRepoData('r2', { name: 'two' }); // 无标签无备注，不该进包
-// 直接塞入带历史死字段的存量形态（4.9.0 前 detail 页写入）
-store.set('stars_repo_cache', {
-  r1: { name: 'one', updated: 'Updated 4 years ago', langColor: '#3178c6', updatedAt: '2022-08-24T08:23:07Z', ts: 1708000000000 },
-  r2: { name: 'two', lang: 'Watch1 (1)', langColor: '#f1e05a' }, // lang 也是历史脏值
-});
-const cleaned = loadRepoCache();
-ok('死字段 updated 被剔除', !('updated' in cleaned.r1));
-ok('死字段 langColor 被剔除', !('langColor' in cleaned.r1) && !('langColor' in cleaned.r2));
-ok('死字段 ts 被剔除（4.15.0，引入它的机制已于 4.0.10 拆除）', !('ts' in cleaned.r1));
-ok('脏语言名被剔除', cleaned.r2.lang === undefined);
-ok('清洗写回持久化（第二次读仍干净）', !("updated" in loadRepoCache().r1));
 const pkg7 = buildExportPackage();
-const pkg7str = JSON.stringify(pkg7);
-ok('导出包不含 updated / langColor', !pkg7str.includes('langColor') && !("updated" in (pkg7.data.repoCache.r1 || {})));
+ok('导出包带上有标签有备注的 r1', !!pkg7.data.repoCache.r1);
 ok('导出包不带无标签无备注的 r2', !pkg7.data.repoCache.r2);
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败`);

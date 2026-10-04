@@ -8,14 +8,12 @@
 
 ## 当前状态
 
-版本 **4.14.0**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
+版本 **4.16.0**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
 
-> 交接时间：**2026-10-03 21:30 +0800**（本机时钟）。**4.14.0 已随本次交接一起提交**（`git log` 是历史权威，
-> 提交信息写得很详细）；本文件只留仍生效的口径与下一步。
-> 实施计划（含 7 条可变决策的原始口径与验收标准）已归档：
-> `docs/plans/archive/2026/2026-10-03-他人-stars-页的卡片-本人未-star-的仓库卡片为只读-显示标签-备注但不可编辑-本人已.md`。
+> 交接时间：**2026-10-04**。每轮的提交信息与 `docs/plans/archive/2026/` 的实施计划都是历史权威，
+> 本文件只留**仍生效**的口径与下一步（已完成的过程记录一律压缩为「口径 + 指针」）。
 
-**4.15.0（当前版本）**：本轮为「按 ponytail 口径精简」批次，**零用户可见行为变化**（见 `docs/plans/2026-10-04-…精简.md`）。上一个功能版本 **4.14.0**：他人 stars 页的卡片改为「逐仓库」可编辑 —— 用户报「他人 star 页面的卡片会因为点了
+**4.16.0（当前版本）**：**删除整批版本迁移代码**（见 **D30**）—— 无隔离标签键迁移、`loadRepoCache` 的读取即清洗（含写回）、两个升级回补阀门。**对新装用户零可见变化**；`loadRepoCache()` 变成纯读。上一个版本 **4.15.0** 为「按 ponytail 口径精简」批次（零用户可见行为变化）。再上一个功能版本 **4.14.0**：他人 stars 页的卡片改为「逐仓库」可编辑 —— 用户报「他人 star 页面的卡片会因为点了
 star 就变成可编辑状态」。根因是**只读被判成了页级单一布尔**，且分派写了两处、判据不一致：
 `filters.renderBrowsePage` 有判据，而 `starCheck.syncCardAfterStarChange` **无条件**调可编辑渲染器
 （后者在点星成功的回调链上）。详见 **D29** 与 `docs/adr/0009` 的「追加 7」。一句话口径：
@@ -300,8 +298,11 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
 
 - **删兜底的判据**：有没有实测/官方文档证明它曾经救回过场景；没有就删，并在原地留一句「曾用过什么」。
   保留的 6 类各有硬理由（`:has()` 退路有 `cssTarget=safari15` 背书；12×150ms 重试 + 双 4s 兜底防白屏；
-  GM↔localStorage 镜像层是 dev/非 TM 的唯一数据通道；`tags`/`notes` 旧键迁移删了会丢用户数据；
+  GM↔localStorage 镜像层是 dev/非 TM 的唯一数据通道（**仍保留**）；
   `starWrites` 两段式与 `fullSync` 完整性阀门有真机实测/ADR 红线）。
+  **4.16.0 更新**：「`tags`/`notes` 旧键迁移」这一条已按 **D30** 删除（原措辞在删除后成为假断言）；
+  其中 `notes` 那条旧键**从来就没有迁移路径**（`migrateNotesIfNeeded` 全历史零命中），
+  4.15.0 只删了它的常量。
 - **@grant 只剩 5 项**：`GM_getValue` / `GM_setValue` / `GM_registerMenuCommand` / `GM_openInTab` / `GM_download`。
   **TM 的能力徽标按声明的 `@grant` 数组生成，不做调用分析** ⇒「声明了却走别的通道」照样进用户看到的能力清单，
   要真变短就得删授权：linguist 色表改走**原生 `fetch`**（+ AbortController 手搓超时，不用 `AbortSignal.timeout`
@@ -587,7 +588,8 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
   改为 `octolytics-actor-id`（登录者）。原实现让**他人的 stars 页**读写那个人的命名空间，是实打实的既存缺陷。
 - 本人页上两者数值相等 ⇒ 自有页的键与数据**不变**（无需迁移）；他人页从「读对方」变为「读我的」。
 - **取不到身份时读空表、写 no-op + console warn**，**不回落** `stars_tags` / `stars_notes` 无隔离旧键
-  （回落会把不属于任何账号的存量数据当成自己的显示出来）。旧键只剩 `migrateTagsIfNeeded()` 一处读取。
+  （回落会把不属于任何账号的存量数据当成自己的显示出来）。标签那条旧键的迁移已按 **D30**（4.16.0）删除，
+  裸键残留无任何读者；备注那条旧键从无迁移路径。
 - 连带：`exportImport` 的导出包 `user.id` 与导入归属校验同源改用登录者 id（可观察的行为变化，见 ADR 0008）。
 - 「登录者是谁」只有 `pageScope.ts` 一份实现：`accountGuard.ts` 的 `getViewerId` / `getSessionLogin` 已上移到那里复用。
 
@@ -687,12 +689,50 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
     `applyFilters`，被只读门挡住）。这是净收益，但 D12 的措辞是全局的 ⇒
     **D12 只适用于本方自己的 stars 页**；他人页刷新的路径是重新投影原生条目，不由同步驱动。
 - **验收状态**：静态全绿（`pnpm check` / `verify-css` EXIT 0 / `test:exportimport` 51-0 /
-  `@grant` 恰 5 项）；夹具 **16 组场景 + 2 组窄视口**全跑过（场景数以 `.diag/gen-otherstars-harness.cjs`
+  `@grant` 恰 5 项）；夹具 **17 组场景 + 2 组窄视口**全跑过（场景数以 `.diag/gen-otherstars-harness.cjs`
   的 `scenario ===` 分支为准）；`__errors` 全空、他人页 `fetch`/`writes` 为 0、窄视口 `grid=0` 且 `gsm` 节点 0。新增场景：
   `other-editstate`（同一页 `editable` + `locked-pending` 并存）、`other-pending-expired`
   （超 24h ⇒ 不再显示）、`other-nocache-edit`（无缓存 ⇒ 全只读）、
-  `other-logout-pending`（登出 + 备份里有私密数据 ⇒ 一个字符都不许出现）。
+  `other-logout-pending`（登出 + 备份里有私密数据 ⇒ 一个字符都不许出现）、
+  `own-deadfields`（4.16.0：读路径纯读 —— 有死字段也不写盘、字段原样保留；R28 已做 A/B 反证）。
 ---
+
+**D30 · 版本迁移代码已整批删除（4.16.0）**
+
+- **前提（用户 2026-10-04 裁定）**：本脚本处于**开发阶段，不存在任何已有用户** ⇒「更早的构建可能在磁盘上
+  留下旧形态数据」不再是需要承担的成本。**这不是「以后也不许有迁移」** —— 真发布后若需要，按下面的判据重新立项。
+- **判定边界（唯一判据）**：in-scope = 其**唯一存在理由**是「本脚本更早的构建可能留下旧形态数据」的代码。
+  **out-of-scope（一律不要往这里归类）**：环境兼容（GM 缺席↔可用）、**GitHub 页面代际兼容**（多代骨架同时在线）、
+  本页会话的 DOM 回滚、活功能与缓存。
+- **迁移专用删除判据**（比 D21 那条更具体，专治这类代码）：① 已经**没有写入者**再写旧形态；② 触发的唯一后果是
+  「dev 自己的存储里留下**无读者**的惰性数据」；③ 残留数据对功能零影响；④ **零测试覆盖** ⇒ 删除是静默的，
+  **必须在原地留墓碑注释 + 在本文件记账**（否则下次没人知道它曾经存在过）。
+- **删掉的**（每处源码里都留了「曾用过什么 / 何时删 / 为何删」注释）：
+  - `migrateTagsIfNeeded()` + `STORAGE_KEYS.legacyTags`（裸键 `stars_tags`）—— 自 4.13.0 起无写入者。
+  - `isPlausibleLangName` / `DEAD_REPO_FIELDS` / `loadRepoCache` 的清洗与**写回** —— 顺带修掉一处真实误删：
+    该正则的字符类不含 `*`，而 linguist 的 `F*` 与 `Pro*C` 是合法顶层语言名；且它只在读路径、
+    从不在写路径，从来不是防御。**收益的形状：`loadRepoCache()` 现在是纯读，读函数不再写存储。**
+  - `DATA_REV` / `FullSyncMeta.dataRev` 阀门 + `typeFlagsComplete` 阀门 —— 可达性证明：下面的 `baselineOk`
+    已要求 `lastFullSyncAt` 在 `FULL_SYNC_TTL_MS`（48h）内，更旧的缓存本来就走无条件整表；且导入路径
+    **从不写** `stars_full_sync_meta`，阀门连导入进来的旧语义都看不见。顺带消掉新装用户会看到的一条
+    不成立日志（新装时 `meta.dataRev` 为 `undefined`，原会报「缓存代次旧」）。
+- **刻意保留的**（都写进了当时那轮方案的拒绝清单，别重开）：
+  - `gm.ts` 的 **localStorage → GM 回写**：服务**环境转移**而非版本迁移，且「GM 一时全部缺席」是
+    **被本文档记录、且会反复发生**的失败模式（改过脚本头 → dev loader 的 key 对不上）。
+    **删它会造出真实的静默丢数据链**：GM 缺席期写入的数据只在镜像 → GM 恢复后 `gmGet` 返回默认值
+    （该分支是唯一的桥）→ 下一次 `saveTags` 先读到 `{}` 再写盘 ⇒ **覆盖该窗口内全部标签**。
+  - `SENSITIVE_KEYS` 的**永久拒镜像**半（安全不变量）；其中的「清历史镜像残留」半属遗留代码但保留
+    （不值得为省 8 行把一个活凭证永久留在代码声明「禁入」的命名空间）。
+  - `starCheck` 的 pending+cache 自愈：守的是**当前构建内**两个存储区的一致性，不是跨构建迁移。
+- **不涉及数据格式**：`EXPORT_SCHEMA_VERSION` 仍为 1、导出包字段集不变、导入校验不变 ⇒ 回滚无需数据迁移。
+  **副产品**：读路径不再清洗 ⇒ 异源包里的多余字段会**原样保留**（无读者、不报错、`lang` 渲染走
+  `escapeHtml` + 颜色回落常量，故无 XSS）。
+- **残留（可接受）**：dev 自己的 TM 存储里可能留下无读者的 `stars_tags`，以及缓存里的 `updated`/`langColor`/`ts`。
+  想清干净就在 TM 里清一次本脚本的存储 —— **不要**为此加 `GM_deleteValue`（那会把用户可见的授权清单从 5 项涨回 6 项）。
+- **新增的动态守卫**：夹具场景 `own-deadfields`（R28）锁住「读路径不写存储」——预置三个死字段后断言
+  `__gmWrites` 里没有 `stars_repo_cache`、且三字段原样保留。**已做 A/B 验证该断言不是空转**：把清洗加回去时
+  它确实变红（`cacheWrites=['stars_repo_cache']` / `fieldsKept=[]`）。改夹具或动 `loadRepoCache` 时跑它。
+- **决策过程与逐条证据**：`docs/plans/archive/2026/2026-10-04-将此脚本作为开发阶段-无任何已有用户来处理-清理其中冗余的迁移代码.md`。
 
 ## dev 模式必须知道的四件事
 
@@ -886,7 +926,7 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
    <http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js> 让 TM 原地更新，否则 TM 菜单会整体消失
    （机制见「dev 模式必须知道的四件事」第 4 条：`@version` 变了 → 脚本头变了 → mountGmApi 的 key 对不上）。
    正式版不受影响；`@version` 变了却没重装，表现是「TM 菜单空了」+「同步说未配置 token」。
-2. **4.14.0 的真机确认（只能在真 github.com + TM 上做；行为层已由夹具 16 组场景覆盖）**：
+2. **4.14.0 的真机确认（只能在真 github.com + TM 上做；行为层已由夹具 17 组场景覆盖）**：
    - 他人 stars 页上，本人缓存与页面**有交集**时才看得到效果 —— 若交集为 0（实测常见），
      可用 TM 菜单先「立即全量同步」把当前账号的 star 拉进缓存，再打开自己的 stars 页给其中一两个加标签，
      然后去任意他人的 stars 页看那几张卡片是否可编辑；
@@ -894,7 +934,7 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
      打开 TM 菜单 →「恢复取消的 star」⇒ 回到可编辑且数据完好；
    - 全程 DevTools Network 面板**零 `api.github.com` 请求**；
    - TM 安装页里的**授权清单仍恰 5 项**（dist 头部已核为 5 项，但 TM 的展示需真机确认）。
-   （以上行为层已由夹具 16 组场景覆盖；真机只补观感与安装页核对。）
+   （以上行为层已由夹具 17 组场景覆盖；真机只补观感与安装页核对。）
 3. **`docs/adr/0006` 剩余两项不可观测项**：`?scopes=repo` 预填是否真的勾上（被 sudo/passkey 门拦住，
    **不得**声称可用或不可用）、`context=user_stars` 服务端是否据其分支（实测 200 但不可知）。
    离页仓库 + 仅 VF 头**已实测成立**（见「当前状态」的实测结论），不必重复验。

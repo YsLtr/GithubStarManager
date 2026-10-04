@@ -165,7 +165,7 @@ src/
                      （unmountSyncButton 显式注销订阅）
   storage/
     repoCache.ts      仓库缓存 CRUD
-    tags.ts           标签存储 + **隔离账号解析**（getStorageUserId = 登录者 actor-id，4.12.0 起；取不到则拒绝读写）+ 迁移
+    tags.ts           标签存储 + **隔离账号解析**（getStorageUserId = 登录者 actor-id，4.12.0 起；取不到则拒绝读写）
     notes.ts          备注存储（saveNote 判空 = trim 后为空）
     pendingDelete.ts  待删除区（unstar 宽限期，含标签/备注备份 + listRestorable/formatRemaining 供恢复窗口）
     exportImport.ts   导入导出**纯逻辑**（4.7.0）：buildExportPackage / validateExportPackage / applyImportPackage；不碰 DOM、不弹对话框
@@ -187,8 +187,6 @@ src/
     readonly.css      只读模式节点样式（.gsm-ro-tag(s)；整体包在 ≥768px 里，JS 另有 isDesktop 门）。
                       备注**不在此文件**：只读备注复用自己卡片的 `.stars-card-notes-text`（见 D26/ADR 0009）
     persistent.css    常驻小表（注入后不移除：右栏默认隐藏 + 侧边栏/头像过渡）
-legacy/
-  github-stars-grid.v2.6.user.js   迁移前的单文件版本（冻结，仅供对照/回滚）
 tests/smoke/
   fixture.html            仿 GitHub Stars 页面的最小 DOM + GM API stub + 加载构建产物
   fixture-detail.html     仿仓库详情页（宽限期流程：预置缓存 + unstar/re-star）
@@ -294,7 +292,9 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
 { "123456": "这是一条备注" }
 ```
 
-> `stars_tags` / `stars_notes`（无用户隔离）是旧键，只剩 `migrateTagsIfNeeded()` 一处读取（标签迁移）。
+> `stars_tags` / `stars_notes`（无用户隔离）是旧键。**4.16.0 起迁移代码已删除**（见 AGENTS.md **D30**）：
+> 标签那条自 4.13.0 起就没有写入者，残留的裸键**无任何读者**（想清干净就在 TM 里清一次本脚本的存储）；
+> 备注那条**从来就没有迁移路径**（`migrateNotesIfNeeded` 全历史零命中，4.15.0 只删了它的常量）。
 > **4.12.0 起不再有「取不到 userId 时回退旧键」这条路径**：取不到身份 = 读空表 / 写 no-op（回退会让不属于任何账号的存量数据冒出来）。
 
 ### `github_pat`
@@ -312,8 +312,7 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
   "etags": ["...", "..."],  // 逐页 ETag 基线（全部 304 才算无变化；含空值则下次整表重建）
   "tailEtag": "\"...\"",    // 越界空页 ETag（条件探尾：304=仍空免额度）
   "lastFullSyncAt": 1780000000000,
-  "count": 464,             // star 总数（本地分页总页数 = ceil(count / 30)）
-  "dataRev": 2              // 缓存数据代次（4.8.0）：≠ DATA_REV 时 scanStarred 强制一次整表回补（字段语义变更的存量迁移阀门）
+  "count": 464              // star 总数（本地分页总页数 = ceil(count / 30)）
 }
 ```
 
@@ -342,6 +341,9 @@ Token 归属校验的身份缓存（4.11.0）：`{ [凭证指纹]: { id, login }
 > `LEGACY_STORAGE_KEYS`（`stars_page_snapshots` / `stars_star_verdicts` / `stars_shift_pending`）
 > 与它的 `init()` 一次性 `gmRemove` 清理同样在 4.9.1 删除（含 `GM_deleteValue` 授权）——
 > 该清理属于 4.0.10 的存量迁移，已跨 9 个版本，残留死键无任何功能影响。
+> **4.16.0 又按同一判据整批删了一轮**（标签旧键迁移 / 读取即清洗 / 两个升级回补阀门）—— 见 AGENTS.md **D30**，
+> 那里写明了这类代码的**删除判据**与「刻意保留」清单（GM 回写分支、`SENSITIVE_KEYS` 拒镜像半等）。
+
 ## 6. 核心机制
 
 ### Token 归属校验（4.11.0）
@@ -462,7 +464,7 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 
 卡片右下角的 `Updated X ago` 不再落盘（`updated` 字段已删），渲染时由 `formatRelative(updatedAt)` 现算——相对时间随渲染刷新，且不再有「2 条缺文本」的空窗。
 
-存量数据靠 `stars_full_sync_meta.dataRev`（`constants.ts DATA_REV`）迁移：代次不匹配 → `scanStarred` 强制一次无条件整表回补（与 4.2.0 Type 标志回补同一阀门模式），整表重建时写入当前代次。`loadRepoCache()` 读取即清洗 `updated` / `langColor` 两个死字段。
+`updatedAt` 的存量换血路径 = **48h TTL**：`baselineOk` 要求 `lastFullSyncAt` 在 `FULL_SYNC_TTL_MS`（48h）内，更旧的缓存本来就无条件整表。4.16.0 删掉了原来的两个「升级回补阀门」（`DATA_REV` 代次阀门与 `typeFlagsComplete` 标志阀门）与 `loadRepoCache()` 的读取即清洗 —— 前者经证明不可达（且导入路径从不写 `stars_full_sync_meta`，阀门连导入的旧语义都看不见），后者是纯遗留（顺带修掉一处**误删合法数据**：其字符类不含 `*`，会剔掉 linguist 的 `F*` / `Pro*C`）。**`loadRepoCache()` 现在是纯读，读路径不写存储。** 详见 AGENTS.md **D30**。
 
 ### 同步与进页自动探测
 
@@ -652,7 +654,8 @@ filterState.totalPages    // ceil(count / NATIVE_PAGE_SIZE)
 
 1. `constants.ts`：在 `STORAGE_KEYS` 里加键名（敏感键同步加进 `gm.ts` 的 `SENSITIVE_KEYS`）
 2. `storage/` 下新建模块（或复用现有模块）实现 load/save
-3. 如需迁移，参考 `migrateTagsIfNeeded()`
+3. **迁移**：4.16.0 起本仓已无迁移先例可抄（旧的 `migrateTagsIfNeeded()` 已按 AGENTS.md **D30** 删除）。
+   若确需迁移，先按 D30 的四条判据证明「旧形态可达 + 无写入者 + 残留无读者」，再在源码原地留墓碑注释
 
 ### 添加新的 SVG 图标
 
@@ -698,7 +701,7 @@ pnpm test:exportimport   # = prepare.cjs（编译被测模块 → tests/exportIm
 - 合并：标签并集且本地在前、备注导入优先但空值不覆盖、仓库元数据只补空缺；
 - 幂等：同一包连导两次，第二轮 `tagsAdded/notesApplied/repoCacheAdded` 全为 0；
 - `saveNote` 判空 = trim 后为空；存储按用户 ID 隔离。
-- `loadRepoCache` 读取即清洗：`updated` / `langColor` 死字段与脏 `lang` 一次性剔除并持久化（4.8.0）。
+- `loadRepoCache` 是**纯读**（4.16.0 起）：不做清洗、不写盘。此前它会剔掉 `updated` / `langColor` 死字段与脏 `lang` 并持久化，该机制已按 AGENTS.md **D30** 删除。
 
 
 ### 构建产物 CSS 等价性
