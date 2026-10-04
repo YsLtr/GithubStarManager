@@ -3,7 +3,7 @@
   "private": true,
   "version": "4.14.0",
   "type": "module",
-  "description": "GitHub Stars 页面卡片网格视图油猴脚本",
+  "description": "GitHub Stars 页面优化管理油猴脚本",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

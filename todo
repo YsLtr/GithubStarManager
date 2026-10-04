@@ -49,10 +49,9 @@
 -[x] 同步操作与同步按钮完全联动
 -[x] 当前登录账号与脚本token的相符性检测
 
--[] 全部功能完成后进行重构
 -[x] REST 变异请求限流实测（L0+L1 已执行，**判定 D1**：`used` 每请求 +1，5 点表不作用于 primary；L2 按协议有意不跑，理由见 `docs/research-ratelimit-measurement.md` §5）
 -[x] 真机验证网页写路径：离页只带 VF 头 ✅ 成立（双向）；422 回退前提 ❌ 被推翻（仓库页 0 表单，回退已删）；classic `?scopes=` 预填 ⚠️ 被 sudo 门挡住不可判定 —— 见 `docs/research-web-star-endpoints.md` 附录 A
 -[x] 4.9.0 写路径端到端真机复核（卡片星按钮 → 通知栈 → 「撤销」恢复，均以 API 复核）
--[] 在 Tampermonkey 里装载打包产物做一次验收（本会话浏览器标签页为 hidden，CDP 派发的鼠标事件被 Chrome 丢弃，真受信任点击做不了）
--[] 4.9.2 真机验收（只能在真 github.com + Tampermonkey 上做）：真·窄窗口观感、Turbo 导航路径、安装页授权清单是否恰 5 项、导出仍能触发 `GM_download`、TM 菜单项齐全
--[] 审查轮未采纳的 4 条低价值项（见 `docs/plans/archive/2026/2026-10-02-优化手机端-*.md` §11）：R7 `hideNativeNode` 未保存被覆盖前的 inline `display`（仅理论风险）/ R9 `isDesktop()` 每次新建 `MediaQueryList`（可缓存单例）/ R10 `disposeNotificationStack` 的 `for...of` 等价 `items.clear()` / R11 收窄窗口时不关掉已打开的对话框
+
+
+-[] 全部功能完成后进行重构
