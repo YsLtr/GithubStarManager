@@ -188,8 +188,4 @@ export function exitOtherStarsViewIfActive(): boolean {
   return true;
 }
 
-/** 是否已接管（供入口分派判断，不重复投影） */
-export function isOtherStarsViewMounted(): boolean {
-  return getOtherPageRepos() !== null && !!document.querySelector(`.${GRID_CLASS}`);
-}
 

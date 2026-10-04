@@ -31,7 +31,7 @@
 import { isStarsPage } from './boot';
 
 /** 归属三态。**不用布尔**：「判定不出来」必须与「确定是别人的」区分开（虽然当前两者同样只读）。 */
-export type StarsScope = 'own' | 'other' | 'unknown';
+type StarsScope = 'own' | 'other' | 'unknown';
 
 /** 新版「我的 stars」页：`/stars`（无登录名段，故必须登录才认得出是自己的） */
 const NEW_STARS_SELF = /^\/stars\/?$/;
@@ -63,7 +63,7 @@ export function getViewerLogin(): string {
 }
 
 /** 页面主人数字 id（`octolytics-dimension-user_id`）。`/stars/{login}` 路由上不存在。 */
-export function getPageOwnerId(): string {
+function getPageOwnerId(): string {
   return metaContent('octolytics-dimension-user_id');
 }
 

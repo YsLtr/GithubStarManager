@@ -19,8 +19,6 @@ export interface RepoData {
   isTemplate?: boolean;
   /** 是否镜像（API `mirror_url != null`） */
   mirror?: boolean;
-  /** 缓存写入时间 */
-  ts?: number;
   /** 仅在待删除区条目上存在 */
   unstarredAt?: number;
 }

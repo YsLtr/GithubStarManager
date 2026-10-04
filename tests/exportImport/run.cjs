@@ -156,12 +156,13 @@ saveRepoData('r1', { name: 'one' });
 saveRepoData('r2', { name: 'two' }); // 无标签无备注，不该进包
 // 直接塞入带历史死字段的存量形态（4.9.0 前 detail 页写入）
 store.set('stars_repo_cache', {
-  r1: { name: 'one', updated: 'Updated 4 years ago', langColor: '#3178c6', updatedAt: '2022-08-24T08:23:07Z' },
+  r1: { name: 'one', updated: 'Updated 4 years ago', langColor: '#3178c6', updatedAt: '2022-08-24T08:23:07Z', ts: 1708000000000 },
   r2: { name: 'two', lang: 'Watch1 (1)', langColor: '#f1e05a' }, // lang 也是历史脏值
 });
 const cleaned = loadRepoCache();
 ok('死字段 updated 被剔除', !('updated' in cleaned.r1));
 ok('死字段 langColor 被剔除', !('langColor' in cleaned.r1) && !('langColor' in cleaned.r2));
+ok('死字段 ts 被剔除（4.15.0，引入它的机制已于 4.0.10 拆除）', !('ts' in cleaned.r1));
 ok('脏语言名被剔除', cleaned.r2.lang === undefined);
 ok('清洗写回持久化（第二次读仍干净）', !("updated" in loadRepoCache().r1));
 const pkg7 = buildExportPackage();

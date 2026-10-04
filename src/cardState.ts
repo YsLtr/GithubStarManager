@@ -42,10 +42,10 @@ import { getViewStarOverride } from './viewContext';
 import type { RepoCache } from './types';
 
 /** 卡片的标签/备注呈现状态（逐仓库） */
-export type CardState = 'editable' | 'locked-pending' | 'locked-empty';
+type CardState = 'editable' | 'locked-pending' | 'locked-empty';
 
 /** 卡片的标签/备注展示数据 + 由哪条判据得出 */
-export interface CardDisplayData {
+interface CardDisplayData {
   state: CardState;
   tags: string[];
   note: string;

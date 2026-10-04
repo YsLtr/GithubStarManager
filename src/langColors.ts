@@ -92,7 +92,6 @@ async function fetchLangColorTable(): Promise<string> {
   }
 }
 
-/** 从数据源获取语言色并写缓存（单飞；成功后回退集重检命中，失败沿用旧数据 + 冷却） */
 /**
  * 语言色请求开关（4.13.0）。他人 star 页的门是「零网络」，而卡片渲染里的 `getLangColor()`
  * 在**色表未命中**时会顺手发一次 linguist 请求 —— 这条**间接**路径同样违反零网络
@@ -110,6 +109,7 @@ export function setLangColorFetchEnabled(enabled: boolean): boolean {
   return prev;
 }
 
+/** 从数据源获取语言色并写缓存（单飞；成功后回退集重检命中，失败沿用旧数据 + 冷却） */
 function fetchLangColors(): Promise<void> {
   if (!fetchEnabled) return Promise.resolve(); // 他人 star 页：零网络（见 setLangColorFetchEnabled）
   if (inflight) return inflight;

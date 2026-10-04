@@ -17,7 +17,7 @@
 import { isDesktop } from './utils';
 
 /** 标题行里那份克隆件的类名（回滚按它删节点） */
-export const TOP_PAGER_CLASS = 'gsm-top-pager';
+const TOP_PAGER_CLASS = 'gsm-top-pager';
 
 /**
  * 把 `source` 克隆一份挂到 `scope` 内标题行（`h2.f3-light` 的父节点）的右侧。

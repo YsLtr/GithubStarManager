@@ -91,7 +91,6 @@ export function isMutationQueued(label: string): boolean {
   return queue.some((it) => it.label === label && !it.started && !it.cancelled);
 }
 
-/** 未执行的排队条目数（不含正在执行的那条） */
 
 async function drain(): Promise<void> {
   draining = true;

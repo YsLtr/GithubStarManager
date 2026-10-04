@@ -34,7 +34,7 @@ const NOTES_SELECTOR = '.stars-card-notes';
 /** 状态身份属性：挂在两个区域容器上，供夹具断言与排查用；不参与样式、随节点一起销毁 */
 const STATE_ATTR = 'gsmCardState';
 
-export type CardAreaView = 'own' | 'other';
+type CardAreaView = 'own' | 'other';
 
 export function renderCardTagAndNoteAreas(
   card: HTMLElement,

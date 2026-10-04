@@ -35,8 +35,6 @@ export const STORAGE_KEYS = {
   pendingDelete: 'stars_pending_delete',
   /** 旧版无用户隔离的标签键（迁移用） */
   legacyTags: 'stars_tags',
-  /** 旧版无用户隔离的备注键（迁移用） */
-  legacyNotes: 'stars_notes',
   tagsPrefix: 'stars_tags_',
   notesPrefix: 'stars_notes_',
   /** GitHub PAT（classic ghp_ / fine-grained github_pat_），外部 unstar 核对用 */

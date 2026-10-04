@@ -24,8 +24,11 @@ function isPlausibleLangName(lang: string): boolean {
 
 /** 4.8.0 起已死、读取时一并剔掉的历史字段（曾经有写入点、后被整体废弃，存量数据自愈清洗）：
  * - updated：缓存的相对时间展示文本（原详情页提取写入，4.8.0 起渲染时现算）
- * - langColor：per-repo 语言色（4.3.0 语言色运行时化后废除，渲染走 stars_lang_colors 全局映射） */
-const DEAD_REPO_FIELDS = ['updated', 'langColor'] as const;
+ * - langColor：per-repo 语言色（4.3.0 语言色运行时化后废除，渲染走 stars_lang_colors 全局映射）
+ * - ts：缓存写入时间戳。随 3.0.9「到货快照 diff」引入（当时用于判断哪些条目是新到货的），
+ *   该机制在 4.0.10 被整簇拆除（commit eef4f3e：snapshot / 裁决缓存 / shiftPending），读取点随之
+ *   消失而写入点被落下 —— 4.15.0 一并清掉，避免继续白写。 */
+const DEAD_REPO_FIELDS = ['updated', 'langColor', 'ts'] as const;
 
 /** 读取全部仓库缓存（所有用户共享）。读取即清洗：历史脏值与死字段一次性剔除并写回 */
 export function loadRepoCache(): RepoCache {
@@ -53,11 +56,10 @@ export function saveRepoCache(all: RepoCache): void {
   gmSet(STORAGE_KEYS.repoCache, all);
 }
 
-/** 读取单个仓库缓存，未命中返回 null */
 
-/** 合并写入单个仓库缓存，并刷新 ts */
+/** 合并写入单个仓库缓存 */
 export function saveRepoData(repoId: string, data: Partial<RepoData>): void {
   const all = loadRepoCache();
-  all[repoId] = Object.assign({}, all[repoId] || {}, data, { ts: Date.now() });
+  all[repoId] = Object.assign({}, all[repoId] || {}, data);
   saveRepoCache(all);
 }

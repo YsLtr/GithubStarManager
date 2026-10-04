@@ -30,7 +30,7 @@
 import type { RepoData } from './types';
 
 /** 他人页的投影结果：登录名（页面身份校验用）+ repoId → 数据 */
-export interface OtherPageSource {
+interface OtherPageSource {
   ownerLogin: string;
   repos: Record<string, RepoData>;
 }
@@ -80,10 +80,6 @@ export function isReadOnlyView(): boolean {
   return otherPage !== null;
 }
 
-/** 他人页登录名；非他人页返回 '' */
-export function getOtherPageOwner(): string {
-  return otherPage?.ownerLogin ?? '';
-}
 
 /**
  * 复位为「我自己的表」。**必须在**离开他人页 / 跨断点收窄 / 回滚 时调用 ——

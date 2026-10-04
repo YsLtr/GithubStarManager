@@ -41,7 +41,6 @@ import {
 export const getGitHubPat = getToken;
 
 
-/** TM 菜单入口：输入/清除 PAT。任意 github.com 页面可设（init 无条件注册）。 */
 /** 输入/清除 PAT（TM 菜单入口；留空 = 删除 token 并重新打开初始化面板） */
 function promptForToken(notify = true): void {
   const cur = getGitHubPat();
