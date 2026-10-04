@@ -5,9 +5,9 @@ export const MOBILE_BREAKPOINT = 768;
 /** unstar 后数据的宽限期：24 小时 */
 export const GRACE_PERIOD = 24 * 60 * 60 * 1000;
 
-/** 缓存数据代次：字段语义变更时 +1，旧代次缓存强制一次无条件整表回补（scanStarred 的升级回补阀门）。
- * 1 = 4.2.0 前无 Type 四标志；2 = 4.8.0 updatedAt 从 updated_at 改为 pushed_at + 删 updated/langColor 死字段。 */
-export const DATA_REV = 2;
+/* 曾用过什么（D30 / 4.16.0 删除）：此处原有 `DATA_REV`（缓存数据代次：字段语义变更时 +1，
+ * 旧代次缓存由 scanStarred 强制一次无条件整表回补）。删除理由见 fullSync.ts 的 scanStarred 墓碑：
+ * 48h TTL 已使该阀门不可达。若将来真需要一次换血，从这里拿回来即可（约 3 行 + 一处判据 + 一处写入）。 */
 
 /** 每页卡片数（与 GitHub 原生分页一致；4.0.0 本地切页用） */
 export const NATIVE_PAGE_SIZE = 30;
@@ -33,13 +33,11 @@ export const TYPE_OPTIONS: ReadonlyArray<{ value: TypeFilter; label: string }> =
 export const STORAGE_KEYS = {
   repoCache: 'stars_repo_cache',
   pendingDelete: 'stars_pending_delete',
-  /** 旧版无用户隔离的标签键（迁移用） */
-  legacyTags: 'stars_tags',
   tagsPrefix: 'stars_tags_',
   notesPrefix: 'stars_notes_',
   /** GitHub PAT（classic ghp_ / fine-grained github_pat_），外部 unstar 核对用 */
   githubPat: 'github_pat',
-  /** P4 全量同步元数据：{etags, tailEtag, lastFullSyncAt, count, dataRev}（ETag 快筛 + API 模式判定 + 本地分页总数） */
+  /** P4 全量同步元数据：{etags, tailEtag, lastFullSyncAt, count}（ETag 快筛 + API 模式判定 + 本地分页总数） */
   fullSyncMeta: 'stars_full_sync_meta',
   /** 语言色全局映射缓存（4.3.0：运行时从 linguist languages.yml 获取并缓存，不按仓库存色、不硬编码） */
   langColors: 'stars_lang_colors',
@@ -79,9 +77,9 @@ export const STARS_LAYOUT_CLASS = 'gsm-stars-layout';
 
 /** 导出包协议身份：**永不随脚本改名变动**（改名只影响文件名 slug）。校验「这是不是本项目的文件」靠它 */
 export const EXPORT_KIND = 'github-star-manager-export';
-/** 导出包结构版本：**兼容性破坏**才 +1（字段增删若旧包仍可完整解析则不升版，未知字段导入侧会被
- * loadRepoCache 死字段清洗剔除）；升版 = 新脚本明确拒绝旧包而不是部分解析。4.8.0 删除 updated/langColor
- * 死字段属非破坏变更：旧包可完整解析，故保持 1。 */
+/** 导出包结构版本：**兼容性破坏**才 +1（字段增删若旧包仍可完整解析则不升版）；升版 = 新脚本明确
+ * 拒绝旧包而不是部分解析。4.8.0 删除 updated/langColor 死字段属非破坏变更：旧包可完整解析，故保持 1。
+ * （4.16.0 起读路径不再清洗未知字段 —— 包里的多余字段会**原样保留**在缓存里，无读者、不报错。） */
 export const EXPORT_SCHEMA_VERSION = 1;
 
 /** 本地时区的 `YYYY-MM-DD-HHmm`（文件名用；Windows 禁用字符 `:` 已避开） */

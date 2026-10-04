@@ -19,7 +19,6 @@ import {
 } from './tokenConfig';
 import { cleanupExpiredUnstarred } from './storage/pendingDelete';
 import { registerHideListsMenu, setHideListsRepositionHandler } from './ui/hideListsMenu';
-import { migrateTagsIfNeeded } from './storage/tags';
 import {
   mountAccountGuard,
   repositionAccountBanner,
@@ -49,10 +48,9 @@ function ensureStarsSetup(): void {
   // teardown 已把 gsm-hide-lists 摘掉，这里负责按当前视口 + 开关重新挂上。
   applyHideListsGate();
   ensureLayoutStyles();
-  // 存储迁移 / 超期备份清理与视口无关（数据不随窗口大小改变，回滚也不回滚数据）
+  // 超期备份清理与视口无关（数据不随窗口大小改变，回滚也不回滚数据）
   if (starsSetupDone) return;
   starsSetupDone = true;
-  migrateTagsIfNeeded();
   cleanupExpiredUnstarred();
 }
 

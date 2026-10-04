@@ -28,7 +28,7 @@
 // 已知局限：classic token 无 repo scope 时私有仓库的 star 不在列表里 → 会被误判
 // unstar（与 P2.5 核对的 404 歧义同源）；fine-grained 选 All repositories 无此问题。
 
-import { DATA_REV, STORAGE_KEYS, SYNC_SVG } from './constants';
+import { STORAGE_KEYS, SYNC_SVG } from './constants';
 import { gmGet, gmRegisterMenuCommand, gmSet } from './gm';
 import { applyExternalUnstar, getGitHubPat } from './starCheck';
 import { applyFilters } from './filters';
@@ -418,16 +418,6 @@ async function fullPullOutcome(tok: string): Promise<ScanOutcome> {
   };
 }
 
-/** Type 四标志完整性（4.2.0 升级回补阀门）：任一缓存条目缺标志 → 切片与 Type 筛选不可信，需整表回补 */
-function typeFlagsComplete(cache: RepoCache): boolean {
-  for (const id in cache) {
-    const e = cache[id];
-    if (e.private === undefined || e.fork === undefined || e.isTemplate === undefined || e.mirror === undefined) {
-      return false;
-    }
-  }
-  return true;
-}
 
 /**
  * 单遍扫描（4.0.8，合并原 quickCheck + pullAllStarred，用户定「无须两个函数」）：
@@ -445,18 +435,12 @@ async function scanStarred(tok: string, meta: FullSyncMeta): Promise<ScanOutcome
     !!meta.lastFullSyncAt &&
     Date.now() - meta.lastFullSyncAt <= FULL_SYNC_TTL_MS &&
     !!baseline && baseline.length > 0 && baseline.every((e) => !!e);
-  // 升级回补阀门（4.8.0）：字段语义变更（updatedAt: updated_at → pushed_at）后，
-  // 存量值是旧语义而切片条目 304 时跳过刷新 → 必须整表回补一次换血。dataRev 在整表
-  // 重建时写入（outMeta），之后此阀门恒不触发，与 Type 标志阀门同一模式。
-  if (meta.dataRev !== DATA_REV) {
-    console.log('[github-star-manager] 缓存代次旧（updatedAt 语义=updated_at，升级回补）→ 无条件整表拉取一次');
-    return fullPullOutcome(tok);
-  }
-  // 升级回补阀门（4.2.0）：缓存缺 Type 四标志 → 无条件整表回补一次（parseItem 会给全部条目写满标志，之后回归条件扫描）
-  if (!typeFlagsComplete(loadRepoCache())) {
-    console.log('[github-star-manager] 缓存缺 Type 标志（升级回补）→ 无条件整表拉取一次');
-    return fullPullOutcome(tok);
-  }
+  // 曾用过什么（D30 / 4.16.0 删除）：此处原有两个「升级回补阀门」——`meta.dataRev !== DATA_REV`
+  // （4.8.0，updatedAt 语义由 updated_at 改 pushed_at 时换血一次）与 `typeFlagsComplete(cache)`
+  // （4.2.0，缓存缺 Type 四标志则整表回补）。删除理由：两者唯一能修的是「≤4.7.x 写入的缓存」，
+  // 而下面的 baselineOk 已要求 lastFullSyncAt 在 FULL_SYNC_TTL_MS（48h）内 —— 更旧的缓存本来就走
+  // 无条件整表（语义与四标志一起补齐），阀门的可触发窗口实际不可复现；且导入路径从不写
+  // stars_full_sync_meta，阀门连导入进来的旧语义数据都看不见。四标志现由 parseItem 在同步时写入。
   if (!baselineOk) {
     console.log('[github-star-manager] 无逐页基线/超 48h TTL → 无条件整表拉取（重建基线）');
     return fullPullOutcome(tok);
@@ -786,7 +770,7 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
     // 有增删差异或可见元数据更新 → **立即重绘**网格（不问「是否刷新」）
     rerenderAfterSync(added + restored + unstarred + backfilled + refreshed);
     // 写元数据：逐页 ETag 基线（304 页沿用旧校验值、正文页用响应值，剥 W/ 规范形）+ lastFullSyncAt + 总数
-    const outMeta: FullSyncMeta = { etags: scan.etags, lastFullSyncAt: Date.now(), count: scan.items.length, dataRev: DATA_REV };
+    const outMeta: FullSyncMeta = { etags: scan.etags, lastFullSyncAt: Date.now(), count: scan.items.length };
     if (scan.nextTailEtag) outMeta.tailEtag = scan.nextTailEtag; // 尾页越界 etag（缺省=清空：尾页转正或整表兜底后新越界页待首探）
     gmSet(STORAGE_KEYS.fullSyncMeta, outMeta);
     const noEtag = scan.etags.filter((e) => !e).length;

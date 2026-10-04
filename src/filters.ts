@@ -73,7 +73,7 @@ function sortResults(results: FilteredRepo[]): void {
 
 /**
  * Type 判定（4.2.0）：对齐原生 7 项（Can be sponsored 无 API 字段，D2 已定案省略）。
- * 四标志缺省（undefined）按 false 处理——4.2.0 升级回补阀门保证 star 条目首轮整表后必有值。
+ * 四标志缺省（undefined）按 false 处理——正常路径必有值：parseItem（fullSync.ts）在同步落盘时写入全部四标志。
  */
 function typeMatches(data: RepoData, type: TypeFilter): boolean {
   switch (type) {

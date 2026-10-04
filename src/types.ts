@@ -63,7 +63,4 @@ export interface FullSyncMeta {
   lastFullSyncAt?: number;
   /** 上次整表的 star 总数（本地分页总页数 = ceil(count/30)） */
   count?: number;
-  /** 缓存数据代次（4.8.0）：!== DATA_REV 时强制一次无条件整表，用于字段语义变更后的存量回补。
-   * 4.8.0 = updatedAt 从 updated_at 改为 pushed_at；整表重建（outMeta）时会写入当前代次。 */
-  dataRev?: number;
 }

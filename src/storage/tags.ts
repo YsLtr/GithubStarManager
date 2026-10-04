@@ -55,14 +55,7 @@ export function getTags(repoId: string): string[] {
 }
 
 
-/** 把旧版无账号隔离的标签迁移到**当前登录者**的键下（仅当新键为空时）。取不到身份则不迁移。 */
-export function migrateTagsIfNeeded(): void {
-  const userId = getStorageUserId();
-  if (!userId) return;
-  const oldData = gmGet<TagMap | null>(STORAGE_KEYS.legacyTags, null);
-  const newKey = STORAGE_KEYS.tagsPrefix + userId;
-  const newData = gmGet<TagMap | null>(newKey, null);
-  if (oldData && !newData) {
-    gmSet(newKey, oldData);
-  }
-}
+/* 曾用过什么（D30 / 4.16.0 删除）：此处原有 `migrateTagsIfNeeded()`，把 4.12.0 之前写在无隔离键
+ * `stars_tags` 里的标签搬到 `stars_tags_<登录者id>`（仅当新键不存在时）。
+ * 删除理由：自 4.13.0（a56f87f 删掉旧键回落分支）起**再无写入者**写裸键，迁移是一次性动作，
+ * 且删除后残留的 `stars_tags` 无任何读者（见 AGENTS.md D30 的删除判据）。 */

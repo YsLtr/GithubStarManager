@@ -16,40 +16,17 @@ export function hasApiData(): boolean {
   return !!meta.lastFullSyncAt && (meta.count ?? 0) > 0;
 }
 
-/** linguist 语言名的字符域：字母/数字/空格/#/+'-.（C++、F#、Ren'Py、1C Enterprise、G-code 皆合法）。
- * 4.3.1 前的 DOM 提取曾把 2026 版详情页 Watch/Fork 计数条（"Watch1 (1)"）当语言写进缓存，此门挡住该类脏值。 */
-function isPlausibleLangName(lang: string): boolean {
-  return /^[A-Za-z0-9+#'.\-_ ]{1,40}$/.test(lang);
-}
+/* 曾用过什么（D30 / 4.16.0 删除）：此处原有两段「读取即清洗」——`isPlausibleLangName(lang)`
+ * 剔掉不合字符域的语言名，以及 `DEAD_REPO_FIELDS`（updated / langColor / ts）剔掉历史死字段，
+ * 且两者都会把清洗结果写回存储（读路径带写盘副作用）。删除理由：
+ * ① 三个死字段全仓零读者（types.ts 未声明）；② `isPlausibleLangName` 的字符类不含 `*`，
+ * 而 linguist 的 `F*` / `Pro*C` 是合法顶层语言名 ⇒ 它实际在做「读取时误删当前合法数据」；
+ * ③ 它只在读路径、从不在写路径（lang 的写点 fullSync / domRepos 都不过此门），从来不是防御。
+ * 副作用：`loadRepoCache()` 现在是**纯读**，不再写存储（曾让夹具的零写入断言误报）。 */
 
-/** 4.8.0 起已死、读取时一并剔掉的历史字段（曾经有写入点、后被整体废弃，存量数据自愈清洗）：
- * - updated：缓存的相对时间展示文本（原详情页提取写入，4.8.0 起渲染时现算）
- * - langColor：per-repo 语言色（4.3.0 语言色运行时化后废除，渲染走 stars_lang_colors 全局映射）
- * - ts：缓存写入时间戳。随 3.0.9「到货快照 diff」引入（当时用于判断哪些条目是新到货的），
- *   该机制在 4.0.10 被整簇拆除（commit eef4f3e：snapshot / 裁决缓存 / shiftPending），读取点随之
- *   消失而写入点被落下 —— 4.15.0 一并清掉，避免继续白写。 */
-const DEAD_REPO_FIELDS = ['updated', 'langColor', 'ts'] as const;
-
-/** 读取全部仓库缓存（所有用户共享）。读取即清洗：历史脏值与死字段一次性剔除并写回 */
+/** 读取全部仓库缓存（所有用户共享）。纯读 —— 不做任何清洗、不写盘 */
 export function loadRepoCache(): RepoCache {
-  const all = gmGet<RepoCache>(STORAGE_KEYS.repoCache, {});
-  let dirty = false;
-  for (const id in all) {
-    const entry = all[id] as RepoData & Record<string, unknown>;
-    const lang = entry.lang;
-    if (lang !== undefined && !isPlausibleLangName(lang)) {
-      delete entry.lang;
-      dirty = true;
-    }
-    for (const f of DEAD_REPO_FIELDS) {
-      if (f in entry) {
-        delete entry[f];
-        dirty = true;
-      }
-    }
-  }
-  if (dirty) saveRepoCache(all);
-  return all;
+  return gmGet<RepoCache>(STORAGE_KEYS.repoCache, {});
 }
 
 export function saveRepoCache(all: RepoCache): void {
