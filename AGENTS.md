@@ -8,12 +8,17 @@
 
 ## 当前状态
 
-版本 **4.16.0**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
+版本 **4.16.1**（`package.json` 为单一版本源，`vite.config.ts` 读它写入脚本头）。
 
-> 交接时间：**2026-10-04**。每轮的提交信息与 `docs/plans/archive/2026/` 的实施计划都是历史权威，
+> 交接时间：**2026-10-05**。每轮的提交信息与 `docs/plans/archive/2026/` 的实施计划都是历史权威，
 > 本文件只留**仍生效**的口径与下一步（已完成的过程记录一律压缩为「口径 + 指针」）。
 
-**4.16.0（当前版本）**：**删除整批版本迁移代码**（见 **D30**）—— 无隔离标签键迁移、`loadRepoCache` 的读取即清洗（含写回）、两个升级回补阀门。**对新装用户零可见变化**；`loadRepoCache()` 变成纯读。上一个版本 **4.15.0** 为「按 ponytail 口径精简」批次（零用户可见行为变化）。再上一个功能版本 **4.14.0**：他人 stars 页的卡片改为「逐仓库」可编辑 —— 用户报「他人 star 页面的卡片会因为点了
+**4.16.1（当前版本）**：**修掉「同步后重渲染把用户弹回页顶」**（硬口径已并入 **D12**）——
+`renderBrowsePage` 由「`innerHTML=''` + 逐张 `appendChild`」改为**分片建好后一次 `replaceChildren`**，
+并删掉 `applyFilters` 里那句重复的 `.stars-grid-card-cached` 整批预删除。根因是**拆建之间出现了「空网格」中间态**：
+那一刻整页只剩一屏高（真机实测 `docH` 2787 → 957），浏览器重算滚动范围后把 `scrollY` 夹到 0，
+而重建**不会**把位置还回来（A/B 实测：旧 2599→0 / 1812→0，原子替换两条都保持原值）。**无 API / 存储 / UI 变化**、
+`package.json` 外无其它版本引用。上一个版本 **4.16.0** 为「删除整批版本迁移代码」批次（见 **D30**）；**4.15.0** 为「按 ponytail 口径精简」批次（零用户可见行为变化）。再上一个功能版本 **4.14.0**：他人 stars 页的卡片改为「逐仓库」可编辑 —— 用户报「他人 star 页面的卡片会因为点了
 star 就变成可编辑状态」。根因是**只读被判成了页级单一布尔**，且分派写了两处、判据不一致：
 `filters.renderBrowsePage` 有判据，而 `starCheck.syncCardAfterStarChange` **无条件**调可编辑渲染器
 （后者在点星成功的回调链上）。详见 **D29** 与 `docs/adr/0009` 的「追加 7」。一句话口径：
@@ -64,6 +69,9 @@ star 就变成可编辑状态」。根因是**只读被判成了页级单一布�
 
 **静态口径**：`pnpm check` 绿（tsc --noEmit + build）、`test:exportimport` 全过、动 CSS 时 `verify-css` EXIT 0、
 dist 头部 `@grant` 恰 5 项。
+**滚动位置口径（4.16.1）**：重绘前后 `window.scrollY` 必须不变，且过程内 `docH` **不得**低于 `innerHeight`
+（中间态判据）。可跑 `.diag/probe-ab-replace.js`（夹具）与 `.diag/probe-ab-live.js`（真机，跑完还原节点）；
+跑真机版前先 `document.getAnimations().forEach(a => { try { a.finish(); } catch {} })`，否则后台标签页读到起点值。
 
 - **夹具 URL 必须带 `?tab=stars`**，否则 `isStarsPage()` 为假、脚本根本不转换，`grid:0` 会被**误读成全绿**。
   场景名以 `.diag/gen-otherstars-harness.cjs` 的 `scenario ===` 分支为准（现 **17 组**：16 个显式场景 + 生成器无分支的隐式 `own`；断言侧另有 `#narrow` 窄视口）。
@@ -237,6 +245,15 @@ CDP 派发的鼠标事件**（逐字正确的三事件序列 + `elementFromPoint
 - 4.9.0 的 `INTERACTION_QUIET_MS` / `lastInteractionAt` / `ensureInteractionTracking()` 三监听已整段删除；
   **不要**恢复「弹一条可点击的刷新提示」——那是被明确否决的口径。
 - 已知代价（用户裁定接受）：进页自动同步时列表会在用户眼前重排；换来的是「简报说什么，列表就是什么」，不再有「提示与数据不一致」的中间态。
+- **重绘期间网格不得出现「空态」（4.16.1）**：`renderBrowsePage` 是**唯一**拆建点，且必须
+  **分片建好再一次 `replaceChildren`**；`applyFilters` 里那句 `.stars-grid-card-cached` 整批预删除已删，
+  **不得**以任何形式恢复「先清空 → 再重建」的二段式（别处加预删除、改回 `innerHTML=''`、或改成
+  `remove()` 后再逐张 append 都算）。理由：清空那一刻网格为空 ⇒ 整页只剩一屏高（真机实测 `docH`
+  2787 → 957）⇒ 浏览器重算滚动范围把 `scrollY` 夹到 0，而重建**不会**把位置还回来
+  （A/B：旧 2599→0 / 1812→0；原子替换 2599→2599 / 1812→1812）。刻意**不**用「保存并还原 `scrollY`」
+  代替 —— 位置在原子替换下根本不会动，多写一次反而打断用户期间自己的滚动与 `overflow-anchor`。
+  可复跑的 A/B：`.diag/scroll-clamp-probe.html` + `.diag/probe-ab-replace.js`（`docH@flush` 是中间态
+  是否被布局观察到的判据）；真机版 `.diag/probe-ab-live.js`（**跑完必须把原节点 `replaceChildren` 还回**）。
 
 **D18 · 窄视口（<768px）完全惰性（4.9.2）**
 
@@ -954,7 +971,7 @@ agent-browser-cli exec --tab <tabId> --file .diag/run-xxx.js
 
 ## 下一步
 
-1. **本次升级（`@version` 4.14.0 → 4.15.0）→ 若你在用 dev 脚本，必须重装 dev loader**：重开
+1. **本次升级（`@version` 4.16.0 → 4.16.1）→ 若你在用 dev 脚本，必须重装 dev loader**：重开
    <http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js> 让 TM 原地更新，否则 TM 菜单会整体消失
    （机制见「dev 模式必须知道的四件事」第 4 条：`@version` 变了 → 脚本头变了 → mountGmApi 的 key 对不上）。
    正式版不受影响；`@version` 变了却没重装，表现是「TM 菜单空了」+「同步说未配置 token」。

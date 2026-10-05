@@ -282,15 +282,22 @@ export function renderBrowsePage(page: number): number {
   const start = (filterState.page - 1) * pageSize;
   const terms = searchTerms();
 
-  // 底部本地分页器常驻：innerHTML 清空会把它一并删掉（4.4.0 审查 🟡-1：4.0.0 起底部
-  // 分页器实际只活到首帧渲染就被清空）——先摘下、渲染完插回，顶部克隆在标题行不受影响
+  // 底部本地分页器常驻：容器清空（现在是 replaceChildren）会把它一并删掉（4.4.0 审查 🟡-1：4.0.0 起底部
+  // 分页器实际只活到首帧渲染就被清空）——先摘下（移进分片）、换入时随分片带回，顶部克隆在标题行不受影响
   const bottomPager = gridContainer.querySelector<HTMLElement>('.paginate-container.gsm-local-pager');
-  if (bottomPager) bottomPager.remove();
-
-  gridContainer.innerHTML = '';
+  // 改用**原子替换**（DocumentFragment + replaceChildren）：
+  //   旧写法是 `innerHTML = ''` 清空、再逐张 `appendChild` 重建。清空那一刻网格为空、
+  //   整页只剩一屏高 ⇒ 浏览器重算滚动范围后把 `scrollY` 夹到 0，而重建**不会**把位置还回来
+  //   （真机实测：滚到底部时一次同步/筛选重绘就把用户弹回顶部）。
+  //   分片建好后一次换入 ⇒ 从旧卡到新卡之间不存在「空网格」这个可被布局观察到的中间态。
+  //   刻意**不做** window.scrollTo 保存/还原：位置本就没被动过，多余的写入反而会打断
+  //   用户在这期间自己的滚动（以及 overflow-anchor 的正常工作）。
+  //   注意：这里必须是 renderBrowsePage 唯一的拆建点（`applyFilters` 里曾有一次重复的
+  //   「先删光 .stars-grid-card-cached」预清理，已删 —— 正是它把空网格态提前到了渲染之前）。
+  const frag = document.createDocumentFragment();
   for (const { repoId, data } of results.slice(start, start + pageSize)) {
     const card = buildCardFromCache(repoId, data);
-    gridContainer.appendChild(card);
+    frag.appendChild(card);
     // 标签/备注：唯一分派点（他人页逐仓库三态，本方自己的页永远可编辑）
     renderCardTagAndNoteAreas(card, readOnly ? 'other' : 'own', viewerCache);
     if (readOnly) {
@@ -301,7 +308,8 @@ export function renderBrowsePage(page: number): number {
     createStarButtonForCached(card, data);
     if (terms.length > 0) highlightMatchesInCard(card, terms);
   }
-  if (bottomPager) gridContainer.appendChild(bottomPager);
+  if (bottomPager) frag.appendChild(bottomPager);
+  gridContainer.replaceChildren(frag);
   if (!readOnly) updateLocalPagers();
   return results.length;
 }
@@ -444,7 +452,9 @@ export function applyFilters(opts: { keepPage?: boolean } = {}): void {
   // 「在自己页筛过标签 → Turbo 切到别人的 stars 页 → 在卡片上点 star」就会踩中。
   // 此前唯一的防护是「他人页入口刻意直调 renderBrowsePage 绕过 applyFilters」，属实现约定而非不变量。
   if (isReadOnlyView()) return;
-  document.querySelectorAll('.stars-grid-card-cached').forEach((el) => el.remove());
+  // 这里曾有 `.stars-grid-card-cached` 的整批预删除（已删）。它与 renderBrowsePage 的
+  // 容器清空完全重复，却把「网格为空」这个可被布局观察到的中间态**提前**到渲染之前
+  // ⇒ 用户滚到底部时，一次筛选/同步重绘就永久跳回顶部。拆建只在 renderBrowsePage 一处做。
 
   // 2. 常驻本地控件（Type / Language / Sort+方向）原位刷新，同时保证原生菜单持续隐藏
   updateLocalFilterControls();
