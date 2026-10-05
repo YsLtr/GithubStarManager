@@ -177,8 +177,8 @@ src/
     repoCache.ts      仓库缓存 CRUD
     tags.ts           标签存储 + **隔离账号解析**（getStorageUserId = 登录者 actor-id，4.12.0 起；取不到则拒绝读写）
     notes.ts          备注存储（saveNote 判空 = trim 后为空）
-    pendingDelete.ts  待删除区（unstar 宽限期，含标签/备注备份 + listRestorable/formatRemaining 供恢复窗口）
-    exportImport.ts   导入导出**纯逻辑**（4.7.0）：buildExportPackage / validateExportPackage / applyImportPackage；不碰 DOM、不弹对话框
+    pendingDelete.ts  待删除区（unstar 宽限期，含标签/备注/名字备份 + listRestorable/formatRemaining 供恢复窗口；4.17.0 新增 addPendingFromImport —— 导入路径专用，空不覆盖非空、非空整体替换、不重置 unstarredAt）
+    exportImport.ts   导入导出**纯逻辑**（4.7.0；**4.17.0**：导出 = tags/notes + 最小标识 repoNames、导入按「仓库在不在整表缓存里」逐仓库分派）：buildExportPackage / validateExportPackage / applyImportPackage；不碰 DOM、不弹对话框
   ui/
     cards.ts          卡片构建 + 星星按钮（4.9.0：乐观翻转 → 全局队列 → 排队中再点撤销 → 失败回滚 + alert）
     notifications.ts  通知栈（4.9.0 建立 / 4.9.1 改定位与观感）：锚在全局头部下方（挂 body、随滚动重算）+ 观感照 GitHub `.flash`（语义浅色底 + 1px 细描边 + 细线图标）+ transition 滑入、3s 自动消失、悬停整区暂停、划掉完成态
@@ -275,7 +275,7 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
 
 ### `stars_pending_delete`
 
-待删除区，存放已 unstar 但处于宽限期的仓库数据。
+待删除区，存放已 unstar 但处于宽限期的仓库数据。**4.17.0 起导入也会往这里写**（本地无法确认已 star 的仓库；见 `### 待删除区宽限期`）。
 
 ```jsonc
 {
@@ -406,6 +406,19 @@ Token 归属校验的身份缓存（4.11.0）：`{ [凭证指纹]: { id, login }
 
 unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 `unstarredAt`；24 小时内重新 star，数据、标签和备注自动恢复。超期条目在下次脚本加载时由 `cleanupExpiredUnstarred()` 清理。
 
+**4.17.0 起有两个写入者，共用同一份存储**：
+
+- `markRepoUnstarred()`（用户在本脚本里取消 star）：删缓存条目、清空活区、把标签/备注搬进备份。
+- `addPendingFromImport()`（**导入路径专用**，4.17.0 新增）：把「本地确认未 star / 无法确认」的仓库及其标签/备注放进宽限期。**不复用上面那个**（导入没有「删缓存、清活区」的前提）。三条纪律（与活区**同一条胜负规则**，用户 2026-10-05 裁定：导入的内容更新，理应覆盖）：**空不覆盖非空**（包内为空/缺省 ⇒ 保留已有 `_tags`/`_note`/`name`）、**非空整体替换**（包内非空即覆盖该字段，**不是并集**；**`name` 除外** —— 已有名字优先，见下条）、**不重置** `unstarredAt`（不用导入给即将到期的备份续命）；**已有条目已超期时按「不存在」处理**（否则合并出来的条目「出生即超期」—— 纪律 2 保留的 `unstarredAt` 已过 ⇒ 数据既不在恢复窗口也不在卡片上，等于写进谁也读不到的地方；**不是**因为收尾会跑 `cleanupExpiredUnstarred()`，它只在 `ensureStarsSetup()` 与仓库详情页跑）。
+
+**移出宽限区的既有路径**：下一次成功同步发现「远端已 star」⇒ `fullSync` 的分支 B 调 `markRepoStarred()`（标签/备注抄回活区 + 条目写回 `stars_repo_cache` + 删除本条），紧跟 `saveRepoData(patch)` 用**远端**元数据补齐 —— 导入产生的条目**没有描述性元数据**（导出包不再带；它只有一个名字 `data.repoNames`，用于让恢复能发出写请求），其余全靠这一步补。
+**手动恢复的前提 = 条目有 `owner/repo`**（`restore.ts` 的守卫 `if (!name.includes('/'))`）：手动恢复要往
+`POST /user/starred/{owner}/{repo}` 发请求，没有名字就发不出去。⇒ 导出包随带 **`data.repoNames`**
+（每个仓库的 `owner/repo`，见上一节），导入时写进宽限期条目的 `name` ⇒ 恢复菜单显示真名、按钮可用。
+**仍然恢复不了的两种情形**（此时按钮会如实报「仓库名缺失，无法恢复」）：① 导出方本地也查不到该仓库的名字
+（有标签但从未 star）；② 导入的是**旧包**（没有 `repoNames`）。两者都会在下一次成功同步
+（`fullSync` 分支 B 的 `saveRepoData`）补齐名字后变成可恢复 —— 这属于**降级**，不是缺陷。
+
 ### 外部 unstar 检测
 
 星状态真相**只由整表 diff 权威判定**：扫描远端列表，远端无而本地有 → `applyExternalUnstar()`（宽限管线 + 幂等自愈：已入宽限区不重复写区但仍清缓存脏态）。逐条双 404 核对队列、到货快照、位移挂起等历史链路已随 API 主模式整体移除。
@@ -442,15 +455,24 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
   "data": {
     "tags": { "<repoId>": ["tag"] },
     "notes": { "<repoId>": "文本" },         // 已剔除 trim 后为空的项；非空文本不 trim
-    "repoCache": { "<repoId>": { "name": "..." } } // 只含有标签或有备注的仓库
+    "repoNames": { "<repoId>": "owner/repo" },  // 4.17.0：最小标识（供导入后手动恢复），查不到就不写
+    "repoCache": { "<repoId>": { "name": "..." } } // 【旧形态，仅 4.7.0–4.16.x】只含有标签或有备注的仓库
   }
 }
 ```
 
+> **4.17.0 起**：导出包**不再含 `repoCache`**（上面那行只为说明 4.7.0–4.16.x 的形状），改为随带最小的
+> **`repoNames`**（每个仓库的 `owner/repo`）—— 描述性元数据（语言/star 数/描述）由同步承载，
+> 而 `owner/repo` 是「恢复」写请求的目标地址，缺了它导入进宽限期的条目就无法手动恢复。
+> 导入路径**不往整表缓存写任何条目**；旧包（仍带 `repoCache`、`schemaVersion` 仍为 1）照常导入，
+> 该字段**只校验、不写入**。详见 `docs/adr/0001` 的「4.17.0 修订」段。
+
 **不含**：`github_pat`（敏感）、`stars_full_sync_meta`（ETag 基线与 token 身份 + 远端瞬时状态绑定，跨设备导入会让「全 304 = 无变化」误判为「缓存即现值」）、`stars_pending_delete`（临时状态）。
 合并语义与拒绝路径见 `docs/adr/0001-export-import-format.md`。
 
-**导入后不自动同步**（4.9.0，`docs/adr/0005-no-auto-sync-after-import.md`，推翻 `0001` 原段落）：导入是数据搬运，落盘即完成，是否拉远端由用户自己决定（标题行 Sync / TM 菜单）。导入的条目若远端不存在该 star，会在下一次同步走既有「外部取关 → 宽限期备份」管线；收尾只做「Stars 页且网格已存在时重绘」。
+**导入默认不自动同步**（4.9.0，`docs/adr/0005-no-auto-sync-after-import.md`，推翻 `0001` 原段落）：导入是数据搬运，落盘即完成，是否拉远端由用户自己决定（标题行 Sync / TM 菜单）。收尾只做「Stars 页且网格已存在时重绘」。
+
+**4.17.0 的两处收窄**（ADR 0005 已追加修订段）：① **唯一例外** —— 本机还没有整表缓存（`hasApiData()` 为假）时，导入**前**先自动同步一次（同步失败不阻断导入）；② 分派取代了旧的「导入后等同步判外部取关」：导入时**本地整表缓存里没有**的仓库，其标签/备注**直接进 24h 宽限期**（`addPendingFromImport`，见 `### 待删除区宽限期`），不再走「外部取关」管线，也不再留在活区。下一次成功同步发现「远端已 star」时由 `fullSync` 分支 B 自动移出宽限期并补元数据。
 
 导入导出**不新增 `@grant`**（`GM_download` 除外，4.7.0 新增）：导出**只用 `GM_download`（Blob 直传），刻意不做原生 `<a download>` 兜底**——原生下载能绕过 TM 的扩展名白名单，等于架空用户的安全设置。TM 侧需开启下载功能且扩展名在白名单，否则**不抛错、只走 `onerror` 回 `not_whitelisted`**（`gmDownloadFile` 观测不到，见 §6）。
 
@@ -706,10 +728,13 @@ pnpm test:exportimport   # = prepare.cjs（编译被测模块 → tests/exportIm
 
 覆盖范围（改动 `storage/exportImport.ts` 或 `storage/notes.ts` 的判空逻辑后必跑）：
 
-- 导出**不含** `github_pat` / 同步元数据（ETag）/ 宽限期备份；`repoCache` 只含有标签或有备注的仓库；空白备注不进包、非空备注不被 trim；
+- 导出**不含** `github_pat` / 同步元数据（ETag）/ 宽限期备份 / **描述性仓库元数据**（4.17.0 起 `data.repoCache` 整个移除；随包只带**最小标识** `data.repoNames`）；空白备注不进包、非空备注不被 trim；
 - 校验：`kind` / `schemaVersion` / `user.id` 缺失或不匹配 / 结构不合法 全部拒绝（不部分解析、不写键）；
-- 合并：标签并集且本地在前、备注导入优先但空值不覆盖、仓库元数据只补空缺；
-- 幂等：同一包连导两次，第二轮 `tagsAdded/notesApplied/repoCacheAdded` 全为 0；
+  **旧包（含 `data.repoCache`，schemaVersion 仍为 1）照常放行** —— 该字段仍被校验，但**内容一律忽略**；
+- 导入分派（4.17.0）：**在 `stars_repo_cache` 里 ⇒ 写活区**；**两条去向共用同一条胜负规则** —— 包内该仓库的标签/备注**非空即覆盖**目标、为空或缺省则保留目标；
+  **不在 ⇒ 24h 宽限期**（`addPendingFromImport`：空不覆盖非空、不重置 `unstarredAt`、超期按新建）；
+- 幂等：同一包连导两次，第二轮 `tagsWritten` / `tagsRemoved` / `notesApplied` 全为 0，宽限期条目不重复新建；
+- **风险 22 回归锁**（`[12]`）：「缓存里有该仓库、`stars_full_sync_meta` 却缺失」时仍按成员关系写活区、不产生并存态；
 - `saveNote` 判空 = trim 后为空；存储按用户 ID 隔离。
 - `loadRepoCache` 是**纯读**（4.16.0 起）：不做清洗、不写盘。此前它会剔掉 `updated` / `langColor` 死字段与脏 `lang` 并持久化，该机制已按 AGENTS.md **D30** 删除。
 

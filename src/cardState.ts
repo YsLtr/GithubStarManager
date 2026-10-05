@@ -41,8 +41,8 @@
  *   是一次 `gmGet` 深拷贝，逐卡调用仍会重复读盘）。4.16.0 起 `loadRepoCache()` 是纯读（不再遍历全表、不再回写）。
  * - `viewerCache === null` = 不可用（从无整表缓存 / 取不到登录者身份）⇒ **一律不可编辑**，
  *   与 `filters.renderBrowsePage` 既有的「宁缺勿假」口径同源（`canShowStar`）。
- * - 宽限期判据**渲染时现算**，不依赖 `cleanupExpiredUnstarred()` 是否跑过（它只在 `init()` 与
- *   导入后各跑一次；一个开着超过 24h 的标签页里，过期条目会一直挂在存储里）。
+ * - 宽限期判据**渲染时现算**，不依赖 `cleanupExpiredUnstarred()` 是否跑过（它只在 `ensureStarsSetup()`
+ *   与仓库详情页两处跑；一个开着超过 24h 的标签页里，过期条目会一直挂在存储里）。
  */
 
 import { hasApiData, loadRepoCache } from './storage/repoCache';

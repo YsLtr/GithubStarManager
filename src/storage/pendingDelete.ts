@@ -17,8 +17,9 @@ export function savePendingDelete(all: PendingDeleteMap): void {
  * 单条查询：该仓库是否**仍在** 24h 宽限期内（4.14.0）。
  *
  * 判据与 `listRestorable` 逐字一致（`unstarredAt + GRACE_PERIOD > now`），但**渲染时现算** ——
- * 刻意不依赖 `cleanupExpiredUnstarred()` 是否跑过：它只在 `init()` 与导入后各跑一次
- * （`index.ts:56` / `:568`），一个开着超过 24h 的标签页里，过期条目会一直挂在存储里。
+ * 刻意不依赖 `cleanupExpiredUnstarred()` 是否跑过：它只在两处跑 —— `ensureStarsSetup()`
+ * （`index.ts:54`）与**仓库详情页**（`index.ts:566`）—— 一个开着超过 24h 的标签页里，
+ * 过期条目会一直挂在存储里。
  * 只看「pending 里有没有」就会显示一份早该消失的数据。
  *
  * @returns 在宽限期内的条目本身（含 `_tags` / `_note` 备份）；`null` = 不在（从未 unstar / 已超期）
@@ -138,6 +139,62 @@ export function markRepoStarred(repoId: string): void {
   if (note) saveNote(repoId, note);
   delete pending[repoId];
   savePendingDelete(pending);
+}
+
+/**
+ * 导入路径专用：把「某仓库 + 它的标签/备注」放进 24h 宽限期（4.17.0）。
+ *
+ * ## 为什么不复用 `markRepoUnstarred()`
+ *
+ * 那个函数的语义是「用户在本脚本里取消了 star」：它**删掉整表缓存条目**、**清空活区**，且
+ * **无条件用活区覆盖备份**。导入没有这些前提（导入的仓库本就不在整表缓存里，活区里也不该有它的
+ * 数据），复用会把别处的数据一起搅进来；更要紧的是「无条件覆盖」正是**风险 22 的缺陷形态**。
+ *
+ * ## 三条纪律
+ *
+ * 0. **不做归一化**：`tags` 由**调用方**先 `dedupe` + 剔空白项后再传进来（唯一调用方 `applyImportPackage` 已在
+ *    分派前做一次）。本函数按传进来的数组原样落盘 —— 若直接调用并传 `['  ']`，会被 `length > 0` 判成「有标签」。
+ * 1. **空不覆盖非空**：包内该仓库没有标签 / 备注（trim 后为空）⇒ 保留已有条目里的 `_tags`/`_note`。
+ *    与活区那条同源（「文件里没给」不构成「清空」的指令）—— 见 `docs/adr/0001` 的覆盖规则。
+ * 2. **非空覆盖 · 不续命**：目标已有条目 ⇒ 把非空的 `_tags` / `_note` / `name` **整体替换**进去
+ *    （**不是并集** —— 与活区 D9 的规则**相同**：导入的内容更新，理应覆盖；用户 2026-10-05 裁定），
+ *    并**保留原 `unstarredAt`** —— 否则一次导入就把一条即将到期的备份重新计时 24h。
+ * 3. **名字同理**（4.17.0 随 `data.repoNames` 加入）：已有条目的 `name` 优先，包里的名字只用来**补空**
+ *    —— 空名字不得抹掉已有名字（那是恢复入口唯一的地址来源）。
+ *
+ * **例外（重要）**：已有条目**已超期**时按「不存在」处理（新条目 + `unstarredAt = now`）。否则会
+ * 造出一条「**出生即超期**」的条目：上层纪律 2 要求保留原 `unstarredAt`，而那个时刻已过 ⇒ 合并进去的
+ * 导入数据既不会出现在恢复窗口（`listRestorable` 跳过超期条目），也不会出现在卡片上（`getPendingInGrace`
+ * 渲染时现算）⇒ 等于把刚导入的标签/备注写进一个**谁也读不到**的地方。超期条目按 ADR 0003 本来就算已删除
+ * （不留墓碑行），所以这里当它不存在、重新起 24h 计时。
+ *
+ * @returns 该仓库此刻是否处于宽限期；`false` = 无物可接管且此前没有条目（什么都没做）
+ */
+export function addPendingFromImport(repoId: string, tags: string[], note: string, name = ''): boolean {
+  if (!repoId) return false;
+  const pending = loadPendingDelete();
+  const existing = pending[repoId];
+  const now = Date.now();
+  const live = existing && (existing.unstarredAt || 0) + GRACE_PERIOD > now ? existing : undefined;
+
+  const hasTags = tags.length > 0;
+  const hasNote = !!(note && note.trim());
+  // 无物可接管时不该造一个空条目去走 24h 倒计时（也不该覆盖已有条目的元数据）
+  if (!live && !hasTags && !hasNote) return false;
+
+  const entry: PendingDeleteEntry = Object.assign({ name: '' }, live || {}, {
+    // 名字来自 4.17.0 的 `data.repoNames`（最小仓库标识，只为让恢复能发出那个写请求）。
+    // 若导出方本地也查不到名字 ⇒ 空串 ⇒ `RestorableEntry.name` 回退成数字 repoId，
+    // 该条目在成功同步（`fullSync` 分支 B 的 `saveRepoData`）补齐名字前不可手动恢复。
+    // **空不覆盖非空**（与标签/备注同一条纪律）：已有名字用它、没有才用包里的，绝不用空串抹掉。
+    name: live?.name || name || '',
+    unstarredAt: live ? live.unstarredAt ?? now : now,
+    _tags: hasTags ? tags : live?._tags || [],
+    _note: hasNote ? note : live?._note || '',
+  });
+  pending[repoId] = entry;
+  savePendingDelete(pending);
+  return true;
 }
 
 /** 清理超过宽限期（24h）仍未 re-star 的待删除条目 */

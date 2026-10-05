@@ -19,6 +19,7 @@ const FILES = [
   'types.ts',
   'storage/exportImport.ts',
   'storage/notes.ts',
+  'storage/pendingDelete.ts',
   'storage/repoCache.ts',
   'storage/tags.ts',
   // 注意：本清单是「依赖闭包」的显式副本，被测模块新增 import 时必须同步补进来

@@ -8,10 +8,15 @@
  * - 校验失败 → alert 报原因且**不弹 confirm**（不存在可执行的操作，同一种对话框会让用户以为「点确定就能强行导入」）；
  * - 破坏性确认 → `window.confirm`（脚本只跑在 github.com，不引入页面内确认条）；
  * - 导入后不导航、不重渲染；**仅**在「Stars 页且网格已存在」时按当前筛选重绘（由 index.ts 的回调完成）；
- * - 导入完成后**不自动同步**（`0005-no-auto-sync-after-import.md`，4.9.0 起生效）：落盘即完成，
- *   是否拉远端由用户决定 —— 早于此的「导入后走 `runFullSync('button')`」措辞已作废，勿据此实现。
+ * - 导入**默认不自动同步**（`0005-no-auto-sync-after-import.md`）：落盘即完成、是否拉远端由用户决定。
+ *   **4.17.0 收窄的例外**：本机还没有完整整表缓存（`hasApiData()` 为假）时先自动同步一次 ——
+ *   分派依据是「该仓库在不在整表缓存里」，而整表缓存为空时这个判据必然全为「不在」，
+ *   先同步一次能把「其实已 star」的那批从宽限期里救出来（同步后它们直接写活区）；
+ *   注意这是**保守**触发条件：`hasApiData()` 与「缓存里有没有这个仓库」是两个可背离的量（见 D32）。
+ *   同步失败**不阻断**导入：未能确认的仓库一律进 24h 宽限期，提示里写死该补救窗口。
  */
 import { buildExportFilename } from '../constants';
+import { runFullSync } from '../fullSync';
 import { gmDownloadFile, gmRegisterMenuCommand } from '../gm';
 import {
   applyImportPackage,
@@ -20,12 +25,14 @@ import {
   type ExportPackage,
   type ImportReport,
 } from '../storage/exportImport';
+import { hasApiData } from '../storage/repoCache';
+import { pushNotice } from './notifications';
 
-/** 导入完成后的收尾动作（index.ts 注入：**仅**在 Stars 页重绘，不触发同步）。放在注入里避免菜单↔fullSync 循环导入 */
+/** 导入完成后的收尾动作（index.ts 注入：**仅**在 Stars 页重绘，不触发同步）。放在注入里是为了让 UI 层不反向依赖 index.ts 的初始化顺序 */
 type AfterImportHandler = (report: ImportReport) => void;
 let afterImport: AfterImportHandler | null = null;
 
-/** index.ts 注册：导入落盘成功后的收尾（重渲染 + 同步 + 结果提示） */
+/** index.ts 注册：导入落盘成功后的收尾（重渲染 + 结果提示；同步只在导入**前**、且仅本机无缓存时发生） */
 export function setAfterImportHandler(fn: AfterImportHandler | null): void {
   afterImport = fn;
 }
@@ -48,7 +55,7 @@ function doExport(): void {
   }
   console.log(
     `[github-star-manager] 已导出：${filename}（标签仓库 ${Object.keys(pkg.data.tags).length}、` +
-      `备注 ${Object.keys(pkg.data.notes).length}、仓库元数据 ${Object.keys(pkg.data.repoCache).length}）`
+      `备注 ${Object.keys(pkg.data.notes).length}）`
   );
 }
 
@@ -57,40 +64,51 @@ function doExport(): void {
 /** 结果摘要文案（导入完成的 alert 与 console 共用） */
 function reportText(r: ImportReport): string {
   const parts = [
-    `标签：新增 ${r.tagsAdded} 条关联（当前共 ${r.tagRepos} 个仓库带标签）`,
+    `标签：覆盖写入 ${r.tagsWritten} 个仓库（当前共 ${r.tagRepos} 个仓库带标签）`,
     `备注：写入 ${r.notesApplied} 条`,
   ];
+  if (r.tagsRemoved > 0) parts.push(`其中被替换掉的本地标签 ${r.tagsRemoved} 条`);
   if (r.notesOverwritten > 0) parts.push(`其中覆盖本地原有备注 ${r.notesOverwritten} 条`);
   if (r.notesSkippedEmpty > 0) parts.push(`跳过空备注 ${r.notesSkippedEmpty} 条`);
-  if (r.repoCacheAdded > 0) parts.push(`补入仓库元数据 ${r.repoCacheAdded} 条`);
+  if (r.pendingAdded > 0) parts.push(`本地不存在 ${r.pendingAdded} 个仓库，其标签/备注已放入 24h 宽限期`);
   return parts.join('；');
 }
 
 /** 导入前的摘要：让用户在 confirm 里看到「将发生什么」，而不是抽象的「确定导入？」 */
-function confirmText(pkg: ExportPackage, currentId: string): string {
+function confirmText(pkg: ExportPackage, currentId: string, needSync: boolean): string {
   const tagCount = Object.keys(pkg.data.tags).length;
   const noteCount = Object.keys(pkg.data.notes).length;
-  const cacheCount = Object.keys(pkg.data.repoCache).length;
   const when = new Date(pkg.exportedAt).toLocaleString();
   return (
     `将从导出包导入到当前账号（${currentId}）：\n\n` +
     `导出时间：${when}\n` +
     `带标签的仓库：${tagCount}\n` +
-    `备注：${noteCount}\n` +
-    `仓库元数据：${cacheCount}\n\n` +
-    `合并方式：标签取并集；备注以文件为准（文件里的空备注不会覆盖你本地已有的备注）。\n` +
-    `注意：导入会覆盖你本地与文件同名的备注，且不会自动备份，请确认已保存好当前数据。\n\n` +
+    `备注：${noteCount}\n\n` +
+    `导入方式（逐个仓库按本机的 star 记录判断）：\n` +
+    `· 本机有该 star 记录 ⇒ 写入该仓库：文件里的标签/备注**覆盖**本地的；\n` +
+    `  但文件里没有（或为空）的标签/备注**不会**清空你本地的。\n` +
+    `· 本机确认没有该 star（或本机尚未同步过）⇒ 放入 24 小时宽限期，\n` +
+    `  期间 star 回来、或任意一次成功同步到「远端已 star」即自动恢复；\n` +
+    `  超过 24 小时仍未 star 的，其标签/备注会被删除。\n\n` +
+    (needSync
+      ? `本机尚未完成过一次完整同步，导入前会先自动同步一次以确认本地 star 记录。\n` +
+        `若同步失败（例如未配置 Token），上面的仓库会全部进入 24 小时宽限期 ——\n` +
+        `请在 24 小时内完成一次同步，否则它们的标签/备注会被删除。\n\n`
+      : '') +
+    `注意：导入会**覆盖**这些仓库本地的标签与备注（文件里没给的部分按上面的规则保留），\n` +
+    `且不会自动备份，请确认已保存好当前数据。\n\n` +
     `确定导入吗？`
   );
 }
 
-/** 导入主流程：读文件 → 解析 → 校验 → confirm → 应用 → 收尾（同步/提示） */
+/** 导入主流程：读文件 → 解析 → 校验 → confirm →（需要时先同步一次）→ 应用 → 收尾（重绘/提示） */
 function importFromFile(file: File): void {
   const reader = new FileReader();
   reader.onerror = () => {
     window.alert('读取文件失败，请重试。');
   };
-  reader.onload = () => {
+  // 无整表缓存时要先 await 一次全量同步 ⇒ 回调必须是异步的
+  reader.onload = async () => {
     let raw: unknown;
     try {
       raw = JSON.parse(String(reader.result));
@@ -107,9 +125,23 @@ function importFromFile(file: File): void {
     }
 
     const pkg = result.pkg;
-    if (!window.confirm(confirmText(pkg, pkg.user.id))) {
+    // 「本机有没有完整整表缓存」决定导入要不要先同步一次（4.17.0）：分派依据是「本地确认已 star」，
+    // 而没有缓存就无从确认。**在 confirm 之前算**，好让用户在对话框里就看到会发生什么。
+    const needSync = !hasApiData();
+    if (!window.confirm(confirmText(pkg, pkg.user.id, needSync))) {
       console.log('[github-star-manager] 导入已取消（用户取消确认）');
       return;
+    }
+
+    if (needSync) {
+      pushNotice('导入前先同步一次，以确认本地 star 记录…', 'info');
+      try {
+        await runFullSync('button');
+      } catch (e) {
+        // 同步失败**不阻断**导入：未能确认的仓库一律进宽限期，提示里写死 24h 补救窗口。
+        //（未配置 Token 时 runFullSync 会自己打开配置横幅并报「未配置 Token」，这里只补一条日志。）
+        console.warn('[github-star-manager] 导入前的同步未能完成，未能确认的仓库将进入宽限期：', e);
+      }
     }
 
     let report: ImportReport;
@@ -122,7 +154,16 @@ function importFromFile(file: File): void {
     }
 
     console.log(`[github-star-manager] 导入完成：${reportText(report)}`);
-    window.alert(`导入完成。\n\n${reportText(report)}\n\n如需刷新仓库元数据，请点标题行 Sync 或 TM 菜单「🔄 立即全量同步」。`);
+    const pendingHint =
+      report.pendingAdded === 0
+        ? ''
+        : `\n\n${report.pendingAdded} 个仓库本地不存在，其标签/备注已放入 24 小时宽限期：` +
+          `\n· 重新 star、或任意一次成功同步到「远端已 star」，即自动恢复；` +
+          `\n· 24 小时内没有任何一次成功同步${report.cacheAvailable ? '' : '（本机尚未同步过）'}` +
+          `，这些标签/备注会被删除。`;
+    window.alert(
+      `导入完成。\n\n${reportText(report)}${pendingHint}\n\n如需刷新仓库元数据，请点标题行 Sync 或 TM 菜单「🔄 立即全量同步」。`
+    );
     afterImport?.(report);
   };
   reader.readAsText(file);
@@ -288,10 +329,11 @@ function closeImportDialog(): void {
 
 /* ---------------- 菜单注册 ---------------- */
 
-/* 4.9.0：`runImportSync()` 已删除 —— 导入完成后**不再自动同步**（ADR 0005：导入是数据搬运，
- * 落盘即完成；是否拉取远端由用户自己决定，用标题行 Sync 或 TM 菜单「🔄 立即全量同步」）。
- * 导入包里的 repoCache 条目仍会被后续同步正确处理：远端若不存在该 star，整表 diff 会把它判为
- * 本地独有，走既有的「外部取关 → 宽限期备份」管线。 */
+/* 4.9.0 删掉了无条件的 `runImportSync()`（导入后一定同步）—— ADR 0005：导入是数据搬运，
+ * 落盘即完成、是否拉远端由用户决定。**4.17.0 收窄为唯一例外**：本机还没有完整整表缓存时，
+ * 导入前先同步一次（没有缓存就无从判断「本地确认已 star」，而那正是逐仓库分派的依据）。
+ * 迁移到宽限期的条目由后续同步自然收口：远端已 star ⇒ `fullSync` 分支 B 的 `markRepoStarred()`
+ * 把它移回卡片；远端确实没有 ⇒ 留在宽限期，超期按 ADR 0003 删除。 */
 
 /** TM 菜单注册。导入入口是大窗（全屏遮罩 + 拖放区）：菜单点击只开窗（扩展 UI 无手势可转发，
  * tampermonkey#1827），窗内真实点击选文件或拖拽落 File 才开始导入。 */

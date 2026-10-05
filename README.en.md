@@ -49,9 +49,9 @@ It runs as a userscript (Tampermonkey / Violentmonkey) inside GitHub pages and i
 
 - TM menu "📤 导出数据（标签/备注）" exports a single JSON containing only repos that **have tags or a note**.
 - "📥 导入数据（标签/备注）" opens a large dialog where you can pick a file or drag a JSON in.
-- Merge semantics: tags are unioned, notes from the file win but an empty note never overwrites a non-empty local one, and repository metadata only fills gaps.
-- The export contains **no token**, no sync metadata (ETag baselines) and no grace-period backups. It carries a user ID and can only be imported into the same account.
-- Import does **not** trigger a sync — writing the data is the whole job; whether to pull from the remote is your call.
+- Import rule (two destinations, **one win/lose rule**): **already-starred repos** are written to the live area, **repos you have not starred** go into the 24-hour grace period; in both cases the file's tags/notes **overwrite** your local ones, while anything the file does **not** give (or gives as empty) **keeps** your local value.
+- The export contains **no token**, no sync metadata (ETag baselines), no grace-period backups and no **descriptive** repository metadata (language / stars / description — sync provides those). It only carries each repo's **identifier** (`owner/repo`), so imports can be restored by hand. It carries a user ID and can only be imported into the same account.
+- Import **usually does not trigger a sync** (writing the data is the whole job; whether to pull from the remote is your call). The one exception: if this machine has never synced (no repo cache at all), a sync runs first so the script knows which repos you already star. If a repo in the file is not starred locally, its tags/note go into a **24-hour grace period** (re-star it, or let any successful sync find it starred remotely, and it is restored automatically; after 24h it is deleted). The count is shown in the completion dialog.
 
 ### Other users' Stars pages
 
