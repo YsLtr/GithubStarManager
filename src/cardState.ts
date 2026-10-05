@@ -1,5 +1,5 @@
 /**
- * 他人 star 页卡片的**可编辑性 / 可见性判定层**（4.14.0）。
+ * 卡片标签/备注的**可编辑性 / 可见性判定层**（4.14.0；4.16.2 起也服务本人 stars 页）。
  *
  * ## 为什么存在
  *
@@ -10,22 +10,34 @@
  *
  * 本模块把它拆成**逐仓库**的两件正交事实：
  *
- * - **可编辑性** = 「本人 star 了这个仓库」——逐仓库事实；
+ * - **可编辑性** = 逐仓库事实（他人页用「本人是否 star」判；本人页只判「是否命中 24h 宽限期」）；
  * - **可见性** = 「数据还在」——活区（`stars_tags_*` / `stars_notes_*`）**或** 24h 宽限期备份
  *   （`stars_pending_delete` 的 `_tags` / `_note`）。
  *
- * ## 三态
+ * ## 态
  *
  * | 状态 | 含义 | 数据来源 | 编辑控件 |
  * |---|---|---|---|
- * | `editable` | 本人已 star | 活区 | 有（+ / × / textarea） |
+ * | `editable` | 他人页：本人已 star；本人页：未命中宽限期 | 活区 | 有（+ / × / textarea） |
  * | `locked-pending` | 已 unstar，但仍在 24h 宽限期内 | 宽限期备份 | 无（用户裁定：**仍显示**其标签与备注） |
- * | `locked-empty` | 两者都不是 | 活区（通常为空；导入的标签可能落在这里） | 无 |
+ * | `locked-empty` | 两者都不是（**只有他人页会产出**） | 活区（通常为空；导入的标签可能落在这里） | 无 |
+ *
+ * ## 本方自己的页（4.16.2）
+ *
+ * 本人页只走**二态**：命中 24h 宽限期备份 ⇒ `locked-pending`（只读，但仍显示备份里的标签与备注）；
+ * 其余一律 `editable`（与 4.13.0 起的既有行为逐字相同）。**刻意不引入 `locked-empty`**：
+ *
+ * ① 那一支要拿整表缓存判成员关系，链路依赖**无官方契约**的页面 meta `octolytics-actor-id`
+ *    （`loadViewerCacheForView`；同类前例：`csrf-token` 曾普遍存在、如今完全消失，见 AGENTS.md 已知风险 13）
+ *    —— meta 一旦改名或消失，本人页**全部卡片**会失去编辑能力（加不了标签、写不了备注），
+ *    那是比本模块要修的缺陷严重得多的回归；
+ * ② 本人页的卡片只来自本人整表缓存（`filters.queryRepos` 的 own 路径），而 unstar 时该仓库已被移出缓存
+ *    ⇒ 「没 star 却有标签」的卡片**从不进入网格**，给它造只读态是空转。
  *
  * ## 纪律
  *
  * - **纯判定**：不碰 DOM、不发请求、**不写存储**（只读 `gmGet`）。渲染在 `cardAreas.ts`。
- * - **本人整表缓存由调用方一次读好后传入**（`viewerCache`），避免逐卡重复读盘（`loadRepoCache()`
+ * - **他人页的整表缓存由调用方一次读好后传入**（`viewerCache`），避免逐卡重复读盘（`loadRepoCache()`
  *   是一次 `gmGet` 深拷贝，逐卡调用仍会重复读盘）。4.16.0 起 `loadRepoCache()` 是纯读（不再遍历全表、不再回写）。
  * - `viewerCache === null` = 不可用（从无整表缓存 / 取不到登录者身份）⇒ **一律不可编辑**，
  *   与 `filters.renderBrowsePage` 既有的「宁缺勿假」口径同源（`canShowStar`）。
@@ -41,12 +53,19 @@ import { getViewerId } from './pageScope';
 import { getViewStarOverride } from './viewContext';
 import type { RepoCache } from './types';
 
-/** 卡片的标签/备注呈现状态（逐仓库） */
+/** 卡片在**他人页**的呈现状态（逐仓库三态） */
 type CardState = 'editable' | 'locked-pending' | 'locked-empty';
 
-/** 卡片的标签/备注展示数据 + 由哪条判据得出 */
+/**
+ * 卡片在**本人页**的呈现状态：只可能是这两态。
+ *
+ * 收窄到**类型层**而不只是注释 —— 本人页永不产出 `locked-empty`（见文件头「本方自己的页」），
+ * 让编译器替我们守住这条，比靠注释提醒可靠。
+ */
+type OwnCardState = 'editable' | 'locked-pending';
+
+/** 卡片的标签/备注展示数据（`state` 由调用方持有 —— 它拿它选渲染器，取数这里不需要它） */
 interface CardDisplayData {
-  state: CardState;
   tags: string[];
   note: string;
 }
@@ -92,7 +111,12 @@ function hasViewerIdentity(): boolean {
   return !!getViewerId();
 }
 
-/** 逐仓库三态判定 */
+/**
+ * **他人页**：逐仓库三态判定。
+ *
+ * `viewerCache === null`（无整表缓存 / 无登录者身份）时**永不返回 `editable`** —— 宁缺勿假。
+ * 本人页不要用它（那会让本人页整页只读，理由见文件头的「本方自己的页」）。
+ */
 export function getCardState(repoId: string, viewerCache: RepoCache | null, now = Date.now()): CardState {
   if (viewerCache && isStarredByViewer(repoId, viewerCache)) return 'editable';
   if (!hasViewerIdentity()) return 'locked-empty';
@@ -100,25 +124,47 @@ export function getCardState(repoId: string, viewerCache: RepoCache | null, now 
 }
 
 /**
+ * **本人页**：逐仓库二态判定（4.16.2）。
+ *
+ * 只问一件事：「这个仓库是不是刚被取消 star、数据还在 24h 宽限期备份里？」
+ * - 命中 ⇒ `locked-pending`（只读，但仍显示备份里的标签与备注）；
+ * - 其余 ⇒ `editable`（今天的行为，含「活区里有数据」「活区为空」「取不到登录者身份」三种情形）。
+ *
+ * 判据与 `getCardState` 共用 `getPendingInGrace()`（渲染时现算、不信「pending 里有没有」），
+ * 但**不读** `viewerCache`、**不读**整表缓存成员关系 —— 理由见文件头。
+ * 没有登录者身份时直接返回 `editable`：宽限期备份是全局单键，那时读它看到的是别人的数据。
+ */
+export function getOwnPageCardState(repoId: string, now = Date.now()): OwnCardState {
+  if (!hasViewerIdentity()) return 'editable';
+  return getPendingInGrace(repoId, now) ? 'locked-pending' : 'editable';
+}
+
+/**
  * 卡片的标签/备注展示数据：**活区优先，活区为空再看宽限期备份**。
+ *
+ * `state` 由**调用方算好后传入**（4.16.2 起）：两个视图的判定不同（见上面两个函数），
+ * 取数却是同一件事 —— 让本函数自己算会逼着它认识 `view`，或者逼着两个调用方各写一份取数。
  *
  * 两者不会同时有值：`pendingDelete.markRepoUnstarred()` 把数据搬进备份的同时清空活区
  * （`saveTags(repoId, [])` / `saveNote(repoId, '')`），`markRepoStarred()` 则反向还原。
  * 活区优先只是为了兜住「导入的标签落在了一个既没 star、也没备份的仓库上」这类边角 ——
- * 那种仓库属 `locked-empty`，但数据确实存在，仍应只读展示。
+ * 那种仓库属 `locked-empty`（仅他人页会产出），但数据确实存在，仍应只读展示。
+ *
+ * **行为不变式**：`editable` 时活区为空就返回空，**不许**去读备份 ——
+ * 本页从没 unstar 过的仓库若恰好撞上同一 repoId 的一条陈旧 pending 条目，
+ * 会凭空显示一份不属于它的数据。这是本人页与「他人页只读显示」最容易混淆的一处。
  */
 export function readCardDisplayData(
   repoId: string,
-  viewerCache: RepoCache | null,
+  state: CardState,
   now = Date.now(),
 ): CardDisplayData {
-  const state = getCardState(repoId, viewerCache, now);
   const tags = getTags(repoId);
   const note = getNote(repoId);
-  if (tags.length > 0 || note) return { state, tags, note };
+  if (tags.length > 0 || note) return { tags, note };
 
-  // 宽限期备份是**单份全局键**、不按账号分片 ⇒ 只在有登录者身份时才看它（理由见 hasViewerIdentity）
-  const grace = hasViewerIdentity() ? getPendingInGrace(repoId, now) : null;
-  if (grace) return { state, tags: grace._tags || [], note: grace._note || '' };
-  return { state, tags, note };
+  // 宽限期备份是**单份全局键**、不按账号分片 ⇒ 只在有登录者身份、且确实处于只读态时才看它
+  const grace = state !== 'editable' && hasViewerIdentity() ? getPendingInGrace(repoId, now) : null;
+  if (grace) return { tags: grace._tags || [], note: grace._note || '' };
+  return { tags, note };
 }

@@ -97,7 +97,8 @@ function buildNoteRow(note: string, title: string): HTMLElement {
  *
  * 数据**由调用方传入**（4.14.0）：他人页的 `locked-pending` 卡片要显示的是 24h 宽限期**备份**里的
  * 标签，而活区此刻是空的（`markRepoUnstarred` 已经把数据搬走并清空现位）。渲染器自己去读活区
- * 就会把这些卡片的标签显示成空 —— 那正是 4.13.0「unstar 后标签立刻消失」的成因。
+ * 就会把这些卡片的标签显示成空 —— 那正是 4.13.0（他人页）与 4.16.2（本人页）两次「unstar 后标签立刻
+ * 消失」的成因；两个视图现在都走这条取数路径（`cardState.readCardDisplayData`）。
  * 取数职责在 `cardState.readCardDisplayData()`（活区优先、活区为空再看备份）。
  *
  * 先抹后建：数据可能变（导入、切页重渲染），本函数必须收敛到「DOM 与存储一致」。

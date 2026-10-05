@@ -139,8 +139,8 @@ function confirmExternalUnstar(repoId: string, path: string): boolean {
  * **可编辑**控件 —— 这就是「点了 star 就变成可编辑状态」的缺陷成因。
  *
  * 现在统一交给 `cardAreas.renderCardTagAndNoteAreas`（唯一分派点）：
- * 他人页逐仓库三态（本人已 star ⇒ 可编辑；已 unstar 但数据还在 24h 宽限期备份 ⇒ 只读但仍显示），
- * 本方自己的页照旧永远可编辑。
+ * 他人页逐仓库三态（本人已 star ⇒ 可编辑；已 unstar 但数据还在 24h 宽限期备份 ⇒ 只读但仍显示）；
+ * 本人页二态（4.16.2）—— 同样命中宽限期备份时只读但仍显示，其余照旧可编辑。
  */
 export function syncCardAfterStarChange(repoId: string, isStarred: boolean): void {
   const card = document.querySelector<HTMLElement>(`.stars-grid-card[data-repo-id="${repoId}"]`);

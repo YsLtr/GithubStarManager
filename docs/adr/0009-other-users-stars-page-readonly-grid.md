@@ -491,8 +491,9 @@ R7（`R7_gridMarker=false` + `R7_starredOpacity=0`）。
   用户正聚焦在本卡片的标签输入框 / 备注 textarea 上」——浏览器实测移除焦点元素会一律回退 `<body>`。
 - 一条**状态驱动**的样式：不可编辑卡片的备注区 `cursor: default`（`base.css`，4.14.0）。
   `.stars-card-notes` 原有的 `cursor: text` 对本方自己的页是对的，但对点了没反应的只读卡片
-  是明摆的谎。规则认 `[data-gsm-card-state='locked-*']`，该属性**只存在于他人页**（自有页走
-  `view: 'own'` 分支、不写），故自有页观感一字不变。放 `base.css` 而非 `readonly.css`：
+  是明摆的谎。规则认 `[data-gsm-card-state='locked-*']`，该属性在 4.14.0 时**只存在于他人页**（自有页走
+  `view: 'own'` 分支、不写），故当时自有页观感一字不变。**4.16.2 修订**：本人页也会写该属性
+  （取消 star 后的 `locked-pending` 卡片必须命中本规则）—— 见追加 8。放 `base.css` 而非 `readonly.css`：
   后者是**按需**注入的，而「卡片上什么都没有」的 `locked-empty` 恰恰也需要这条。
 
 ### 工装（`.diag/otherstars-harness.html` + `assert-otherstars.js`）
@@ -600,3 +601,108 @@ localStorage 镜像），30 条约 150+ 次同步 IPC。**本轮不改**：真�
 他人页同步完成后网格不重绘。这是**净收益**（他人页的筛选栏/分页器本就不该被脚本驱动），
 但 D12 的措辞是全局的，故在此显式登记：**D12 只适用于本方自己的 stars 页**。
 他人页刷新数据的路径是「重新投影原生条目」（`domRepos` + `queryRepos`），不由同步驱动。
+
+---
+
+## 追加 8：本人 stars 页 unstar 后的只读显示（4.16.2）
+
+### 问题
+
+用户在本人 stars 页点卡片星按钮取消 star 后，卡片的**标签与备注立即消失**（标签整行没了、备注只剩
+「添加备注…」占位），而同一账号在**他人** stars 页看到同一份数据时却正常只读显示。
+
+### 根因：同一概念的第二处判据漂移（`own` / `other`）
+
+`cardAreas.renderCardTagAndNoteAreas` 是标签/备注区的唯一渲染分派点，但它对两个视图的处置不对称：
+`'other'` 走 `cardState` 的三态判定（只读时读 **24h 宽限期备份**），`'own'` 则**无条件**调可编辑渲染器，
+而可编辑渲染器只读**活区**。而 `markRepoUnstarred()` 恰恰在 unstar 时把数据搬进备份并**清空活区**
+（`saveTags(repoId, [])` / `saveNote(repoId, '')`）。于是数据还在，只是没人去备份里取。
+
+这与 4.14.0 修掉的「`filters` 有判据、`starCheck` 没有判据」是**同一种缺陷模式**，漂移轴从
+`filters`/`starCheck` 换成了 `own`/`other`。修复方式沿用同一纪律：判据只在 `cardState.ts` 一处。
+
+### 设计
+
+- **own 视图二态**（`cardState.getOwnPageCardState`）：命中 24h 宽限期备份 ⇒ `locked-pending`
+  （只读、仍显示备份里的数据）；其余一律 `editable`（与 4.13.0 起的既有行为逐字相同）。
+- **刻意不引入 `locked-empty`**（即不复用 `getCardState(repoId, loadViewerCacheForView())`）：
+  ① 那一支要拿整表缓存判成员关系，链路依赖**无官方契约**的页面 meta `octolytics-actor-id`：
+  meta 一旦改名或消失，本人页**全部卡片**会失去编辑能力（加不了标签、写不了备注）—— 比本缺陷严重得多；
+  ② 本人页的卡片只来自本人整表缓存（`queryRepos` 的 own 路径），而 unstar 时该仓库已被移出缓存
+  ⇒ 「没 star 却有标签」的卡片**从不进入网格**，给它造只读态是空转（用户 2026-10-05 亦确认
+  「那应该不显示才对」）。
+- **取数拆成两步**：`readCardDisplayData(repoId, state, now)` 不再自算 `state`，只负责取数
+  （活区优先；活区为空**且** state 为 `locked-*` 时读备份）。宽限期是**单份全局键**，
+  `hasViewerIdentity()` 这道门保留在取数函数内 —— 未登录访客不得看到「上一个登录者」的数据（追加 7 的 P2-1）。
+  **行为不变式**：`editable` 时活区为空就返回空，不许去读备份（否则一条陈旧 pending 条目会让本页
+  凭空显示不属于它的数据）。
+- **只读形态零新增**：复用 `readonly.ts` 的两个渲染器（4.14.0 已改为接受调用方传入的数据）与既有文案
+  `CARDS_TITLE_PENDING`；不加可见提示、不加控件、不加恢复按钮（恢复入口就是那张卡片上已变成未加星外观
+  的星按钮）。`disposeNotesEditor()` 照旧在唯一分派点上先摘 —— 容器在重绘间复用，`innerHTML = ''` 摘不掉
+  备注编辑监听（追加 7 的 P1）。
+- **`data-gsm-card-state` 现在本人页也有**：4.14.0 起该属性两态都写（`editable` 也写，夹具按它读数），
+  4.16.2 起本人页也写 ⇒ `base.css` 的 `cursor: default` 规则在本人页自动生效。原注释里
+  「它只存在于他人页 / 自有页不写该属性」的措辞已同步改正（`cardAreas.ts`、`base.css`、本 ADR 追加 7）。
+- **本次修复中自查发现并修掉的一处回归**：重写时把 `dataset[STATE_ATTR] = state` 挪进了只读分支
+  ⇒ 他人页可编辑卡片不再写该属性，`R2_editableCards` 变 0、`R16_betaAreaAfterStar` 从 `'editable'` 退化
+  （探针实测：容器在重绘间复用 ⇒ 读到的是**陈旧值** `'locked-empty'`，而不是 `null`；两种取值都会让基线变红）。
+  已改回「两态都写」，两个基线断言恢复（`R2_editableCards=2` / `R16_betaAreaAfterStar='editable'`）。
+
+### 验证
+
+夹具新增场景 `own-unstar`（本人页；缓存含 123/456；456 的活区已清空、数据在 1 小时前的宽限期备份里），
+断言组 **R29**。跑法见 `.diag/assert-otherstars.js` 头部注释。
+
+**A/B 反证**（把 `cardAreas` 的 own 分支临时改回「无条件可编辑渲染」后重跑）：
+
+| 观测量 | 修复后 | 反证（回退） |
+|---|---|---|
+| `R29_betaState` | `'locked-pending'` | `null` |
+| `R29_betaTagTexts` | `['缓冲标签']` | **`[]`**（标签整行消失 = 用户报的缺陷） |
+| `R29_betaNoteText` | `'缓冲备注'` | `null` |
+| `R29_betaEditorAfterClick` | `0` | **`1`**（点一下弹编辑器，且有写盘能力） |
+| `R29_betaControls` / `...AfterClick` | `0` / `0` | `1` / `2` |
+| `R29_betaNotesCursor` | `'default'` | `'text'` |
+| `R29_alphaState` / `R29_alphaControls` | `'editable'` / `3` | 同（同页对照：修复没有把本人页改成一律只读） |
+| `R29_apiReqs` / `R29_writesDeltaAfterClick` | `0` / `0` | `0` / `0` |
+
+`R29_fetchUrls` 恒为 `["GET https://raw.githubusercontent.com/github/linguist/...languages.yml"]`
+—— 本人页允许这一次语言色表请求（既有行为；他人页才用 `setLangColorFetchEnabled(false)` 压掉它），
+**API 请求始终为 0**。
+
+**回归基线**：`.diag` 的 **18 个场景**全部重跑，`__errors` 全空；他人页 `fetch`/`writes` 仍为 0；
+窄视口（`#narrow`）`grid`/`gsm` 节点/标记全 0（`R10_*`）；`R7_*`（本人页既有网格路径）、
+`R27_*`（备注写路径）、`R28_*`（读路径纯读）不变。
+
+### 已知局限（刻意接受，用户 2026-10-05 确认）
+
+1. **只读态是临时显示态**：`markRepoUnstarred` 已把该仓库移出整表缓存 ⇒ 下一次整页重绘
+   （有激活筛选时的同步、翻页、导入后重绘）它就不再出现在网格里。**不**把宽限期条目注入查询结果
+   （那会让「已 unstar 的仓库继续出现在我的 stars 列表里」，与 unstar 语义冲突，且要给查询管线
+   新增第三条半来源）。数据本身在宽限期内仍可通过 TM 菜单「恢复取消的 star」找回。
+2. **夹具 `own-unstar` 的保真度边界**：它**直接种存储**模拟「已 unstar」的终态，覆盖的是
+   `renderBrowsePage` 的渲染分派；**不驱动**真实链条「点星 → 发写请求 → `markRepoUnstarred` 删缓存 →
+   `starCheck` 的 own 分派」（那需要 fetch 写桩，参考 `other-starstate`）。真实链条的**关键分岔已在代码层
+   逐条核对**（见本 ADR 第 1 条引用链），但结论是**读出来的**、不是**跑出来的** ⇒ 真机确认（T5）不可省。
+3. **多账号浏览器下本人页可能读到上一个账号的宽限期备份**（发布前审查登记、**本次不修**）：
+   `stars_pending_delete` 是**单份全局键**、条目里不记归属，而 `cardState` 的身份门只判「**有没有**登录者」
+   （`hasViewerIdentity()`），不判「这条备份是不是他的」。⇒ 同一浏览器换账号后，若两张账号都 star 了同一仓库，
+   本人页可能把**自己已 star 的卡片**判成 `locked-pending` 并显示上一个账号的标签/备注。
+   **本次修复把作用面从他人页扩到本人页**（他人页 4.14.0 起就有同一问题）。不并入本批次的理由：
+   要真修得给 pending 条目加归属字段并决定「缺字段怎么办」，属**存储格式 + 迁移语义**的独立改动。
+   ⚠️ 与之同类的**登出**场景**不**受影响（无身份 ⇒ `hasViewerIdentity()` 为假 ⇒ 一个字符都不读），
+   那条已在追加 7 的 P2-1 用夹具 `other-logout-pending` 钳合实证过。
+4. **导入路径下点一次星按钮可能抹掉已有的宽限期备份**（发布前审查发现、**本次不修**）：
+   `markRepoUnstarred()` 无条件用**当前活区**覆盖 `_tags` / `_note`。而「该仓库既在整表缓存里、
+   又已有一条非空 pending 条目」这种并存状态**只经 `import` 可达**（正常 unstar 会同时删掉缓存条目）。
+   此时活区是空的 ⇒ 点一次星按钮就把那 24h 内**本可恢复**的标签/备注写成空。
+   不并入本批次的理由：`markRepoUnstarred` 本次一行未动，且「何时该保留旧备份」是**宽限期语义**的选择
+   （空活区也可能是用户真的删光了标签 —— 那时覆盖才对），需要它自己的判据与验收。
+5. **跨 24h 边界可能出现一帧「只读 + 空」**（登记的观察项，不修）：判定与取数是**两次独立的**
+   `getPendingInGrace()` 调用，若正好卡在宽限期到期的毫秒之间，卡片会以 `locked-pending` 的外观渲染一次
+   空内容，下一次重绘即恢复。代价是毫秒级窗口里的**一帧**，而消除它要给取数函数再开一个「传入已取到的备份」
+   的口子（多一层耦合），收益不抵成本。
+6. **导入的标签落在「本人没 star」的仓库上时**，现行行为是留在活区、不渲染、无 UI 入口。
+   「导入即搬进宽限期」的字面读法**未采纳**：宽限期到期会**永久删除**条目（`cleanupExpiredUnstarred`），
+   那会让导入进来的数据在 24h 后被静默删掉；且 ADR 0001/0005 把导入定义为「数据搬运、落盘即完成」，
+   不该顺带触发删除倒计时。若要改，属独立改动（需同步改 ADR 0001/0005 的口径）。

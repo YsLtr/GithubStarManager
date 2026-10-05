@@ -109,11 +109,21 @@ src/
                       页头会被误改写）。标记调用必须在 `!isDesktop()` 早退**之后**（否则窄视口留 class）
                       —— **卡片与网格的样式全在 base.css + wide.css 里**，本方自己的页与他人页的只读网格
                       共用这两张表（他人页的首版漏了注入 ⇒ 卡片无描边、单列 display:block，真机报「网格没应用」）
-  cardState.ts         逐仓库三态判定（4.14.0，纯判定：不碰 DOM、不发请求、不写存储）：
-                      判据 = 本人 star（活区） / 已 unstar 但数据仍在 24h 宽限期备份 / 两者都不是；
-                      `readCardDisplayData` 取数（活区优先，活区为空再看备份 —— 宽限期卡片的标签在备份里）
-  cardAreas.ts         标签/备注区的**唯一分派点**（4.14.0）：renderCardTagAndNoteAreas(card, 'own' | 'other', viewerCache)
-                      —— 禁止再出现第二处 `readOnly ? A : B`（两处判据不一致就是 4.14.0 那个缺陷）
+  cardState.ts         逐仓库判定（纯判定：不碰 DOM、不发请求、不写存储）。**两个入口、一份取数**：
+                      · getCardState(repoId, viewerCache)      —— 他人页三态（4.14.0）：
+                        本人 star（活区） / 已 unstar 但数据仍在 24h 宽限期备份 / 两者都不是；
+                      · getOwnPageCardState(repoId)            —— 本人页二态（4.16.2）：
+                        命中 24h 宽限期备份 ⇒ locked-pending（只读但仍显示），其余 ⇒ editable。
+                        **刻意不查整表缓存** —— 那条链路依赖无官方契约的 `octolytics-actor-id`，
+                        失效会让本人页整页失去编辑能力（见文件头「本方自己的页」）；
+                      · readCardDisplayData(repoId, state, now)（4.16.2 起 state 由调用方传入）：
+                        活区优先，活区为空**且** state 为 locked-* 时才读宽限期备份
+                        （宽限期卡片的标签/备注在备份里，活区已被 markRepoUnstarred 清空）。
+                        不变式：editable 时活区为空就返回空，不许读备份
+  cardAreas.ts         标签/备注区的**唯一分派点**（4.14.0；4.16.2 起 own 也有只读分支）：
+                      renderCardTagAndNoteAreas(card, 'own' | 'other', viewerCache)
+                      —— 判定一律取自 `cardState`，这里只做「判定结果 → 渲染器」的分派；
+                      禁止再出现第二处 `readOnly ? A : B`（两处判据不一致就是 4.14.0 与 4.16.2 那两个缺陷）
   topPager.ts         标题行右侧的顶部快捷翻页器（4.13.0）：mountTopPager(scope, source) —— 两条展示路径
                       共用同一份实现（本方页克隆 `.gsm-local-pager`，他人页克隆原生 `.paginate-container`）；
                       克隆件带 `.gsm-top-pager`、标题行加 `.gsm-header-row`，回滚由 viewTeardown 第 2/4 项负责；

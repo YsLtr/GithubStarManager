@@ -298,7 +298,7 @@ export function renderBrowsePage(page: number): number {
   for (const { repoId, data } of results.slice(start, start + pageSize)) {
     const card = buildCardFromCache(repoId, data);
     frag.appendChild(card);
-    // 标签/备注：唯一分派点（他人页逐仓库三态，本方自己的页永远可编辑）
+    // 标签/备注：唯一分派点（他人页逐仓库三态；本人页二态 —— 命中 24h 宽限期备份时只读但仍显示，见 D31）
     renderCardTagAndNoteAreas(card, readOnly ? 'other' : 'own', viewerCache);
     if (readOnly) {
       if (canShowStar) createStarButtonForCached(card, data, isStarredByViewer(repoId, viewerCache));

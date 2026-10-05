@@ -8,7 +8,8 @@
  * - 校验失败 → alert 报原因且**不弹 confirm**（不存在可执行的操作，同一种对话框会让用户以为「点确定就能强行导入」）；
  * - 破坏性确认 → `window.confirm`（脚本只跑在 github.com，不引入页面内确认条）；
  * - 导入后不导航、不重渲染；**仅**在「Stars 页且网格已存在」时按当前筛选重绘（由 index.ts 的回调完成）；
- * - 导入完成后直接走标题行 Sync 的同一路径 `runFullSync('button')`；**无 token 时提示并跳过、不弹 Token 输入框**。
+ * - 导入完成后**不自动同步**（`0005-no-auto-sync-after-import.md`，4.9.0 起生效）：落盘即完成，
+ *   是否拉远端由用户决定 —— 早于此的「导入后走 `runFullSync('button')`」措辞已作废，勿据此实现。
  */
 import { buildExportFilename } from '../constants';
 import { gmDownloadFile, gmRegisterMenuCommand } from '../gm';
@@ -20,7 +21,7 @@ import {
   type ImportReport,
 } from '../storage/exportImport';
 
-/** 导入完成后的收尾动作（index.ts 注入：重渲染 + 触发同步）。放在注入里避免菜单↔fullSync 循环导入 */
+/** 导入完成后的收尾动作（index.ts 注入：**仅**在 Stars 页重绘，不触发同步）。放在注入里避免菜单↔fullSync 循环导入 */
 type AfterImportHandler = (report: ImportReport) => void;
 let afterImport: AfterImportHandler | null = null;
 
