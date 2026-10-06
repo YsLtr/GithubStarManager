@@ -16,6 +16,8 @@ export default defineConfig({
         description:
           '将 GitHub Stars 页面的列表视图改为卡片网格视图，缩小左侧个人资料栏，最大化仓库展示空间（仅桌面端生效；窄视口 <768px 下完全惰性，不注入样式、不改动页面）',
         author: 'YsLtr',
+        license: 'MIT',
+        icon: 'https://github.com/favicon.ico',
         // 单条覆盖全站：必须包含纯 profile 根路径 /<user>（旧的 */* 要求两段路径，
         // 匹配不到 /YsLtr → 从 profile 点 Stars 标签时脚本根本没在跑）；
         // ?tab=stars 与仓库详情页也一并覆盖（TM 的 @match 把 query 计入 path）。
