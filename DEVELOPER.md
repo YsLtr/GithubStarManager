@@ -165,7 +165,7 @@ src/
                       成功判定、失败归一 + writeFailureMessage。**无 422 回退**（2026-10-01 实测推翻其前提，见 ADR 0006）
   accountGuard.ts      Token 归属校验（4.11.0）：evaluateAccountMatch（三态 match/mismatch/unknown + 单飞）、
                       两侧 **数字 ID** 比对（页面 `octolytics-actor-id`（**登录者**；非 dimension-user_id＝页面主人）vs `GET /user` 的 `id`）、
-                      凭证指纹缓存（FNV-1a 内联哈希，不存 token 明文）、accountPairKey。
+                      凭证指纹缓存（4.18.0 起指纹实现与缓存读写都移到 `storage/accountIdentity.ts`，不存 token 明文）、accountPairKey。
                       只在「有 token + 有登录会话 + 两侧 id 都取到」时判定，其余一律 unknown（见 ADR 0007 / D25）
   mutationQueue.ts    全局串行变异队列（4.9.0）：间隔 ≥1000ms、排队中可撤销、失败不阻断后续
   restore.ts          恢复编排（4.9.0）：restoreOne / restoreMany（严格串行·可取消·不重试）/ pushRestoreNotice（同仓库通知去重）
@@ -175,7 +175,10 @@ src/
                      （unmountSyncButton 显式注销订阅）
   storage/
     repoCache.ts      仓库缓存 CRUD
-    tags.ts           标签存储 + **隔离账号解析**（getStorageUserId = 登录者 actor-id，4.12.0 起；取不到则拒绝读写）
+    tags.ts           标签存储 + **归属账号解析**（getStorageUserId = **token 账号**，4.18.0 起；
+                      取不到 token 身份才回退登录者 actor-id；两者皆空则拒绝读写）
+    accountIdentity.ts token 身份（4.18.0）：指纹 / 同步查表 getTokenIdentitySync / 网络解析 resolveTokenIdentity /
+                      唯一写入点 setTokenVerified（先确认身份再落库 token，见 ADR 0010）
     notes.ts          备注存储（saveNote 判空 = trim 后为空）
     pendingDelete.ts  待删除区（unstar 宽限期，含标签/备注/名字备份 + listRestorable/formatRemaining 供恢复窗口；4.17.0 新增 addPendingFromImport —— 导入路径专用，空不覆盖非空、非空整体替换、不重置 unstarredAt）
     exportImport.ts   导入导出**纯逻辑**（4.7.0；**4.17.0**：导出 = tags/notes + 最小标识 repoNames、导入按「仓库在不在整表缓存里」逐仓库分派）：buildExportPackage / validateExportPackage / applyImportPackage；不碰 DOM、不弹对话框
@@ -273,9 +276,10 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
 
 > 颜色不存仓库上：`langColor` 字段已删除，渲染走 `stars_lang_colors` 全局映射（只由语言名决定）。
 
-### `stars_pending_delete`
+### `stars_pending_delete_<归属id>`
 
-待删除区，存放已 unstar 但处于宽限期的仓库数据。**4.17.0 起导入也会往这里写**（本地无法确认已 star 的仓库；见 `### 待删除区宽限期`）。
+待删除区，存放已 unstar 但处于宽限期的仓库数据。**4.18.0 起按归属账号分区**
+（此前是单份全局键 `stars_pending_delete`：两个账号对同一 repoId 各有一条备份会互相顶掉 —— 见 ADR 0010）。**4.17.0 起导入也会往这里写**（本地无法确认已 star 的仓库；见 `### 待删除区宽限期`）。
 
 ```jsonc
 {
@@ -292,8 +296,10 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
 
 ### `stars_tags_<userId>` / `stars_notes_<userId>`
 
-每用户标签 / 备注数据，按**登录者**的 GitHub 数字 ID 隔离（4.12.0 起取自 `meta[name="octolytics-actor-id"]`；
-此前取的是**页面主人** `octolytics-dimension-user_id`，会让他人的 stars 页读写对方的命名空间 —— 见 D27 与 ADR 0008）。
+每用户标签 / 备注数据，**4.18.0 起按 `getStorageUserId()` 分区 = token 账号**（取不到 token 身份才回退登录者
+`meta[name="octolytics-actor-id"]`；同样取不到则拒绝读写）。历史：4.12.0–4.17.x 取登录者（再早取**页面主人**
+`octolytics-dimension-user_id`，会让他人的 stars 页读写对方的命名空间）—— 见 D27 与 ADR 0008 / 0010。
+正常配置（token 主人 == 登录者）下两侧 id 相等 ⇒ 键不变。
 
 ```jsonc
 // stars_tags_<userId>
@@ -322,7 +328,8 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
   "etags": ["...", "..."],  // 逐页 ETag 基线（全部 304 才算无变化；含空值则下次整表重建）
   "tailEtag": "\"...\"",    // 越界空页 ETag（条件探尾：304=仍空免额度）
   "lastFullSyncAt": 1780000000000,
-  "count": 464              // star 总数（本地分页总页数 = ceil(count / 30)）
+  "count": 464,             // star 总数（本地分页总页数 = ceil(count / 30)）
+  "accountId": "12345"      // 4.18.0：这份缓存属于哪个账号（**只写不判** —— 现有读门不受影响）
 }
 ```
 
@@ -336,9 +343,13 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
 
 ### `stars_account_identity`
 
-Token 归属校验的身份缓存（4.11.0）：`{ [凭证指纹]: { id, login } }`。指纹是 token 字符串的 **FNV-1a 32 位**哈希（内联实现，
-刻意不用 `crypto.subtle`——它要求 secure context 且在脚本沙箱的可用性未验证），**不存 token 明文**。
-命中即零请求；只在 `GET /user` 成功时写入（失败不写，下个求值点自然重试）。见 ADR 0007 / §6「Token 归属校验」。
+**4.18.0 起它有两个身份**：① Token 归属校验的身份缓存（4.11.0）；② **标签 / 备注 / 宽限期备份的归属取值来源**
+（`getTokenIdentitySync()`，**同步**读，见 D33 / ADR 0010）。形态 `{ [凭证指纹]: { id, login } }`；指纹是 token 字符串的
+**FNV-1a 32 位**哈希（内联实现，刻意不用 `crypto.subtle`——它要求 secure context 且在脚本沙箱的可用性未验证；
+实现位于 `storage/accountIdentity.ts`），**不存 token 明文**。命中即零请求；只在 `GET /user` 成功时写入（失败不写）。
+
+⚠️ **它不是安全边界**：只是「曾经见过这份凭证」的本地缓存，能读写 GM 存储的人可以伪造它 ⇒ **任何判定类用途都不得依赖它**
+（见 ADR 0010「已接受的后果」第 2 条）。见 ADR 0007 / 0010 / §6「Token 归属校验」。
 
 ### `stars_account_banner_dismissed`
 
@@ -362,14 +373,18 @@ Token 归属校验的身份缓存（4.11.0）：`{ [凭证指纹]: { id, login }
 警告。完整口径（含依据与已知局限）见 **`docs/adr/0007-token-account-match-check.md`** 与 AGENTS.md **D25**，此处只记实现要点：
 
 - **两侧各取数字 ID**：页面 **`meta[name="octolytics-actor-id"]`（登录者）** vs `GET /user` 的 `id`。
-  **不要用 `getStarsUserId()` 的结果做比对键** —— 它取的是 `octolytics-dimension-user_id` = **页面主人**，
+  **不要用 `octolytics-dimension-user_id`（＝页面主人） 的结果做比对键** —— 它取的是 `octolytics-dimension-user_id` = **页面主人**，
   在他人 stars 页上与登录者不同，用它会让每个他人页都假阳性（第二轮审查 P1-2，实测见 `.diag/probe-viewer-id.js`）。
   **不用 `login`** 比对（官方明文 login 可改名、id 持久；用 login 会在改名后永久误报），`login` 只进文案。
 - **只在一个组合下判定**：有 token **且** 有登录会话 **且** 两侧 id 都取到。其余（含任一侧取不到、请求失败）判 `unknown`，
   **不弹任何东西** —— 页面 meta 无官方契约（`csrf-token` 的前例证明它会无声消失），要求是「失效 = 退回今天的行为」。
   `GET /user` 401 不算归属不符，走既有 `notifyTokenIssue` → 配置横幅。
-- **求值点仅三处**（都 `void mountAccountGuard()`，fire-and-forget）：`setTokenSavedHandler`、`transformAndReveal` 成功出口、
-  `runFullSync` 的 `finally`（同步链唯一全覆盖点）。**不得**进入同步关键路径或影响 `SyncState`。
+- **求值点共五处**（都 fire-and-forget）：`transformAndReveal` 成功出口、`setTokenSavedHandler`、`setTokenIssueHandler`
+  （**清空 Token 走这条链**，4.11.0 第二轮审查加入）、`runFullSync` 的 `finally`（同步链唯一全覆盖点）、
+  `visibilitychange`（**4.18.0 新增**：账号可能在本标签页之外被换掉，此时前四处一个都不跑）。
+  最后这一处的**三道门**缺一不可 —— `isDesktop()`（它注册在模块顶层，D18 的窄视口惰性靠这道门守）
+  **且** `isStarsListingPage()` **且** `isReadOnlyScope()`；只写 `isReadOnlyScope()` 等于「任意 GitHub 页
+  回到前台都求值」（`getStarsPageScope` 对非列表页返回 `'own'`）。**不得**进入同步关键路径或影响 `SyncState`。
 - **不阻断写路径**：`setStarState` 的静默分派一字未改。网页端点通道是 fine-grained 用户获得写能力的唯一现实手段（ADR 0006），
   且用户可能刻意让 token 与登录会话分属两个账号。
 - **窄视口惰性**：`evaluateAccountMatch()` 首行判视口 → `unknown`（不建节点、不发请求）。
@@ -404,7 +419,7 @@ Token 归属校验的身份缓存（4.11.0）：`{ [凭证指纹]: { id, login }
 
 ### 待删除区宽限期
 
-unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 `unstarredAt`；24 小时内重新 star，数据、标签和备注自动恢复。超期条目在下次脚本加载时由 `cleanupExpiredUnstarred()` 清理。
+unstar 时数据不立即删除，而是移入 `stars_pending_delete_<归属id>` 并记录 `unstarredAt`；24 小时内重新 star，数据、标签和备注自动恢复。超期条目在下次脚本加载时由 `cleanupExpiredUnstarred()` 清理。
 
 **4.17.0 起有两个写入者，共用同一份存储**：
 
@@ -439,8 +454,9 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 
 ### 每账号标签隔离
 
-存储键包含**登录者**的账号 ID，同一浏览器下不同 GitHub 账号的标签 / 备注互不干扰；
-他人的 stars 页读到的也是**我自己的**标签/备注（4.12.0 起，见 D27）。
+存储键包含**归属账号**的 ID（**4.18.0 起 = token 账号**，取不到 token 身份才回退登录者，见 D33 / ADR 0010），
+同一浏览器下不同 GitHub 账号的标签 / 备注互不干扰；他人的 stars 页读到的也是**我自己的**标签/备注（4.12.0 起）。
+**为什么是 token 账号**：屏幕上的列表来自 `GET /user/starred`，那是**带 token** 的请求 ⇒ 展示与归属必须同账号。
 
 ### 导入导出（4.7.0，**不新增存储键**）
 
@@ -467,7 +483,7 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete` 并记录 
 > 导入路径**不往整表缓存写任何条目**；旧包（仍带 `repoCache`、`schemaVersion` 仍为 1）照常导入，
 > 该字段**只校验、不写入**。详见 `docs/adr/0001` 的「4.17.0 修订」段。
 
-**不含**：`github_pat`（敏感）、`stars_full_sync_meta`（ETag 基线与 token 身份 + 远端瞬时状态绑定，跨设备导入会让「全 304 = 无变化」误判为「缓存即现值」）、`stars_pending_delete`（临时状态）。
+**不含**：`github_pat`（敏感）、`stars_full_sync_meta`（ETag 基线与 token 身份 + 远端瞬时状态绑定，跨设备导入会让「全 304 = 无变化」误判为「缓存即现值」）、`stars_pending_delete_<归属id>`（临时状态）。
 合并语义与拒绝路径见 `docs/adr/0001-export-import-format.md`。
 
 **导入默认不自动同步**（4.9.0，`docs/adr/0005-no-auto-sync-after-import.md`，推翻 `0001` 原段落）：导入是数据搬运，落盘即完成，是否拉远端由用户自己决定（标题行 Sync / TM 菜单）。收尾只做「Stars 页且网格已存在时重绘」。

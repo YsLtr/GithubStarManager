@@ -13,10 +13,10 @@ import {
   openTokenCreator,
   TOKEN_KIND_HELP,
   pasteFromClipboard,
-  saveToken,
   setTokenIssueHandler,
   setTokenSavedHandler,
 } from './tokenConfig';
+import { setTokenVerified } from './storage/accountIdentity';
 import { cleanupExpiredUnstarred } from './storage/pendingDelete';
 import { registerHideListsMenu, setHideListsRepositionHandler } from './ui/hideListsMenu';
 import {
@@ -309,14 +309,36 @@ function showSetupBanner(issueDetail?: string): void {
   tokSave.type = 'button';
   tokSave.textContent = '保存并同步';
   tokSave.addEventListener('click', () => {
-    const kind = saveToken(tokInput.value);
-    if (!kind) {
-      tokMsg.textContent = '前缀不对：预期 ghp_ / gho_（classic）或 github_pat_（fine-grained）';
+    // 空输入**不清除** token（4.18.0 修）：本体面板会在 401/403 时自动出现，用户误点一下就丢凭证，
+    // 而「留空 = 清除」只在 TM 菜单那条路径的 prompt 文案里写明过。旧实现（saveToken('') → 前缀非法）
+    // 就是「只报错、不动存储」，这里保持同一行为，并把清除的正确入口告诉用户。
+    if (!tokInput.value.trim()) {
+      tokMsg.textContent = '请输入 Token（如需清除 Token，请用油猴菜单「⭐ 设置 GitHub Token」留空提交）';
       return;
     }
-    console.log(`[github-star-manager] Token 已保存（${kind}），自动触发全量同步`);
-    bar.remove();
-    notifyTokenSaved();
+    // 4.18.0：保存前先确认这份凭证属于哪个账号（`setTokenVerified` 内部先 GET /user 再落库）。
+    // 按钮在确认期间禁用并给文案 —— 这一步是网络请求，不能像旧实现那样同步返回。
+    tokSave.disabled = true;
+    tokMsg.textContent = '正在确认 Token 所属账号…';
+    void setTokenVerified(tokInput.value).then((outcome) => {
+      tokSave.disabled = false;
+      if (outcome.result === 'invalid') {
+        tokMsg.textContent = '前缀不对：预期 ghp_ / gho_（classic）或 github_pat_（fine-grained）';
+        return;
+      }
+      // 注：`cleared` 不可能到这里 —— 它只在空输入时返回，而空输入已在上面早退（那正是「面板不该清 token」的护栏）。
+      if (outcome.result === 'dead') {
+        tokMsg.textContent = '这个 Token 已失效或被撤销（401），未保存';
+        return;
+      }
+      console.log(
+        `[github-star-manager] Token 已保存（${outcome.kind ?? '未知类型'}${
+          outcome.result === 'saved-unverified' ? '，暂时未能确认所属账号' : ''
+        }），自动触发全量同步`
+      );
+      bar.remove();
+      notifyTokenSaved();
+    });
   });
   tokRow.append(tokInput, tokMsg, tokPaste, tokSave);
 
@@ -463,6 +485,29 @@ function registerNavListeners(): void {
     }
   });
 
+
+/* 归属复评的**第五**个触发点（4.18.0，风险 21）：**登录账号可能在本标签页之外被换掉**
+ * （GitHub 多账号切换 / 另一个标签页里退出登录），此时本页既不导航也不同步 ⇒ 既有的四个求值点
+ * （transform / Token 保存 / **Token 清空** / runFullSync 的 finally）一个都不会跑，屏上会一直挂着过期横幅，
+ * 或者该重弹的横幅永远不出现（关闭态键是 <tokenId>#<sessionId>，任一侧变化即应重新武装）。
+ * visibilitychange 是本标签页能感知「用户回来了」的唯一信号。
+ *
+ * 成本与边界：命中指纹缓存时零请求；未命中才发一次 GET /user。**三道门都必须显式写**：
+ *   ⓪ `isDesktop()` —— D18：窄视口语义是「脚本没装过」，同文件其余监听器都这么开头（本监听器与它们同在
+ *      `registerNavListeners()` 内）。这道门不是多余的：函数里其余监听器都挂在「导航 / 点击」这类事件上，
+ *      而 `visibilitychange` 不需要任何用户动作 —— 窄视口下切出去再切回来也会触发。
+ *   ① `isStarsListingPage()` —— 非 stars 列表页（issue / PR / 详情页 / 纯 profile）一律不求值；
+ *      注意**不能**只靠 `isReadOnlyScope()`：它对非列表页返回 `false`（getStarsPageScope 对非列表页给 'own'），
+ *      单独用它等于「在任意 GitHub 页面回到前台都求值一次」。
+ *   ② `isReadOnlyScope()` —— 他人 / 判定不出归属的 stars 页直接返回（D26 零网络，那条硬约束不因本触发点松动）。
+ * 与 navScope 同一生命周期（整页），故不随回滚解绑：它不写 DOM、不建节点，回滚无需处理。 */
+document.addEventListener('visibilitychange', () => {
+  if (!isDesktop()) return; // D18：窄视口 = 脚本没装过（与同文件其他 4 个监听器同一写法）
+  if (document.visibilityState !== 'visible') return;
+  if (!isStarsListingPage()) return;
+  if (isReadOnlyScope()) return;
+  mountAccountGuard();
+});
   // 修正 GitHub 原生 "Clear filter"（4.0.0）：全部本地化 — 清状态 → 本地浏览页 → 干净地址栏，不再整页导航
   document.addEventListener('click', (e) => {
     // 窄视口（4.9.1）：交回 GitHub 原生行为。本地化 Clear filter 会经 exitCustomMode →
@@ -550,7 +595,7 @@ function init(): void {
     showSetupBanner(detail);
     // 归属复评（4.11.0 第二轮审查 P1-1）：**清空 Token 走的就是这条链**（starCheck 的 promptForToken 留空
     // → notifyTokenIssue → 这里），而清空后「没有 token」这个事实必须让过期归属警告被撤掉 ——
-    // 否则屏幕上会同时挂「🔑 Token 已清除」与「⚠️ Token 属于 @A」。三个常规求值点覆盖不到这条路径
+    // 否则屏幕上会同时挂「🔑 Token 已清除」与「⚠️ Token 属于 @A」。其余求值点覆盖不到这条路径
     // （不进 transform、不进 setTokenSavedHandler，runFullSync 的无 token 早退发生在 try 之前）。
     mountAccountGuard();
   });

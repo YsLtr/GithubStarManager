@@ -22,7 +22,7 @@
 // starCheck，cards 调它会形成循环导入；本模块只依赖 constants/gm。
 
 import { STORAGE_KEYS } from './constants';
-import { gmGet, gmOpenInTab, gmSet } from './gm';
+import { gmGet, gmOpenInTab } from './gm';
 
 type TokenKind = 'classic' | 'fine-grained';
 
@@ -86,14 +86,11 @@ export function openClassicTokenCreator(): void {
   gmOpenInTab(TOKEN_CLASSIC_URL);
 }
 
-/** 前缀校验后写入 GM（敏感键由 gm 层保证不落 localStorage 镜像）；null = 前缀不合法未保存 */
-export function saveToken(raw: string): TokenKind | null {
-  const tok = raw.trim();
-  const kind = detectTokenKind(tok);
-  if (!kind) return null;
-  gmSet(STORAGE_KEYS.githubPat, tok);
-  return kind;
-}
+/* 曾用过什么（4.18.0 删除）：此处原有 `saveToken(raw): TokenKind | null` —— 校验前缀后直接
+ * `gmSet(githubPat, tok)` 返回类型。删除理由：token 的写入点曾有三处（本函数、`starCheck.promptForToken`
+ * 的两行 gmSet、配置面板内联保存），每一处都不知道也不记录「这份凭证属于哪个账号」，于是归属只能等页面
+ * 渲染时被动填充（组合 B 下永不填充，见 AGENTS.md 风险 21）。现统一为
+ * `storage/accountIdentity.setTokenVerified()`：**先确认身份、再落库 token**，token 一存在归属即确定。 */
 
 type SavedHandler = () => void;
 let savedHandler: SavedHandler | null = null;

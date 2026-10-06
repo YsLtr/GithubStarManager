@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <title>repo detail smoke fixture</title>
 <meta name="octolytics-dimension-user_id" content="999">
+<!-- 4.18.0 补：脚本取的是**登录者**的 octolytics-actor-id（getViewerId 刻意不回落 dimension-*）。
+     缺这一行时归属 id = '' ⇒ stars_tags_999 / stars_pending_delete_999 的种子全读不到。 -->
+<meta name="octolytics-actor-id" content="999">
+<meta name="octolytics-actor-login" content="smoke-user">
 <meta name="octolytics-dimension-repository_id" content="123">
 <meta name="octolytics-dimension-repository_nwo" content="alpha/one">
 <script>
@@ -12,7 +16,7 @@
     stars_repo_cache: {
       '123': { name: 'alpha/one', desc: '第一个仓库的描述', stars: 29208, forks: 1024, updatedAt: '2026-09-20T13:25:54Z' }
     },
-    stars_pending_delete: {},
+    ['stars_pending_delete_999']: {},
     'stars_tags_999': { '123': ['ai', 'tool'] },
     'stars_notes_999': { '123': '这是备注' }
   };

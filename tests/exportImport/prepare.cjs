@@ -22,6 +22,10 @@ const FILES = [
   'storage/pendingDelete.ts',
   'storage/repoCache.ts',
   'storage/tags.ts',
+  // 4.18.0：归属 id 改由 token 身份解析（tags.ts → storage/accountIdentity → tokenConfig），
+  // 这是风险 21 的修复点 —— 单测必须把这条链编译进来才测得到。
+  'storage/accountIdentity.ts',
+  'tokenConfig.ts',
   // 注意：本清单是「依赖闭包」的显式副本，被测模块新增 import 时必须同步补进来
   // 4.12.0：标签/备注的隔离 id 改由 pageScope 提供（登录者 octolytics-actor-id），
   // 于是 pageScope 及其依赖 boot → utils 也进了被测闭包。

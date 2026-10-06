@@ -63,4 +63,12 @@ export interface FullSyncMeta {
   lastFullSyncAt?: number;
   /** 上次整表的 star 总数（本地分页总页数 = ceil(count/30)） */
   count?: number;
+  /**
+   * 上次整表同步时**数据归属账号**的 id（4.18.0）。
+   *
+   * **只写不判**：没有任何读门看它（`hasApiData()` 与筛选/可编辑性判定都不碰）—— 一旦让它参与判定，
+   * 缺字段的历史 meta 就会让整页失去网格。用途：归属显示 / 诊断 / 将来风险 14（「这张缓存是谁的列表」）
+   * 的告警依据。
+   */
+  accountId?: string;
 }

@@ -5,11 +5,16 @@
 <title>stars grid smoke fixture</title>
 <meta name="octolytics-dimension-user_id" content="999">
 <meta name="octolytics-dimension-user_login" content="smoke-user">
+<!-- 4.18.0 补：脚本取的是**登录者**的 octolytics-actor-id（getViewerId 刻意不回落 dimension-*）。
+     缺这一行时归属 id = ⇒ stars_tags_999 / stars_pending_delete_999 的种子全读不到，
+     本夹具自 4.12.0 起其实一直在空转。 -->
+<meta name="octolytics-actor-id" content="999">
+<meta name="octolytics-actor-login" content="smoke-user">
 <!-- GM API stubs（在待测脚本之前注入） -->
 <script>
   window.__gmStore = {
     stars_repo_cache: {},
-    stars_pending_delete: {},
+    ['stars_pending_delete_999']: {},
     'stars_tags_999': { '123': ['ai', 'tool'] },
     'stars_notes_999': { '123': '这是备注' }
   };

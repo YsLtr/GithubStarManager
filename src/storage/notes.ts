@@ -3,8 +3,9 @@ import { STORAGE_KEYS } from '../constants';
 import { getStorageUserId } from './tags';
 import type { NoteMap } from '../types';
 
-/** 备注存储键。与标签同一套账号隔离（**登录者** id，见 tags.ts 的 getStorageUserId 注释）；
- *  无隔离 id 时的旧键回落已在 4.12.0 删除（会让登出读到无隔离的存量数据）。 */
+/** 备注存储键。与标签同一套账号隔离（4.18.0 起 = **归属账号**：token 账号，取不到才回退登录者；
+ *  见 tags.ts 的 `getStorageUserId` 注释）；无隔离 id 时的旧键回落已在 4.12.0 删除
+ *  （会让登出读到无隔离的存量数据）。 */
 function notesKey(userId: string): string {
   return STORAGE_KEYS.notesPrefix + userId;
 }
@@ -22,7 +23,7 @@ export function loadAllNotes(): NoteMap {
 export function saveNote(repoId: string, text: string): void {
   const userId = getStorageUserId();
   if (!userId) {
-    console.warn('[github-star-manager] 取不到登录账号，已跳过备注写入（避免写进无隔离的旧键）');
+    console.warn('[github-star-manager] 取不到归属账号（无 token 身份且取不到登录者），已跳过备注写入（避免写进无隔离的旧键）');
     return;
   }
   const key = notesKey(userId);

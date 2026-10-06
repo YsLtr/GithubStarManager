@@ -13,6 +13,9 @@ global.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () =
  * 4.12.0 起隔离键改用登录者 id（此前是页面主人 octolytics-dimension-user_id）：
  * 桩必须跟着改，否则这里测的就是「取不到身份」的降级路径而不是正常路径。 */
 let USER_ID = '111';
+/** 宽限期备份键按归属账号分区（4.18.0，风险 21）。桩里直接塞「存量数据」时必须跟着分区 ——
+ *  否则塞进去的是裸键，而读的是分区键，测试就变成在验证「读空」而不是被测逻辑。 */
+const pendingKey = () => `stars_pending_delete_${USER_ID}`;
 global.document = {
   querySelector: (sel) =>
     sel.includes('octolytics-actor-id') ? { content: USER_ID } : null,
@@ -229,6 +232,19 @@ saveTags('r2', ['u222']);
 USER_ID = '111';
 eq('切回原用户数据仍在', loadAllTags().r1, ['u111']);
 
+// 4.18.0（风险 21 的修复点）：宽限期备份同样按归属账号分区。
+// 关键形状 = **同一 repoId 在两个账号下各有一条备份**：旧实现是单份全局键，后写的会整个顶掉前一条。
+reset();
+USER_ID = '111';
+addPendingFromImport('rX', ['tag-A'], 'note-A', 'o/rX');
+USER_ID = '222';
+addPendingFromImport('rX', ['tag-B'], 'note-B', 'o/rX');
+eq('B 账号读到自己的备份（未被 A 顶掉）', loadPendingDelete().rX && loadPendingDelete().rX._tags, ['tag-B']);
+USER_ID = '111';
+eq('A 账号读到的仍是自己的备份（未被 B 覆盖）', loadPendingDelete().rX && loadPendingDelete().rX._tags, ['tag-A']);
+USER_ID = '';
+eq('取不到归属 id ⇒ 备份读空（不回落无隔离旧键）', Object.keys(loadPendingDelete()), []);
+USER_ID = '111';
 /* ================= 7. 导出包：只含标签/备注（不再带 repoCache） ================= */
 console.log('\n[7] 导出包不再带仓库元数据（4.17.0）');
 reset();
@@ -277,7 +293,7 @@ ok('…宽限期条目没有元数据（name 回退 repoId）', loadPendingDelet
 console.log('\n[10] 宽限期合并：空不覆盖非空 / 不续命 / 超期按新建');
 reset();
 const t0 = Date.now() - 3600_000; // 1 小时前进入宽限期
-store.set('stars_pending_delete', { r1: { name: 'one', unstarredAt: t0, _tags: ['原有标签'], _note: '原有备注' } });
+store.set(pendingKey(), { r1: { name: 'one', unstarredAt: t0, _tags: ['原有标签'], _note: '原有备注' } });
 addPendingFromImport('r1', [], ''); // 包内该仓库无标签无备注
 const e1 = loadPendingDelete().r1;
 eq('空标签不覆盖非空备份', e1._tags, ['原有标签']);
@@ -292,7 +308,7 @@ eq('覆盖时仍不重置 unstarredAt', e2.unstarredAt, t0);
 addPendingFromImport('r1', ['新标签'], '   ');
 eq('只有空白的备注按「空」处理（trim 判空）', loadPendingDelete().r1._note, '新备注');
 const stale = Date.now() - 25 * 3600_000; // 已超期
-store.set('stars_pending_delete', { r2: { name: 'two', unstarredAt: stale, _tags: ['过期标签'] } });
+store.set(pendingKey(), { r2: { name: 'two', unstarredAt: stale, _tags: ['过期标签'] } });
 addPendingFromImport('r2', ['新标签'], '');
 const e3 = loadPendingDelete().r2;
 ok('超期条目按新条目处理（unstarredAt 刷新；否则合并出来的条目出生即超期、数据谁都读不到）', e3.unstarredAt > stale);
@@ -305,7 +321,7 @@ ok('…且未写入存储', !loadPendingDelete().r3);
 // fullSync 依赖大量 DOM/网络模块、不在本夹具的依赖闭包里，所以这里直接钉住它依赖的行为契约。
 console.log('\n[11] 移出宽限期（fullSync 分支 B 的落点：markRepoStarred）');
 reset();
-store.set('stars_pending_delete', { r7: { unstarredAt: Date.now(), _tags: ['t7'], _note: 'n7' } });
+store.set(pendingKey(), { r7: { unstarredAt: Date.now(), _tags: ['t7'], _note: 'n7' } });
 markRepoStarred('r7');
 eq('标签移回活区', loadAllTags().r7, ['t7']);
 eq('备注移回活区', loadAllNotes().r7, 'n7');
@@ -365,20 +381,20 @@ const mkPkg = (repoNames) => ({
   user: { id: '111' },
   data: Object.assign({ tags: {}, notes: {} }, repoNames ? { repoNames } : {}),
 });
-store.set('stars_pending_delete', { r1: { name: 'owner/keep', unstarredAt: Date.now(), _tags: ['原有'] } });
+store.set(pendingKey(), { r1: { name: 'owner/keep', unstarredAt: Date.now(), _tags: ['原有'] } });
 const pkg14a = mkPkg({ r1: 'owner/other' });
 pkg14a.data.tags = { r1: ['来自包'] };
 applyImportPackage(pkg14a);
 eq('已有名字优先（不被包里的名字改写）', loadPendingDelete().r1.name, 'owner/keep');
 eq('非空标签照常覆盖备份（纪律 1 的另一半，见 [10]）', loadPendingDelete().r1._tags, ['来自包']);
 reset();
-store.set('stars_pending_delete', { r2: { name: 'owner/keep', unstarredAt: Date.now(), _tags: ['原有'] } });
+store.set(pendingKey(), { r2: { name: 'owner/keep', unstarredAt: Date.now(), _tags: ['原有'] } });
 const pkg14b = mkPkg(null); // 包里没有 repoNames
 pkg14b.data.tags = { r2: ['来自包'] };
 applyImportPackage(pkg14b);
 eq('包里没名字时不抹掉已有名字', loadPendingDelete().r2.name, 'owner/keep');
 reset();
-store.set('stars_pending_delete', { r3: { name: '', unstarredAt: Date.now(), _tags: ['原有'] } });
+store.set(pendingKey(), { r3: { name: '', unstarredAt: Date.now(), _tags: ['原有'] } });
 const pkg14c = mkPkg({ r3: 'owner/three' });
 pkg14c.data.tags = { r3: ['来自包'] };
 applyImportPackage(pkg14c);
@@ -391,5 +407,120 @@ applyImportPackage(pkg14d);
 eq('没有 `/` 的名字按「没有名字」处理（不原样塞进条目）', loadPendingDelete().r4.name, '');
 eq('…条目本身照建，只是暂时不可手动恢复', loadPendingDelete().r4._tags, ['t']);
 eq('…恢复窗口回退成 repoId（不会显示那串垃圾）', (listRestorable().find((e) => e.repoId === 'r4') || {}).name, 'r4');
-console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
-process.exit(fail ? 1 : 0);
+/* ================= 15. 归属账号 = token 账号（4.18.0，风险 21 的主修复） ================= */
+console.log('\n[15] 归属 = token 账号（指纹缓存命中），取不到才回退登录者');
+const { fingerprint } = require('./.build/storage/accountIdentity.cjs');
+/** 造一份「已确认身份的 token」：token 写入 + 身份按指纹落缓存（正是 setTokenVerified 的产物） */
+function withVerifiedToken(tok, id, login) {
+  store.set('github_pat', tok);
+  store.set('stars_account_identity', { [fingerprint(tok)]: { id, login } });
+}
+
+reset();
+saveTags('r1', []); // 让标签表存在，导出包不为空
+withVerifiedToken('github_pat_AAA', '999', 'tokuser');
+USER_ID = '111';
+eq('有 token 身份 ⇒ 导出包归属 = token 账号（不是登录者）', buildExportPackage().user.id, '999');
+// 这条要验的是**键名本身**（不是「读到的等于写进去的」那种同义反复）：
+// token 账号命名空间里真的有数据，而登录者命名空间里没有。
+saveTags('r1', ['归属验证']);
+ok('…写进了 token 账号的键 stars_tags_999', !!store.get('stars_tags_999') && store.get('stars_tags_999').r1 !== undefined);
+// 登录者的键可能因更早的写入而存在（上面那次空 `saveTags` 留下了空表），所以看的是**有没有这条仓库**。
+ok('…登录者的键 stars_tags_111 里没有这条仓库', !(store.get('stars_tags_111') || {}).r1);
+
+// 组合 B（有 token、无登录会话）：旧实现下身份缓存永不填充 ⇒ 这条以前读不到 token 账号的标签
+USER_ID = '';
+eq('无登录会话但有 token 身份 ⇒ 仍归到 token 账号', buildExportPackage().user.id, '999');
+
+// 身份未命中（临时故障 / 缓存被清）⇒ 回退登录者
+withVerifiedToken('github_pat_BBB', '999', 'tokuser'); // 换一份凭证（指纹不同 ⇒ 快照失效）
+store.set('stars_account_identity', {}); // 抹掉身份缓存，模拟查不到
+USER_ID = '111';
+eq('身份查不到 ⇒ 回退登录者', buildExportPackage().user.id, '111');
+
+// 两者皆空 ⇒ 拒绝（既无 token 身份也无登录者）
+store.set('github_pat', 'github_pat_CCC');
+store.set('stars_account_identity', {});
+USER_ID = '';
+eq('既无 token 身份又无登录者 ⇒ 拒绝导出', buildExportPackage(), null);
+eq('…标签读空（不回落无隔离旧键）', loadAllTags(), {});
+store.delete('github_pat');
+USER_ID = '111';
+
+/* ================= 16. setTokenVerified：token 唯一写入点的契约（4.18.0） =================
+ * 为什么必须锁这里：ADR 0010 把「token 的写入点收敛成一处 + 先确认身份再落库 token」当作**核心不变量**
+ * （`getStorageUserId()` 能同步拿到归属 id 全靠它）。但 [15] 是**直接往 store 里塞**凭据与身份的，
+ * 绕过了这个函数 —— 于是「401 也保存 token」这类反转在 130 条断言下**全绿**（对抗性验证时实测到）。
+ * 本段把契约本身变成断言，并用写入顺序记录锁住「先身份、后 token」。 */
+console.log('\n[16] setTokenVerified：唯一写入点 + 先身份后 token');
+(async () => {
+  const ai = require('./.build/storage/accountIdentity.cjs');
+  const { setTokenVerified, fingerprint } = ai;
+
+  /** 记录 GM_setValue 的写入顺序（用来验「先身份、后 token」，不只看最终状态） */
+  let writeLog = [];
+  const rawSet = global.GM_setValue;
+  const spyOn = () => { writeLog = []; global.GM_setValue = (k, v) => { writeLog.push(k); rawSet(k, v); }; };
+  const spyOff = () => { global.GM_setValue = rawSet; };
+
+  const tok = (suffix) => `github_pat_${suffix}`;
+
+  // --- 16a 401：拒绝保存（死 token 没有保存价值），且不得写身份 ---
+  reset();
+  global.fetch = async () => ({ status: 401, ok: false });
+  spyOn();
+  eq('401 ⇒ 结果 dead', (await setTokenVerified(tok('aaa'))).result, 'dead');
+  spyOff();
+  eq('…token 未落库', store.get('github_pat'), undefined);
+  eq('…身份缓存未写', store.get('stars_account_identity'), undefined);
+  eq('…一个 GM 写入都没发生（连清空都没有）', writeLog, []);
+
+  // --- 16b 200 带 id：保存 + 身份落缓存，且**身份先于 token** ---
+  reset();
+  global.fetch = async () => ({ status: 200, ok: true, json: async () => ({ id: 4242, login: 'tokuser' }) });
+  spyOn();
+  const r16b = await setTokenVerified(tok('bbb'));
+  spyOff();
+  eq('200 ⇒ 结果 saved', r16b.result, 'saved');
+  eq('…token 已落库', store.get('github_pat'), tok('bbb'));
+  eq('…身份写在该凭证指纹下', (store.get('stars_account_identity') || {})[fingerprint(tok('bbb'))], { id: '4242', login: 'tokuser' });
+  ok('…**先写身份、后写 token**（顺序不可颠倒）',
+    writeLog[0] === 'stars_account_identity' && writeLog[1] === 'github_pat',
+    `实际顺序 ${JSON.stringify(writeLog)}`);
+
+  // --- 16c 网络异常 / 5xx / 无 id：仍保存（不能把网络抖动变成「token 没了」），身份留空 ---
+  for (const [label, impl] of [
+    ['网络异常', async () => { throw new Error('boom'); }],
+    ['500', async () => ({ status: 500, ok: false })],
+    ['200 但缺 id', async () => ({ status: 200, ok: true, json: async () => ({ login: 'x' }) })],
+  ]) {
+    reset();
+    global.fetch = impl;
+    const rr = await setTokenVerified(tok('ccc'));
+    eq(`${label} ⇒ saved-unverified`, rr.result, 'saved-unverified');
+    eq(`…${label}：token 仍已保存`, store.get('github_pat'), tok('ccc'));
+    eq(`…${label}：身份缓存留空（归属回退登录者）`, store.get('stars_account_identity'), undefined);
+  }
+
+  // --- 16d 前缀非法 / 空串 ---
+  reset();
+  global.fetch = async () => { throw new Error('不该被调用'); };
+  eq('前缀非法 ⇒ invalid', (await setTokenVerified('not-a-token')).result, 'invalid');
+  eq('…未落库', store.get('github_pat'), undefined);
+  store.set('github_pat', tok('ddd'));
+  eq('空串 ⇒ cleared', (await setTokenVerified('   ')).result, 'cleared');
+  eq('…token 被清空', store.get('github_pat'), '');
+
+  // --- 16e 端到端串一次：归属跟着唯一写入点变 ---
+  reset();
+  USER_ID = '111';
+  global.fetch = async () => ({ status: 200, ok: true, json: async () => ({ id: 4242, login: 'tokuser' }) });
+  await setTokenVerified(tok('eee'));
+  eq('保存后：归属 = token 账号（不是登录者）', buildExportPackage().user.id, '4242');
+  await setTokenVerified('');
+  eq('清空后：归属回退登录者', buildExportPackage().user.id, '111');
+  store.delete('github_pat');
+
+  console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
+  process.exit(fail ? 1 : 0);
+})();

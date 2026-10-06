@@ -12,7 +12,8 @@
 // 判定矩阵（只在一个组合下判定，其余一律 unknown 静默降级）：
 //   A 有 token + 有登录会话 + 两侧数字 id 都取到 → 比对，不符才是 mismatch
 //   B 有 token + 无登录会话 → 写路径只有 REST、账号由 token 唯一决定 ⇒ 无错号风险，不判定
-//   C 无 token → 本期不判定（缓存归属不记录，见 AGENTS.md D25 的已知风险条目）
+//   C 无 token → 本期不判定（归属字段 4.18.0 起已记入 stars_full_sync_meta.accountId，但**只写不判**，
+//     要做那条告警时才读它；见 AGENTS.md 已知风险「无 token + 有登录会话」条目）
 //   任一侧取不到（meta 缺失 / GHES 改版 / 请求失败）→ unknown，**既不冒充「相符」也不误报「不符」**
 //
 // 比对键是**数字 id**，不是 login：官方明文 login 可随时间改名、id 持久
@@ -27,10 +28,9 @@
 //   - 该请求在 primary 限流下按**请求数**计 1（「1 点/5 点」表属 secondary，不作用于 primary）。
 //     指纹缓存命中后稳态零请求，故本功能不消耗可见额度。
 
-import { STORAGE_KEYS } from './constants';
-import { gmGet, gmSet } from './gm';
+import { getTokenIdentitySync, resolveTokenIdentity } from './storage/accountIdentity';
 import { getViewerId, getViewerLogin } from './pageScope';
-import { getToken, isClassicCredential, notifyTokenIssue } from './tokenConfig';
+import { getToken, isClassicCredential } from './tokenConfig';
 import { hasWebSession } from './starWrites';
 import { isDesktop } from './utils';
 
@@ -56,26 +56,7 @@ export interface AccountVerdict {
   sessionLogin?: string;
 }
 
-/** 凭证指纹 → token 身份。**不存 token 明文**（只存哈希与数字 ID） */
-interface IdentityCache {
-  [fingerprint: string]: { id: string; login: string };
-}
 
-/**
- * 凭证指纹：内联 FNV-1a（32 位）。
- * 刻意**不用 `crypto.subtle.digest`**：它要求 secure context，且在脚本沙箱里的可用性未经验证
- * （仓库现有先例只有无条件可用的 `crypto.getRandomValues`，见 starWrites.ts 的 placeholderToken）。
- * 本指纹只用于「这份凭证是否已经查过」的本地缓存命中，不承担安全职责 —— 碰撞的后果仅是
- * 复用一次同凭证的结论或少发一次请求。
- */
-function fingerprint(token: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < token.length; i += 1) {
-    h ^= token.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return h.toString(16).padStart(8, '0');
-}
 
 /* 4.12.0：`getViewerId()` / `getSessionLogin()` 已上移到 `pageScope.ts`。
  *
@@ -85,42 +66,6 @@ function fingerprint(token: string): string {
  *
  * 字段语义与实测矩阵见 pageScope.ts 的模块头注释。 */
 
-/** 取 token 身份。任何失败都返回 null（= unknown），**不写缓存**，故下个求值点会自然重试 */
-async function fetchTokenIdentity(token: string): Promise<{ id: string; login: string } | null> {
-  let resp: Response;
-  try {
-    resp = await fetch('https://api.github.com/user', {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
-    });
-  } catch (err) {
-    console.warn('[github-star-manager] 归属校验：取 token 身份失败（网络层）', err);
-    return null;
-  }
-
-  // 401 = token 失效/撤销，那是**另一件事**（不是归属不符）→ 走既有的失效上报链，
-  // 由它打开配置横幅；本模块只是返回 unknown。403/429 不当作 token 问题（可能是限流）。
-  if (resp.status === 401) {
-    notifyTokenIssue('401 Bad credentials：Token 已失效或被撤销');
-    return null;
-  }
-  if (!resp.ok) {
-    console.warn(`[github-star-manager] 归属校验：取 token 身份失败（HTTP ${resp.status}）`);
-    return null;
-  }
-
-  try {
-    const data = (await resp.json()) as { id?: unknown; login?: unknown };
-    const id = typeof data.id === 'number' ? String(data.id) : typeof data.id === 'string' ? data.id : '';
-    if (!id) return null;
-    return { id, login: typeof data.login === 'string' ? data.login : '' };
-  } catch (err) {
-    console.warn('[github-star-manager] 归属校验：解析 token 身份响应失败', err);
-    return null;
-  }
-}
 
 function decide(
   identity: { id: string; login: string },
@@ -157,19 +102,16 @@ async function run(): Promise<AccountVerdict> {
   // classic / OAuth 走 REST ⇒ 写落到 token 主人；fine-grained 或无 classic 时走会话 ⇒ 落到登录者。
   // 文案必须据此分叉：否则 classic 场景下会断言一个**不成立**的后果（审查 P1-2）。
   const writeTarget: 'token' | 'session' = isClassicCredential(token) ? 'token' : 'session';
-  const fp = fingerprint(token);
-  const cache = gmGet<IdentityCache>(STORAGE_KEYS.accountIdentity, {});
-  const cached = cache[fp];
-  if (cached) return decide(cached, sessionId, sessionLogin, writeTarget); // 命中 = 零请求
+  // 身份查询与指纹缓存在 storage/accountIdentity（4.18.0 抽出，唯一实现）：命中缓存 = 零请求。
+  const cached = getTokenIdentitySync(token);
+  if (cached) return decide(cached, sessionId, sessionLogin, writeTarget);
 
-  const identity = await fetchTokenIdentity(token);
-  if (!identity) return unknown(true);
-  // 只在成功时写缓存：失败留下的空条目会让下次求值点跳过重试
-  gmSet(STORAGE_KEYS.accountIdentity, { ...cache, [fp]: identity });
-  return decide(identity, sessionId, sessionLogin, writeTarget);
+  const res = await resolveTokenIdentity(token);
+  if (!res.ok) return unknown(true); // 401 已由它上报失效链；其余失败一律静默降级
+  return decide(res.identity, sessionId, sessionLogin, writeTarget);
 }
 
-/** 单飞：三个求值点可能在同一帧触发，共用同一次判定与同一次网络请求 */
+/** 单飞：求值点可能在同一帧触发（4.18.0 起共五处，见 bannerMessage 上方注释所在模块的挂载点），共用同一次判定与同一次网络请求 */
 let inflight: Promise<AccountVerdict> | null = null;
 
 /**

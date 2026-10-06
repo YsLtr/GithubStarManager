@@ -39,7 +39,7 @@
 -[x] REST 变异请求限流实测（L0+L1 已执行，**判定 D1**：`used` 每请求 +1，5 点表不作用于 primary；L2 按协议有意不跑，理由见 `docs/research-ratelimit-measurement.md` §5）
 -[x] 真机验证网页写路径：离页只带 VF 头 ✅ 成立（双向）；422 回退前提 ❌ 被推翻（仓库页 0 表单，回退已删）；classic `?scopes=` 预填 ⚠️ 被 sudo 门挡住不可判定 —— 见 `docs/research-web-star-endpoints.md` 附录 A
 -[x] 4.9.0 写路径端到端真机复核（卡片星按钮 → 通知栈 → 「撤销」恢复，均以 API 复核）
--[] 完成风险21修复
+-[x] 完成风险21修复
 -[x] 完成风险22修复
 -[] 各种api请求的目标地址改为以repoid为主，仓库名降级
 -[] 全部功能完成后进行重构

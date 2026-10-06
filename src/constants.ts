@@ -32,7 +32,9 @@ export const TYPE_OPTIONS: ReadonlyArray<{ value: TypeFilter; label: string }> =
 
 export const STORAGE_KEYS = {
   repoCache: 'stars_repo_cache',
-  pendingDelete: 'stars_pending_delete',
+  /** 宽限期备份键前缀（4.18.0 起按归属账号分区，见 storage/pendingDelete.ts）。
+   *  旧的无隔离键名 `stars_pending_delete` 已删除 —— 它没有读取者，且留着会让「读空」的护栏重新有回落物。 */
+  pendingDeletePrefix: 'stars_pending_delete_',
   tagsPrefix: 'stars_tags_',
   notesPrefix: 'stars_notes_',
   /** GitHub PAT（classic ghp_ / fine-grained github_pat_），外部 unstar 核对用 */

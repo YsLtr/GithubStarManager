@@ -15,10 +15,10 @@
 //   "User permissions for Starring" 列出全部 5 个 /user/starred* 端点）。
 //
 import { applyFilters } from './filters';
-import { STORAGE_KEYS } from './constants';
-import { gmRegisterMenuCommand, gmSet } from './gm';
+import { gmRegisterMenuCommand } from './gm';
 import { filterState } from './state';
 import { getNote, saveNote } from './storage/notes';
+import { setTokenVerified } from './storage/accountIdentity';
 import { loadPendingDelete, savePendingDelete } from './storage/pendingDelete';
 import { loadRepoCache, saveRepoCache } from './storage/repoCache';
 import { getTags, saveTags } from './storage/tags';
@@ -29,7 +29,6 @@ import { isReadOnlyView } from './viewContext';
 import type { PendingDeleteMap, RepoCache } from './types';
 
 import {
-  detectTokenKind,
   getToken,
   notifyTokenIssue,
   notifyTokenSaved,
@@ -43,7 +42,7 @@ export const getGitHubPat = getToken;
 
 
 /** 输入/清除 PAT（TM 菜单入口；留空 = 删除 token 并重新打开初始化面板） */
-function promptForToken(notify = true): void {
+async function promptForToken(notify = true): Promise<void> {
   const cur = getGitHubPat();
   const masked = cur ? `${cur.slice(0, 12)}…${cur.slice(-4)}` : '未设置';
   const input = window.prompt(
@@ -57,27 +56,34 @@ function promptForToken(notify = true): void {
     ''
   );
   if (input === null) return;
-  const tok = input.trim();
-  if (!tok) {
-    gmSet(STORAGE_KEYS.githubPat, '');
+  // 4.18.0：保存改走唯一写入点 setTokenVerified —— 它先 `GET /user` 确认这份凭证属于哪个账号，
+  // 再落库 token（顺序不可颠倒，否则「token 已存在但身份未知」的窗口会让归属暂时按登录者分区）。
+  const outcome = await setTokenVerified(input);
+  if (outcome.result === 'invalid') {
+    window.alert('无法识别的 token 前缀：预期 ghp_ / gho_（classic）或 github_pat_（fine-grained）。未保存。');
+    return;
+  }
+  if (outcome.result === 'cleared') {
     console.log('[github-star-manager] token 已清除，外部 unstar 核对与 P4 同步暂停');
     notifyTokenIssue('Token 已清除'); // 重开初始化面板（4.0.3：留空清除后不再静默消失）
     return;
   }
-  const kind = detectTokenKind(tok);
-  if (!kind) {
-    window.alert('无法识别的 token 前缀：预期 ghp_ / gho_（classic）或 github_pat_（fine-grained）。未保存。');
+  if (outcome.result === 'dead') {
+    window.alert('这个 Token 已失效或被撤销（401），未保存 —— 请到配置面板换一个 Token。');
     return;
   }
-  gmSet(STORAGE_KEYS.githubPat, tok);
-  console.log(`[github-star-manager] token 已保存（${kind}），外部 unstar 核对与 P4 同步生效`);
+  console.log(
+    `[github-star-manager] token 已保存（${outcome.kind ?? '未知类型'}${
+      outcome.result === 'saved-unverified' ? '，但暂时未能确认所属账号' : ''
+    }），外部 unstar 核对与 P4 同步生效`
+  );
   if (notify) notifyTokenSaved(); // 保存成功 → 撤配置横幅 + 自动全量同步（index.ts 注册的 handler）
 }
 
 /** TM 菜单入口：任意 github.com 页面可设（init 无条件注册） */
 export function registerTokenMenu(): void {
   gmRegisterMenuCommand('⭐ 设置 GitHub Token', () => {
-    promptForToken();
+    void promptForToken();
   });
   gmRegisterMenuCommand('🔑 快捷创建 Token：classic（推荐，可写星标）', () => {
     openClassicTokenCreator();

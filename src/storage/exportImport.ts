@@ -222,7 +222,7 @@ export function validateExportPackage(raw: unknown): ValidateResult {
  * - **确认已 star**（该仓库在整表缓存 `stars_repo_cache` 里）⇒ 写**活区**。**两条路都是同一条规则**
  *   （CONTEXT.md「导入覆盖规则」）：**包内该字段非空 ⇒ 覆盖目标；为空 / 缺省 ⇒ 保留目标**
  *   （标签与备注一致；备注的空值判据是 trim 后为空）。
- * - **其余一律 ⇒ 24h 宽限期**（`stars_pending_delete`，带 `_tags` / `_note`）。「其余」= `stars_repo_cache`
+ * - **其余一律 ⇒ 24h 宽限期**（`stars_pending_delete_<归属id>`，带 `_tags` / `_note`）。「其余」= `stars_repo_cache`
  *   里没有它 —— 既可能是「确实未 star」，也可能是「从未同步过 / 缓存为空」。这两者不必也无法区分：
  *   网格只来自整表缓存，缓存里没有的仓库渲染不出卡片、也没有 UI 入口 ⇒ 写活区等于静默丢弃；
  *   进宽限期至少有 24h 窗口与恢复入口，且下一次成功同步发现「远端已 star」时由 `fullSync` 的

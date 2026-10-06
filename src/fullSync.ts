@@ -33,6 +33,7 @@ import { gmGet, gmRegisterMenuCommand, gmSet } from './gm';
 import { applyExternalUnstar, getGitHubPat } from './starCheck';
 import { applyFilters } from './filters';
 import { notifyTokenIssue } from './tokenConfig';
+import { getStorageUserId } from './storage/tags';
 import { pushRestoreNotice } from './restore';
 import { loadPendingDelete, markRepoStarred } from './storage/pendingDelete';
 import { pushNotice } from './ui/notifications';
@@ -783,6 +784,10 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
     rerenderAfterSync(added + restored + unstarred + backfilled + refreshed);
     // 写元数据：逐页 ETag 基线（304 页沿用旧校验值、正文页用响应值，剥 W/ 规范形）+ lastFullSyncAt + 总数
     const outMeta: FullSyncMeta = { etags: scan.etags, lastFullSyncAt: Date.now(), count: scan.items.length };
+    // 归属账号（4.18.0）：记录「这份整表缓存是谁的列表」，**只写不判** —— 没有任何读门看它
+    // （见 types.ts 的 FullSyncMeta.accountId 注释；风险 14 的告警将来以它为依据）。
+    const ownerId = getStorageUserId();
+    if (ownerId) outMeta.accountId = ownerId;
     if (scan.nextTailEtag) outMeta.tailEtag = scan.nextTailEtag; // 尾页越界 etag（缺省=清空：尾页转正或整表兜底后新越界页待首探）
     gmSet(STORAGE_KEYS.fullSyncMeta, outMeta);
     const noEtag = scan.etags.filter((e) => !e).length;

@@ -12,7 +12,7 @@
  *
  * - **可编辑性** = 逐仓库事实（他人页用「本人是否 star」判；本人页只判「是否命中 24h 宽限期」）；
  * - **可见性** = 「数据还在」——活区（`stars_tags_*` / `stars_notes_*`）**或** 24h 宽限期备份
- *   （`stars_pending_delete` 的 `_tags` / `_note`）。
+ *   （`stars_pending_delete_<归属id>` 的 `_tags` / `_note`）。
  *
  * ## 态
  *
@@ -100,12 +100,20 @@ export function isStarredByViewer(repoId: string, viewerCache: RepoCache | null)
 /**
  * 有登录者身份（页面上的 `octolytics-actor-id`）？
  *
- * 它是**只读展示**与**宽限期备份**的共同前提，也是本模块唯一一处身份判据。
- * 注意它与 `stars_tags_*` / `stars_notes_*` 的**命名空间隔离**（D27）不是同一件事：
- * 那两个键按登录者 id 分片，未登录时天然读空；而 `stars_pending_delete` 是**单份全局键**
- * （不按账号分片）—— 未登录访客若照常查它，看到的就是**上一个登录者**的私密标签与备注。
- * D26 明文要求登出页「无徽章（命名空间为空，不是读错别人的）」⇒ 没有登录者身份时
- * 宽限期备份一律不看（判 `locked-empty`）。
+ * ## 它只管「成员关系 / 可编辑性」这一面（4.18.0 起口径写死）
+ *
+ * | 面 | 判据 | 语义 |
+ * |---|---|---|
+ * | 数据面（标签 / 备注 / 宽限期备份的键） | `getStorageUserId() !== ''` | 「这份数据归属谁」（token 账号，回退登录者） |
+ * | 成员关系 / 可编辑性面 | 本函数（`getViewerId() !== ''`） | 「浏览器里有登录会话吗」（**存在性**，不比数值） |
+ *
+ * 两者都是**存在性**判定，不做 id 相等比较 ⇒ 不会产生新的错配；分开的理由是语义不同：
+ * 决定「这张卡是否可以编辑」问的是「浏览器里有没有一个『我』」，而决定「数据写进哪个键」问的是
+ * 「这份列表属于哪个账号」。4.18.0 之前两者是同一个函数，风险 21 正是它们被混为一谈的后果。
+ *
+ * 未登录访客没有「我」⇒ `viewerCache` 不可用（`loadViewerCacheForView`）且这里为假 ⇒ 全部卡片只读；
+ * D26 要求登出页「无徽章（命名空间为空，不是读错别人的）」，在数据面由 `getStorageUserId()` 为空
+ * 自然满足（所有键的分区 id 都是空 ⇒ 读空）。
  */
 function hasViewerIdentity(): boolean {
   return !!getViewerId();
@@ -132,7 +140,8 @@ export function getCardState(repoId: string, viewerCache: RepoCache | null, now 
  *
  * 判据与 `getCardState` 共用 `getPendingInGrace()`（渲染时现算、不信「pending 里有没有」），
  * 但**不读** `viewerCache`、**不读**整表缓存成员关系 —— 理由见文件头。
- * 没有登录者身份时直接返回 `editable`：宽限期备份是全局单键，那时读它看到的是别人的数据。
+ * 没有登录者身份时直接返回 `editable`：宽限期备份**按归属账号分区**（4.18.0）⇒ 取不到归属 id 时它天然读空，
+ * 这里不读备份也就不会看到别人的数据（分区之前是全局单键，那时读它才会看到别人的）。
  */
 export function getOwnPageCardState(repoId: string, now = Date.now()): OwnCardState {
   if (!hasViewerIdentity()) return 'editable';
@@ -163,7 +172,8 @@ export function readCardDisplayData(
   const note = getNote(repoId);
   if (tags.length > 0 || note) return { tags, note };
 
-  // 宽限期备份是**单份全局键**、不按账号分片 ⇒ 只在有登录者身份、且确实处于只读态时才看它
+  // 宽限期备份已按归属账号分区（4.18.0，见 storage/pendingDelete.ts）⇒ 取不到归属 id 时它天然读空；
+  // 这里仍要求有登录者身份，与上面 `hasViewerIdentity` 的口径一致（登出页不显示任何身份相关数据）。
   const grace = state !== 'editable' && hasViewerIdentity() ? getPendingInGrace(repoId, now) : null;
   if (grace) return { tags: grace._tags || [], note: grace._note || '' };
   return { tags, note };

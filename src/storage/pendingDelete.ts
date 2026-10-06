@@ -1,16 +1,42 @@
 import { gmGet, gmSet } from '../gm';
 import { GRACE_PERIOD, STORAGE_KEYS } from '../constants';
 import { loadRepoCache, saveRepoCache } from './repoCache';
-import { getTags, saveTags } from './tags';
+import { getStorageUserId, getTags, saveTags } from './tags';
 import { getNote, saveNote } from './notes';
 import type { PendingDeleteEntry, PendingDeleteMap, RepoData } from '../types';
 
-export function loadPendingDelete(): PendingDeleteMap {
-  return gmGet<PendingDeleteMap>(STORAGE_KEYS.pendingDelete, {});
+/**
+ * 宽限期备份存储键。**按归属账号分区**（4.18.0，风险 21 的修复点之一）。
+ *
+ * 旧实现是**单份全局键** `stars_pending_delete`（`Record<repoId, entry>`）—— 两个账号对**同一 repoId**
+ * 各有一条备份时，抢的是同一个位置：后写的把前一条整个顶掉。给条目加 `owner` 字段救不了这一点
+ * （那只是把「静默覆盖」变成「有标记地覆盖」，位置仍然只有一个）。**换个键才是隔离**，
+ * 与 `stars_tags_<id>` / `stars_notes_<id>` 同构；分区之后「所属」由键名承载。
+ */
+function pendingDeleteKey(userId: string): string {
+  return STORAGE_KEYS.pendingDeletePrefix + userId;
 }
 
+/**
+ * 读当前归属账号的宽限期备份。**取不到归属 id ⇒ 空表**（不回落裸键）。
+ *
+ * 归属 id 为空有两种情形：登出（无登录者）、以及「无 token 且页面取不到 meta」。
+ * 两者都不得看到别人的数据 —— 旧实现下这里会读出**上一个登录者**的私密标签与备注。
+ */
+export function loadPendingDelete(): PendingDeleteMap {
+  const userId = getStorageUserId();
+  if (!userId) return {};
+  return gmGet<PendingDeleteMap>(pendingDeleteKey(userId), {});
+}
+
+/** 覆盖写入当前归属账号的宽限期备份；取不到归属 id ⇒ no-op（不写裸键） */
 export function savePendingDelete(all: PendingDeleteMap): void {
-  gmSet(STORAGE_KEYS.pendingDelete, all);
+  const userId = getStorageUserId();
+  if (!userId) {
+    console.warn('[github-star-manager] 取不到归属账号，已跳过宽限期备份写入（避免写进无隔离的旧键）');
+    return;
+  }
+  gmSet(pendingDeleteKey(userId), all);
 }
 
 /**

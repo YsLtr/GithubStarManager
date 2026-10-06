@@ -23,7 +23,8 @@
     await sleep(1200);
     out.afterUnstar = {
       cacheHas123: '123' in store.stars_repo_cache,
-      pending: store.stars_pending_delete['123'] || null,
+      // 4.18.0：宽限期备份按归属账号分区（本夹具的查看者 = 999）
+      pending: (store['stars_pending_delete_999'] || {})['123'] || null,
       tagsAfter: store['stars_tags_999'],
       notesAfter: store['stars_notes_999']
     };
@@ -35,7 +36,7 @@
     out.afterRestar = {
       cacheHas123: '123' in store.stars_repo_cache,
       restored: store.stars_repo_cache['123'] || null,
-      pendingEmpty: Object.keys(store.stars_pending_delete).length,
+      pendingEmpty: Object.keys(store['stars_pending_delete_999'] || {}).length,
       tagsRestored: store['stars_tags_999'],
       notesRestored: store['stars_notes_999']
     };

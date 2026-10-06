@@ -11,6 +11,7 @@
 | `research-web-star-endpoints.md` | 复用网页 star/unstar 端点绕开 fine-grained 写缺口（可行性 + 三组对照实测） | `docs/adr/0006`（定案）、`src/starWrites.ts`、D3 | 8 | **仍生效**（附录 A 的「422 回退前提被推翻」是删代码的依据） |
 | `research-ratelimit-measurement.md` | REST 变异请求限流实测（判定 D1：1 点/请求、5 点表不作用于 primary） | `DEVELOPER.md` §6、`src/mutationQueue.ts` 的 1000ms 依据说明 | 4 | **仍生效**（原始记录见同目录 `.jsonl`） |
 | `research-ratelimit-protocol.md` | 上者的**实测协议**（硬约束、判定矩阵、为何 L2 不跑） | 同上 §5 | 3 | **仍生效**（复跑探针前先读 §4.7） |
+| `research-finegrained-getuser.md` | 细粒度 PAT 调 `GET /user` 取身份（官方原文取证 + 真机实测） | `docs/adr/0010`（定案）、`src/storage/accountIdentity.ts`、D33；复测探针 `scripts/token-identity-probe.cjs` | 4 | **仍生效**（§5 记着「readable 提取器会整段漏掉该小节」这个坑） |
 | `research-pager-jump-a11y-spinner.md` | 分页跳页控件与「只转图标」加载态（GitHub 自身无跳页输入、Primer loading 范式、SMIL 冻结 bug） | `docs/adr` 无独立条目；口径写进 AGENTS.md **D22/D23** | 2 | **已消化**（不改这些交互就不必重读） |
 | `research-updated-vs-pushed-at.md` | 仓库时间字段语义考证（`updated_at` vs `pushed_at`） | AGENTS.md 决策 **D** 段与 `src/fullSync.ts` 的 `parseItem`；4.8.0 定 `updatedAt = pushed_at` | 2 | **已消化** |
 | `research-web-endpoint-integration.md` | 网页端点通道的**工程落地**方案调研 | `docs/adr/0006` | 2 | **已消化**（被 `research-web-star-endpoints.md` 的实测覆盖） |

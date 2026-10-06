@@ -68,6 +68,9 @@ function bannerMessage(verdict: AccountVerdict): string {
       `列表里的星标数据取自 @${tokenWho}，加星 / 取消星通常也记到 @${tokenWho}（不会改动 @${sessionWho}），` +
       `但你正在 @${sessionWho} 的 Stars 页面上操作，容易看错账号。` +
       `若 @${tokenWho} 的 Token 被 GitHub 拒绝，操作会改以 @${sessionWho} 的身份进行。` +
+      // 4.18.0（风险 21）：标签 / 备注 / 宽限期备份现在**跟 token 账号走** —— 用户必须知道这一点，
+      // 否则换号后会困惑「我的标签去哪了」（它们没丢，在 token 账号的命名空间里）。
+      `标签、备注与取消 star 后的备份都属于 @${tokenWho}。` +
       '请换成与当前登录匹配的 Token，或改用 Token 所属的账号登录。'
     );
   }
@@ -76,6 +79,8 @@ function bannerMessage(verdict: AccountVerdict): string {
   return (
     head +
     `列表里的星标数据取自 @${tokenWho}，但在这里加星 / 取消星会记录到 @${sessionWho}，两边会不一致。` +
+    // 4.18.0（风险 21）：归属说明同 classic 分支；注意本分支**不能**断言「读写同账号」（§2.1）。
+    `标签、备注与取消 star 后的备份都属于 @${tokenWho}。` +
     '请换成与当前登录匹配的 Token，或改用 Token 所属的账号登录。'
   );
 }
@@ -153,7 +158,9 @@ function showAccountBanner(verdict: AccountVerdict): void {
 }
 
 /**
- * 求值 → 呈现的唯一起点，三个求值点全部调它（fire-and-forget，绝不进入同步关键路径）。
+ * 求值 → 呈现的唯一起点，全部求值点都调它（fire-and-forget，绝不进入同步关键路径）。
+ * 5 个挂载点：`transformAndReveal` 成功出口 / `setTokenSavedHandler` / `setTokenIssueHandler`（清空 Token 走它）/
+ * `runFullSync` 的 finally / `visibilitychange`（4.18.0，账号可能在本标签页之外被换掉）。
  * 相符时**主动撤掉**可能已过期的横幅（例如另一标签页换了 Token 后这里刚同步完）；
  * unknown 时什么都不做 —— 判定失败不得当作「相符」而抹掉已显示的警告。
  */
@@ -175,6 +182,6 @@ export function mountAccountGuard(): void {
       // 其余 unknown（有 token 但取不到身份 / 请求失败）**什么都不做** —— 判定失败不得抹掉已显示的警告。
       if (verdict.state === 'match' || !verdict.hasToken) removeExisting();
     })
-    // 呈现层自己出错绝不能变成 unhandled rejection（三个调用点都在别人的 finally / 回调里）
+    // 呈现层自己出错绝不能变成 unhandled rejection（全部挂载点都在别人的 finally / 回调里）
     .catch((err: unknown) => console.warn('[github-star-manager] 归属警告渲染失败', err));
 }
