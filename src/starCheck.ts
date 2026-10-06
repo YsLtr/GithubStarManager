@@ -110,6 +110,7 @@ function confirmExternalUnstar(repoId: string, path: string): boolean {
   const cache: RepoCache = loadRepoCache();
   if (!existed) {
     pending[repoId] = Object.assign({}, cache[repoId] || { name: path.replace(/^\//, '') }, {
+      name: path.replace(/^\//, '') || cache[repoId]?.name || '',
       unstarredAt: Date.now(),
       _tags: getTags(repoId),
       _note: getNote(repoId),
@@ -179,4 +180,3 @@ export function syncCardAfterStarChange(repoId: string, isStarred: boolean): voi
 export function applyExternalUnstar(repoId: string, path: string): boolean {
   return confirmExternalUnstar(repoId, path);
 }
-

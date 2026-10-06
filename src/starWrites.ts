@@ -15,7 +15,7 @@
 //   **不发** `X-GitHub-Client-Version`；
 // - `authenticity_token` 是 **per-form** 且与 action+method 绑定（stars 页实测 60 表单 60 唯一值），
 //   故**离页仓库**（批量恢复：目标仓库不在当前 DOM 内）不走「先 GET 取 token」——只带 VF 即可；
-//   仅当 VF 返回 422（CSRF 失败）才回退去取真实 token 重发**一次**（ADR 0006 / 决策 D24）；
+//   422 明确失败，不取页面 token 重发（旧设想已由实测推翻）。
 // - 成功判定 = `resp.ok`（200），**不用** `{"count":"N"}`——那是仓库 star 总数的事后快照
 //   （实测 278→277→278），不是本次动作的增量，且同名 `count` 在 watch 端点返回 `{count:"1"}`；
 // - 422 = Rails CSRF 失败，**响应体是 HTML**（即便带了 `Accept: application/json`）
@@ -24,10 +24,15 @@
 
 import { isClassicCredential } from './tokenConfig';
 import { getUserLogin } from './pageScope';
+import { encodedRepoName, numericRepoId, repoFullName, repoTargetKey, starredUrl, type RepoTarget, type ResolvedRepoTarget } from './api/repoTarget';
+import { hasRateLimitSignal, resolveRepoTarget, type TargetFailureReason } from './api/repositories';
+import { claimMutationTarget, waitForMutationSlot } from './mutationQueue';
 
 type StarWriteVia = 'rest' | 'web';
 
 type StarWriteFailure =
+  | TargetFailureReason
+  | 'target-busy'
   | 'no-credential' // 既无 classic/OAuth token，也无登录会话
   | 'unauthorized' // 401：token 失效
   | 'permission-denied' // 403 非限速：权限不足
@@ -52,7 +57,8 @@ interface StarWriteErr {
   detail?: string;
 }
 
-export type StarWriteOutcome = StarWriteOk | StarWriteErr;
+type TransportOutcome = StarWriteOk | StarWriteErr;
+export type StarWriteOutcome = (StarWriteOk & { target: ResolvedRepoTarget }) | StarWriteErr;
 
 /**
  * 用户可见文案：**结果导向**，不出现「网页端点 / 浏览器会话 / GitHub-Verified-Fetch」
@@ -60,6 +66,12 @@ export type StarWriteOutcome = StarWriteOk | StarWriteErr;
  */
 export function writeFailureMessage(reason: StarWriteFailure, status: number): string {
   switch (reason) {
+    case 'invalid-target':
+      return '仓库地址无效，无法操作。';
+    case 'target-mismatch':
+      return '仓库名称已指向另一个仓库，请同步后重试。';
+    case 'target-busy':
+      return '该仓库已有操作，请稍候。';
     case 'no-credential':
       return '需要配置 GitHub Token，或先登录 github.com。';
     case 'unauthorized':
@@ -101,9 +113,9 @@ export function hasWebSession(): boolean {
   return getUserLogin() !== '';
 }
 
-/** 网页端点的 form action：**精确**匹配（`$="/star"` 会被 `/unstar` 命中，不能用后缀选择器） */
+/** 网页端点的 form action：按完整目标精确匹配。 */
 function formAction(fullName: string, wantStar: boolean): string {
-  return `/${fullName}/${wantStar ? 'star' : 'unstar'}`;
+  return `/${encodedRepoName(fullName)}/${wantStar ? 'star' : 'unstar'}`;
 }
 
 /** 页面上是否已有该仓库的对应表单（有则读它的真实 token，比 VF 更「正当」且免费） */
@@ -114,21 +126,15 @@ function findOnPageForm(fullName: string, wantStar: boolean): HTMLFormElement | 
 
 /* ---------------- REST 通道 ---------------- */
 
-function hasRateLimitSignal(resp: Response, bodyText: string): boolean {
-  return (
-    !!resp.headers.get('retry-after') ||
-    resp.headers.get('x-ratelimit-remaining') === '0' ||
-    /secondary rate limit/i.test(bodyText)
-  );
-}
-
-async function restWrite(pat: string, fullName: string, wantStar: boolean): Promise<StarWriteOutcome> {
-  const [owner, repo] = fullName.split('/');
-  const url = `https://api.github.com/user/starred/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+async function restWrite(pat: string, fullName: string, wantStar: boolean): Promise<TransportOutcome> {
+  const url = starredUrl(fullName);
   let resp: Response;
   try {
+    await waitForMutationSlot();
     resp = await fetch(url, {
       method: wantStar ? 'PUT' : 'DELETE',
+      redirect: 'error',
+      credentials: 'omit',
       headers: {
         Authorization: `Bearer ${pat}`,
         'X-GitHub-Api-Version': '2022-11-28',
@@ -170,22 +176,6 @@ function placeholderToken(): string {
   return out;
 }
 
-/** 网页端点请求之间的极短等待（不用于限流，限流由 mutationQueue 统一管） */
-const sleep = (ms: number): Promise<void> => new Promise((r) => window.setTimeout(r, ms));
-
-/**
- * 方向复核：页面上是否已出现「相反方向」的表单。
- * 给一次 400ms 的重试窗口 —— POST 之后 GitHub 可能晚一个 hydration tick 才换掉表单，
- * 只查一次会把「成功但渲染稍慢」误判成失败。
- */
-async function directionFlipped(fullName: string, wantStar: boolean): Promise<boolean> {
-  for (let i = 0; i < 2; i += 1) {
-    if (findOnPageForm(fullName, !wantStar)) return true;
-    if (i === 0) await sleep(400);
-  }
-  return false;
-}
-
 /** 离页仓库的请求体：无真实 token 可用（per-form 且不可跨 action 复用），靠 VF 头过校验 */
 function offPageBody(): FormData {
   const fd = new FormData();
@@ -212,7 +202,7 @@ async function webWrite(
   fullName: string,
   wantStar: boolean,
   tokenOverride?: string,
-): Promise<StarWriteOutcome> {
+): Promise<TransportOutcome> {
   const action = formAction(fullName, wantStar);
   const form = tokenOverride ? null : findOnPageForm(fullName, wantStar);
   let body: FormData;
@@ -229,8 +219,10 @@ async function webWrite(
 
   let resp: Response;
   try {
-    resp = await fetch(form ? form.action : action, {
+    await waitForMutationSlot();
+    resp = await fetch(`https://github.com${action}`, {
       method: 'POST',
+      redirect: 'error',
       credentials: 'same-origin',
       headers: {
         'GitHub-Verified-Fetch': 'true',
@@ -259,12 +251,9 @@ async function webWrite(
   })();
 
   if (resp.ok) {
-    // 成功判定（ADR 0006）：`resp.ok`（200）**并**在页面存在该仓库表单时复核方向已翻转。
-    // 表单不在页面上时（网格视图的卡片、离页恢复）无从复核，只能以 200 为准 —— 该局限
-    // 已明文记在 ADR 0006；不用 `{"count":"N"}` 是因为它是仓库 star 总数的事后快照，不是增量。
-    if (form && !(await directionFlipped(fullName, wantStar))) {
-      return { ok: false, reason: 'unknown', status: 200, detail: 'HTTP 200 但页面表单方向未翻转' };
-    }
+    // 只确认 HTTP 成功，不能据此声称独立复核了远端方向。曾检查反向表单是否出现，
+    // 但 stars 页两方向表单恒并存，且我们的 fetch 不会触发 GitHub 原生 DOM 更新。
+    // 当前页与离页都没有可靠的方向复核；count 也只是总数快照，不是本次动作的增量。
     return { ok: true, via: 'web' };
   }
 
@@ -285,16 +274,11 @@ async function webWrite(
  * 改变某个仓库的星标状态。**静默分派通道**，返回归一化结果（不抛错）。
  * 调用方只需处理 `ok` / `reason`，不需要知道走的是 REST 还是网页端点。
  */
-export async function setStarState(
+async function writeResolved(
   patOrEmpty: string,
   fullName: string,
   wantStar: boolean,
-): Promise<StarWriteOutcome> {
-  const parts = fullName.split('/');
-  if (parts.length !== 2 || !parts[0] || !parts[1]) {
-    // 严格两段：`a/b/c` 若被 split 后静默取前两段，会指向**另一个仓库**——宁可拒绝
-    return { ok: false, reason: 'not-found', status: 0, detail: `非法仓库名：${fullName}` };
-  }
+): Promise<TransportOutcome> {
   if (patOrEmpty && isClassicCredential(patOrEmpty)) {
     const r = await restWrite(patOrEmpty, fullName, wantStar);
     if (r.ok) return r;
@@ -316,4 +300,47 @@ export async function setStarState(
   return r.reason === 'permission-denied'
     ? { ok: false, reason: 'requires-classic', status: r.status, detail: r.detail }
     : r;
+}
+
+/** Cookie 私有目标可由当前原生条目的同一数字 ID + 精确表单确认；缓存名字不具备这份证据。 */
+function onPageTarget(target: RepoTarget, wantStar: boolean): ResolvedRepoTarget | null {
+  const id = numericRepoId(target.repoId);
+  if (!id) return null;
+  // 包含接管后隐藏的原生行；collectPageRepos 为渲染过滤隐藏行，不适用于这里。
+  for (const menu of document.querySelectorAll(`user-list-menu[data-repository-id="${id}"]`)) {
+    const row = menu.closest('div.col-12, li');
+    const href = row?.querySelector('h3 a[href]')?.getAttribute('href') || '';
+    const fullName = repoFullName(href.replace(/^\//, '').replace(/\/$/, ''));
+    if (!fullName) continue;
+    const action = formAction(fullName, wantStar);
+    if (row?.querySelector(`form[action="${action}"]`)) return { repoId: id, fullName };
+  }
+  return null;
+}
+
+/** ID 是目标权威；名称仅经确认后用于端点适配。解析只在队列执行时发生。 */
+export async function setStarState(
+  token: string, target: RepoTarget, wantStar: boolean,
+  beforeWrite?: (target: ResolvedRepoTarget) => boolean,
+): Promise<StarWriteOutcome> {
+  if (!repoTargetKey(target) || (target.repoId && !numericRepoId(target.repoId))) return { ok: false, reason: 'invalid-target', status: 0 };
+  const session = hasWebSession();
+  if (!token && !session) return { ok: false, reason: 'no-credential', status: 0 };
+  // 本来就走 Cookie 时可用原生 ID 证据，避免把 Cookie 可见私有仓库强制送去匿名 API。
+  const native = session && !isClassicCredential(token) ? onPageTarget(target, wantStar) : null;
+  const result = native ? { ok: true as const, target: native } : await resolveRepoTarget(token, target);
+  if (!result.ok) {
+    // 只有权限/不可见失败可用当前原生 ID 表单；401、限流和网络失败不重试、不偷偷换目标。
+    const fallback = session && (result.reason === 'not-found' || result.reason === 'permission-denied')
+      ? onPageTarget(target, wantStar) : null;
+    if (!fallback) return result;
+    if (beforeWrite && !beforeWrite(fallback)) return { ok: false, reason: 'target-busy', status: 0 };
+    if (!claimMutationTarget(repoTargetKey(fallback))) return { ok: false, reason: 'target-busy', status: 0 };
+    const written = await webWrite(fallback.fullName, wantStar);
+    return written.ok ? { ...written, target: fallback } : written;
+  }
+  if (beforeWrite && !beforeWrite(result.target)) return { ok: false, reason: 'target-busy', status: 0 };
+  if (!claimMutationTarget(repoTargetKey(result.target))) return { ok: false, reason: 'target-busy', status: 0 };
+  const written = await writeResolved(token, result.target.fullName, wantStar);
+  return written.ok ? { ...written, target: result.target } : written;
 }

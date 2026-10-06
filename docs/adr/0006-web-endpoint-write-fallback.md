@@ -1,12 +1,15 @@
 # 网页端点写回落
 
+> **4.19.0 寻址边界**：[ADR 0011](0011-id-first-api-targets.md) 要求 ID 确认目标后才使用名称端点；
+> Cookie 可见但 API 不可见时，必须有同 ID 原生行/表单证据。离页无此证据时明确失败。
+
 当**没有 classic/OAuth token**，或 REST 写请求被 GitHub 拒绝（fine-grained PAT 的先天缺陷）时，写路径改用 GitHub 网页自己的内部端点 `POST https://github.com/{owner}/{repo}/star`（`/unstar`）。它用 **Cookie 会话**认证，**与 token 类型完全无关** —— 这是 fine-grained 用户获得与 classic 用户同等 star/unstar 能力的唯一现实手段，无需用户再去建一个 classic PAT。
 
 ## 已定案的行为
 
 - **触发条件**：写操作统一走 `starWrites` 的**静默分派** —— 有 classic / OAuth（`gho_`）token → REST `PUT`/`DELETE /user/starred/{o}/{r}`；否则（无 token，或 REST 返回 `403 Resource not accessible by personal access token`）且存在已登录 github.com 会话 → 网页端点。两条通道对调用方接口一致，调用方不感知通道。
 - **凭据**：Cookie 会话（`credentials: 'same-origin'`）+ 请求头 `GitHub-Verified-Fetch: true`。**不发送** `X-Fetch-Nonce`、**不发送** `X-GitHub-Client-Version`。页面 DOM 里**已有该仓库表单**时（单条操作）改读该表单的真实 `authenticity_token` 并随 `new FormData(form)` 一起发出 —— 单条场景下读取是免费的。**批量/离页仓库不取 per-form token**：目标仓库不在当前 DOM 内，而 `authenticity_token` 是 per-form 且与 action+method 绑定（stars 页实测 60 个表单 → 60 个唯一值），逐个去读要多付一次 `GET` + 解析已 React 化的仓库页 DOM；实测证明只带 `GitHub-Verified-Fetch: true` 即可通过（连伪造 token 亦被接受）。
-- **成功判定**：`resp.ok`（200），**并在页面上存在该仓库表单时**额外复核方向已翻转（`form[action$="/star"]` = 已取消 / `form[action$="/unstar"]` = 已 star，未翻转即判失败）。复核只可能发生在「表单本来就在页面上」的场景；网格卡片与离页恢复**无从复核**，只能以 200 为准 —— 这是本方案已知的判定弱点（见「未确证」）。**不得**用 `{"count":"N"}` —— 那是该仓库的 star 总数事后快照（实测 278→277→278），不是本次动作的增量，且同名 `count` 字段在 watch 端点返回 `{"count":"1"}`，含义并不统一。
+- **成功判定**：`resp.ok`（通常 200）。4.19.0 审查删除了“相反表单存在即方向翻转”的旧复核：两种表单在当前原生页面同时存在，而且本脚本的 fetch 不会更新原生 DOM，因此该检查不能证明写入方向。页面内与离页均以 HTTP 成功为准，未独立复核远端状态。**不得**用 `{"count":"N"}` —— 它是仓库 star 总数的事后快照，不是本次动作的增量。
 - **失败语义**：**422 = Rails CSRF 校验失败**（如 `InvalidAuthenticityToken`），且**即便带了 `Accept: application/json` 响应体仍是 HTML** → 必须 `resp.text()` 后再 `try { JSON.parse }`；403 = GitHub fetch 校验层。任何一条失败**即整批停止并报错**，**不自动重试**、不猜想；不得静默吞掉。
 - **会话检测**：`document.body.classList.contains('logged-in')` **且** `meta[name="user-login"]` 的 `content` **非空串**。只看 meta 是否存在是错的（未登录时可能以空串存在）；`form[action$="/unstar"]` 不能当登录判据（它只说明该仓库已 star）。
 - **批量恢复**：脚本**代发**请求（非「引导用户点原生按钮」）—— 一键「恢复选中」+ 恢复列表**每行之后一个 star 按钮**（可单条直点）。两种入口都进同一个**全局串行队列**（变异请求间隔 ≥1s），进度可见、执行中可取消（取消只停后续，已发出的不回滚）。

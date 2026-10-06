@@ -1,0 +1,308 @@
+{
+  "startedAt": "2026-10-06T05:14:35.059Z",
+  "mode": "GET-only",
+  "apiVersion": "2022-11-28",
+  "records": [
+    {
+      "label": "identity",
+      "authenticated": true,
+      "hop": 0,
+      "status": 200,
+      "elapsedMs": 658,
+      "remaining": "4995",
+      "limit": "5000",
+      "scopes": "repo",
+      "requestId": "AF2E:0E03:456F78:491D22:6AC483BB",
+      "cors": "*"
+    },
+    {
+      "label": "user-by-id",
+      "authenticated": true,
+      "hop": 0,
+      "status": 200,
+      "elapsedMs": 350,
+      "remaining": "4994",
+      "limit": "5000",
+      "scopes": "repo",
+      "requestId": "AF2E:0E03:457009:491DB2:6AC483BB",
+      "cors": "*"
+    },
+    {
+      "label": "starred-positive-control-list",
+      "authenticated": true,
+      "hop": 0,
+      "status": 200,
+      "elapsedMs": 674,
+      "remaining": "4998",
+      "limit": "5000",
+      "scopes": "repo",
+      "requestId": "AF2E:0E03:45708F:491E44:6AC483BC",
+      "cors": "*"
+    },
+    {
+      "label": "owned-repository-first-page",
+      "authenticated": true,
+      "hop": 0,
+      "status": 200,
+      "elapsedMs": 1662,
+      "remaining": "4993",
+      "limit": "5000",
+      "scopes": "repo",
+      "requestId": "AF2E:0E03:457181:491F57:6AC483BC",
+      "cors": "*"
+    },
+    {
+      "label": "own-public:id",
+      "authenticated": true,
+      "hop": 0,
+      "status": 200,
+      "elapsedMs": 429,
+      "remaining": "4992",
+      "limit": "5000",
+      "scopes": "repo",
+      "requestId": "AF2E:0E03:457427:492240:6AC483BE",
+      "cors": "*"
+    },
+    {
+      "label": "own-public:name",
+      "authenticated": true,
+      "hop": 0,
+      "status": 200,
+      "elapsedMs": 441,
+      "remaining": "4991",
+      "limit": "5000",
+      "scopes": "repo",
+      "requestId": "AF2E:0E03:4574EA:49230F:6AC483BE",
+      "cors": "*"
+    },
+    {
+      "label": "own-private:id",
+      "authenticated": true,
+      "hop": 0,
+      "status": 200,
+      "elapsedMs": 392,
+      "remaining": "4990",
+      "limit": "5000",
+      "scopes": "repo",
+      "requestId": "AF2E:0E03:4575AC:4923E4:6AC483BF",
+      "cors": "*"
+    },
+    {
+      "label": "own-private:name",
+      "authenticated": true,
+      "hop": 0,
+      "status": 200,
+      "elapsedMs": 399,
+      "remaining": "4989",
+      "limit": "5000",
+      "scopes": "repo",
+      "requestId": "AF2E:0E03:457650:492476:6AC483BF",
+      "cors": "*"
+    },
+    {
+      "label": "own-private:anonymous-id",
+      "authenticated": false,
+      "hop": 0,
+      "status": 404,
+      "elapsedMs": 376,
+      "remaining": "52",
+      "limit": "60",
+      "scopes": null,
+      "requestId": "AF2E:0E03:4576EC:492519:6AC483C0",
+      "cors": "*"
+    },
+    {
+      "label": "own-private:anonymous-name",
+      "authenticated": false,
+      "hop": 0,
+      "status": 404,
+      "elapsedMs": 339,
+      "remaining": "51",
+      "limit": "60",
+      "scopes": null,
+      "requestId": "AF2E:0E03:45778C:4925C5:6AC483C0",
+      "cors": "*"
+    },
+    {
+      "label": "starred-sample:id",
+      "authenticated": true,
+      "hop": 0,
+      "status": 200,
+      "elapsedMs": 443,
+      "remaining": "4988",
+      "limit": "5000",
+      "scopes": "repo",
+      "requestId": "AF2E:0E03:457814:492651:6AC483C0",
+      "cors": "*"
+    },
+    {
+      "label": "starred-sample:name",
+      "authenticated": true,
+      "hop": 0,
+      "status": 200,
+      "elapsedMs": 445,
+      "remaining": "4987",
+      "limit": "5000",
+      "scopes": "repo",
+      "requestId": "AF2E:0E03:4578C8:492708:6AC483C1",
+      "cors": "*"
+    },
+    {
+      "label": "star-state:name-positive-control",
+      "authenticated": true,
+      "hop": 0,
+      "status": 204,
+      "elapsedMs": 389,
+      "remaining": "4997",
+      "limit": "5000",
+      "scopes": "repo",
+      "requestId": "AF2E:0E03:45796D:4927C7:6AC483C1",
+      "cors": "*"
+    },
+    {
+      "label": "star-state:direct-numeric-candidate",
+      "authenticated": true,
+      "hop": 0,
+      "status": 404,
+      "elapsedMs": 546,
+      "remaining": null,
+      "limit": null,
+      "scopes": null,
+      "requestId": "DDDE:31764D:534C8F:577D3E:6AC483C2",
+      "cors": "*"
+    },
+    {
+      "label": "star-state:nested-id-candidate",
+      "authenticated": true,
+      "hop": 0,
+      "status": 404,
+      "elapsedMs": 383,
+      "remaining": "4996",
+      "limit": "5000",
+      "scopes": "repo",
+      "requestId": "AF2E:0E03:457AD1:492943:6AC483C2",
+      "cors": "*"
+    },
+    {
+      "label": "invalid-id-zero",
+      "authenticated": true,
+      "hop": 0,
+      "status": 404,
+      "elapsedMs": 337,
+      "remaining": "4986",
+      "limit": "5000",
+      "scopes": "repo",
+      "requestId": "AF2E:0E03:457B5F:4929F1:6AC483C3",
+      "cors": "*"
+    },
+    {
+      "label": "historical-transfer:old-name",
+      "authenticated": false,
+      "hop": 0,
+      "status": 301,
+      "elapsedMs": 345,
+      "remaining": "50",
+      "limit": "60",
+      "scopes": null,
+      "requestId": "AF2E:0E03:457BFD:492A8B:6AC483C3",
+      "cors": "*"
+    },
+    {
+      "label": "historical-transfer:old-name",
+      "authenticated": false,
+      "hop": 1,
+      "status": 200,
+      "elapsedMs": 1161,
+      "remaining": "49",
+      "limit": "60",
+      "scopes": null,
+      "requestId": "DDE2:220C26:705C26:749033:6AC483C4",
+      "cors": "*"
+    },
+    {
+      "label": "historical-transfer:id",
+      "authenticated": false,
+      "hop": 0,
+      "status": 200,
+      "elapsedMs": 79,
+      "remaining": "48",
+      "limit": "60",
+      "scopes": null,
+      "requestId": "DDE0:1C21D9:5399F3:57CA9C:6AC483C4",
+      "cors": "*"
+    },
+    {
+      "label": "historical-transfer:current-name",
+      "authenticated": false,
+      "hop": 0,
+      "status": 200,
+      "elapsedMs": 375,
+      "remaining": "47",
+      "limit": "60",
+      "scopes": null,
+      "requestId": "DDE0:1C21D9:539A24:57CACA:6AC483C5",
+      "cors": "*"
+    }
+  ],
+  "checks": {
+    "userByIdMatches": true,
+    "ownedSampleCounts": {
+      "public": 37,
+      "private": 6
+    },
+    "own-public": {
+      "idStatus": 200,
+      "nameStatus": 200,
+      "idMatches": true,
+      "nameIdMatches": true,
+      "namesMatch": true,
+      "ownerMatches": true,
+      "private": false
+    },
+    "own-private": {
+      "idStatus": 200,
+      "nameStatus": 200,
+      "idMatches": true,
+      "nameIdMatches": true,
+      "namesMatch": true,
+      "ownerMatches": true,
+      "private": true,
+      "anonymous": {
+        "idStatus": 404,
+        "nameStatus": 404
+      }
+    },
+    "starred-sample": {
+      "idStatus": 200,
+      "nameStatus": 200,
+      "idMatches": true,
+      "nameIdMatches": true,
+      "namesMatch": true,
+      "ownerMatches": true,
+      "private": false
+    },
+    "starReadRoutes": {
+      "positiveControl": 204,
+      "directNumeric": 404,
+      "nestedId": 404
+    },
+    "invalidIdStatus": 404,
+    "historicalTransfer": {
+      "oldName": "github/linguist",
+      "currentName": "github-linguist/linguist",
+      "repoId": 1725199,
+      "oldNameChain": [
+        301,
+        200
+      ],
+      "oldNameFinalPath": "/repositories/1725199",
+      "stableIdMatches": true,
+      "currentIdMatches": true
+    }
+  },
+  "limitations": [
+    "classic only; no mutations; no synthetic rename/name-reuse; no browser Cookie/CSP test; private names and IDs omitted"
+  ],
+  "requestCount": 20,
+  "completedAt": "2026-10-06T05:14:45.406Z"
+}

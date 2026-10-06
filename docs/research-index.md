@@ -8,6 +8,7 @@
 
 | 文档 | 主题 | 结论去向 | 仍被引用 | 状态 |
 |---|---|---:|---|---|
+| `research-api-targets.md` | ID 优先寻址：classic 公共/私有读取、历史重定向、数字星标路由与名称写入对照 | `docs/adr/0011`、4.19.0、`docs/plans/2026-10-06-id-first-api-targets.md` | — | **已实施**；原始端点记录及 implementation JSON 均保留，写测试已复原基线 |
 | `research-web-star-endpoints.md` | 复用网页 star/unstar 端点绕开 fine-grained 写缺口（可行性 + 三组对照实测） | `docs/adr/0006`（定案）、`src/starWrites.ts`、D3 | 8 | **仍生效**（附录 A 的「422 回退前提被推翻」是删代码的依据） |
 | `research-ratelimit-measurement.md` | REST 变异请求限流实测（判定 D1：1 点/请求、5 点表不作用于 primary） | `DEVELOPER.md` §6、`src/mutationQueue.ts` 的 1000ms 依据说明 | 4 | **仍生效**（原始记录见同目录 `.jsonl`） |
 | `research-ratelimit-protocol.md` | 上者的**实测协议**（硬约束、判定矩阵、为何 L2 不跑） | 同上 §5 | 3 | **仍生效**（复跑探针前先读 §4.7） |

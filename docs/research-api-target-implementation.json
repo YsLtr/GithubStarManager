@@ -1,0 +1,86 @@
+{
+  "startedAt": "2026-10-06T05:46:49.893Z",
+  "implementation": "4.19.0 source bundled by tests/api/prepare.mjs",
+  "requests": [
+    {
+      "method": "GET",
+      "status": 200,
+      "requestId": "A060:3E226:5F5504:644344:6AC48B4A"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "requestId": "A060:3E226:5F55CF:6443EF:6AC48B4A"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "requestId": "A060:3E226:5F56C0:6444EA:6AC48B4A"
+    },
+    {
+      "method": "GET",
+      "status": 404,
+      "requestId": "A060:3E226:5F5795:6445BA:6AC48B4B"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "requestId": "A064:C35E3:84277E:891208:6AC48B4C"
+    },
+    {
+      "method": "PUT",
+      "status": 204,
+      "requestId": "A060:3E226:5F5ABD:6448F2:6AC48B4B"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "requestId": "A064:C35E3:842B6C:89162E:6AC48B4D"
+    },
+    {
+      "method": "GET",
+      "status": 204,
+      "requestId": "A060:3E226:5F5CB2:644B0A:6AC48B4D"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "requestId": "A064:C35E3:84309E:891B5C:6AC48B4E"
+    },
+    {
+      "method": "GET",
+      "status": 204,
+      "requestId": "A060:3E226:5F5F66:644DE4:6AC48B4F"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "requestId": "A064:C35E3:843443:891F67:6AC48B4F"
+    },
+    {
+      "method": "DELETE",
+      "status": 204,
+      "requestId": "A060:3E226:5F6155:644FD8:6AC48B50"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "requestId": "A064:C35E3:8438D7:89240E:6AC48B50"
+    },
+    {
+      "method": "GET",
+      "status": 404,
+      "requestId": "A060:3E226:5F646C:645310:6AC48B51"
+    }
+  ],
+  "baselineRestored": true,
+  "target": {
+    "repoId": "1374101984",
+    "fullName": "YsLtr/pi-subagents",
+    "ownedByCredential": true
+  },
+  "baselineStarred": false,
+  "flipVerified": true,
+  "completedAt": "2026-10-06T05:46:58.766Z",
+  "mutations": 2
+}

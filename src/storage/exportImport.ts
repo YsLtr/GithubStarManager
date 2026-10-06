@@ -7,8 +7,8 @@
 // 远端瞬时状态绑定，跨设备导入会让「全 304 = 无变化」误判为「缓存即现值」）、
 // 宽限期备份（临时状态，搬过去已近乎过期）、以及**仓库元数据**（4.17.0 改）—— 元数据由同步
 // 承载，不该由导出包背（详见 docs/adr/0001 的追加段）。**唯一例外是 `data.repoNames`（4.17.0）**：
-// 每个仓库的 `owner/repo` 随包带走，因为导入方的宽限期条目要靠它才能被手动恢复
-// （没有它就得先等一次同步）。它只是**已有信息**的搬运（名字本来就在整表缓存里），
+// 每个仓库的 `owner/repo` 随包带走用于展示/缺 ID 的名称降级；数字 ID 可在恢复执行时解析。
+// 它只是**已有信息**的搬运（名字本来就在整表缓存里），
 // 不含语言 / star 数 / 描述，且导入侧**只写进宽限期条目、不写整表缓存**。
 // 1.x 的旧包仍可能带 `data.repoCache`：**校验它、但内容一律忽略**（不再写入缓存）。
 import { EXPORT_KIND, EXPORT_SCHEMA_VERSION } from '../constants';
@@ -17,6 +17,7 @@ import { addPendingFromImport } from './pendingDelete';
 import { hasApiData, loadRepoCache } from './repoCache';
 import { getStorageUserId, loadAllTags, saveTags } from './tags';
 import type { RepoCache, TagMap } from '../types';
+import { repoFullName } from '../api/repoTarget';
 
 /** 导出包顶层结构（`data` 之外的字段是协议元信息，不参与合并） */
 export interface ExportPackage {
@@ -28,9 +29,8 @@ export interface ExportPackage {
   data: {
     tags: TagMap;
     notes: Record<string, string>;
-    /** 每个仓库的最小标识 `owner/repo`（4.17.0 新增，**可选**）。只用于让导入方的宽限期条目
-     * 能被**手动恢复**：没有它，`RestorableEntry.name` 回退成数字仓库 id ⇒ 恢复要发的那个写请求
-     * 没有目标地址。**导入侧只把它写进宽限期条目，绝不写 `stars_repo_cache`** —— 写入缓存会把
+    /** 可选的 `owner/repo` 展示/名称降级提示。数字 ID 可在恢复执行时独立解析。
+     * **导入侧只把它写进宽限期条目，绝不写 `stars_repo_cache`** —— 写入缓存会把
      * 风险 22 的触发前提（缓存条目与宽限期条目并存）重新造出来。 */
     repoNames?: Record<string, string>;
     repoCache?: RepoCache;
@@ -106,21 +106,21 @@ export function buildExportPackage(): ExportPackage | null {
 }
 
 /**
- * 包内每个仓库的 `owner/repo` —— **最小**的仓库标识，只为让导入方的宽限期条目能被手动恢复。
+ * 包内每个仓库的 `owner/repo` —— 展示和名称降级提示。
  *
- * 手动恢复要往 `POST /user/starred/{owner}/{repo}` 发请求，没有名字就发不出去（`restore.ts` 的守卫）。
+ * 手动恢复按数字 ID 解析当前名称后适配星标端点，缺少提示不会阻断恢复。
  * 名字本来就在本地整表缓存里（`RepoData.name` = GitHub 的 `full_name`），所以这不新增任何采集，
  * 只是把已有信息随包带走。**只写名字，不写其它元数据** —— 语言 / star 数 / 描述仍由同步承载
  * （4.17.0 移除 `repoCache` 的理由不变，见 `docs/adr/0001`）。
  *
- * 缓存里查不到就不写这个键（**不编造**）：那种仓库在导入方仍只能「等同步恢复」。
+ * 缓存里查不到就不写这个键（**不编造**）；数字 ID 仍可在恢复执行时独立解析。
  */
 function buildRepoNames(repoIds: string[]): Record<string, string> {
   const cache = loadRepoCache();
   const names: Record<string, string> = {};
   for (const repoId of repoIds) {
     const name = cache[repoId]?.name;
-    if (typeof name === 'string' && name.includes('/')) names[repoId] = name;
+    if (repoFullName(name)) names[repoId] = name;
   }
   return names;
 }
@@ -281,11 +281,9 @@ export function applyImportPackage(pkg: ExportPackage): ImportReport {
     if (!localCache[repoId]) {
       // 未确认 ⇒ 宽限期（新建 / 合并进已有条目的判定都在 pendingDelete 里 —— 同一概念一处实现）
       // 名字只进宽限期条目（`name` 字段），**不写整表缓存** —— 见 ExportPackage.data.repoNames 的注释
-      // `includes('/')` 是**信任边界**：手改过的包可能塞进任意串，而这个名字会被恢复窗口当仓库名显示。
-      // 与 `buildRepoNames`、`domRepos`、`restore.ts` 的守卫同一条不变量（合法仓库名必含 `/`）；
-      // 不合格就按「没有名字」处理（条目照建、只是暂时不可手动恢复）。
+      // 与 DOM/请求边界共用纯名称校验。不合格按没有名称处理，数字 ID 仍可恢复。
       const rawName = pkg.data.repoNames?.[repoId] ?? '';
-      const name = typeof rawName === 'string' && rawName.includes('/') ? rawName : '';
+      const name = repoFullName(rawName);
       if (addPendingFromImport(repoId, incomingTags, incomingNote || '', name)) report.pendingAdded += 1;
       continue;
     }

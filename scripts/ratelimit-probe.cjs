@@ -10,7 +10,7 @@
  * 结论落地：`docs/research-ratelimit-measurement.md`；决策见 `docs/adr/0006`。
  *
  * 安全不变量（缺一不可，任一检查失败即拒绝运行）：
- *   1. 目标仓库 owner **必须**等于 token 的登录名（对他人仓库 star/unstar 属 AUP §4 的 rank abuse）；
+ *   1. 目标仓库 owner.id **必须**等于 token 账号 id；
  *   2. 凭证**必须**是 classic/OAuth（scope 含 repo 或 public_repo）——fine-grained 写他人公开仓库
  *      必然 403，会污染「限流 403」的判定（ADR 0004）；
  *   3. 变异请求总数硬上限 60（≈300 点，远低于 900 点/分钟）；
@@ -54,6 +54,7 @@ function parseArgs(argv) {
   const opts = {
     run: false,
     repo: '',
+    repoId: '',
     levels: ['L0', 'L1'], // §4.2：默认只到 L1；L2 需显式开启
     gap: 1000,
     tokenFile: '',
@@ -67,6 +68,7 @@ function parseArgs(argv) {
     if (a === '--dry-run') opts.run = false;
     else if (a === '--run') opts.run = true;
     else if (a === '--repo') opts.repo = next() || '';
+    else if (a === '--repo-id') opts.repoId = next() || '';
     else if (a === '--levels') opts.levels = String(next() || '').split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
     else if (a === '--gap') opts.gap = Number(next());
     else if (a === '--token-file') opts.tokenFile = next() || '';
@@ -89,7 +91,8 @@ const HELP = `REST 变异请求限流实测探针（默认 dry-run，零网络�
 
 选项：
   --run                 真的发请求（不加 = 只打印计划）
-  --repo <owner/name>   测试仓库；owner 必须是你自己的登录名
+  --repo-id <id>       优先用稳定仓库 ID 定位（可单独使用）
+  --repo <owner/name>   缺 ID 时的目标/名称降级提示；最终按 owner.id 校验自有仓库
   --levels <L0,L1,L2>   执行的级别（默认 L0,L1）
   --gap <ms>            L1 的请求间隔（默认 1000）
   --max-mutating <n>    变异请求硬上限（默认 60，不可超过 60）
@@ -306,13 +309,19 @@ async function preflight(ctx) {
   ctx.scopes = scopes;
   ctx.login = body.login;
 
-  // 门 1：只允许自有仓库
-  if (ctx.owner.toLowerCase() !== String(body.login).toLowerCase()) {
-    throw new Error(
-      `拒绝运行：仓库 owner「${ctx.owner}」≠ token 登录名「${body.login}」。` +
-        '对他人仓库 star/unstar 属 AUP §4 的 rank abuse（自动化批量标星/取关）。'
-    );
-  }
+  // 元数据查询属于 P0，不混入变异限流测量；名字只在缺 ID 或 ID 404 时降级。
+  const byName = `/repos/${encodeURIComponent(ctx.owner)}/${encodeURIComponent(ctx.repo)}`;
+  const readRepo = path => fetch(`${API}${path}`, { headers: {
+    Authorization: `Bearer ${ctx.token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28',
+  } });
+  let repoResp = await readRepo(ctx.repoId ? `/repositories/${ctx.repoId}` : byName);
+  if (repoResp.status === 404 && ctx.repoId && ctx.owner && ctx.repo) repoResp = await readRepo(byName);
+  const repository = await repoResp.json().catch(() => null);
+  if (!repoResp.ok || !repository?.id || typeof repository.full_name !== 'string') throw new Error(`仓库解析失败（HTTP ${repoResp.status}）`);
+  if (ctx.repoId && String(repository.id) !== ctx.repoId) throw new Error('仓库名称已指向另一个 ID，拒绝运行');
+  if (!body.id || repository.owner?.id !== body.id) throw new Error('目标仓库 owner.id 与 token 账号 ID 不同，拒绝运行');
+  ctx.repoId = String(repository.id);
+  [ctx.owner, ctx.repo] = repository.full_name.split('/');
   // 门 2：必须是 classic/OAuth（scope 体系）
   const scopeList = String(scopes || '').split(',').map((s) => s.trim()).filter(Boolean);
   if (scopes === null || scopes === '') {
@@ -475,7 +484,7 @@ function printPlan(opts, tokenSource) {
   const planned = L1_REQUESTS + (willRunL2 ? l2 : 0);
   console.log('════════ REST 变异请求限流实测 · 计划 ════════');
   console.log(`模式            ${opts.run ? '🔴 --run（会真的发请求）' : '🟢 --dry-run（零网络请求）'}`);
-  console.log(`测试仓库        ${opts.repo || '（未指定，--run 时必须给 --repo <owner/name>）'}`);
+  console.log(`测试仓库        ${opts.repoId ? `ID ${opts.repoId}` : opts.repo || '（未指定：--repo-id <id> 或 --repo <owner/name>）'}`);
   console.log(`凭证来源        ${tokenSource}`);
   console.log(`执行级别        ${opts.levels.join(', ')}`);
   console.log(`L1              ${l1} 次 × ${opts.gap}ms（先读后写）`);
@@ -485,7 +494,7 @@ function printPlan(opts, tokenSource) {
   console.log(`输出            ${opts.run ? path.resolve(opts.out) : '（dry-run 不写文件）'}`);
   console.log('');
   console.log('硬约束（协议 §4.7）：');
-  console.log('  · 只对**自有**仓库（owner == 登录名）——对他人仓库 star/unstar 属 AUP §4 rank abuse');
+  console.log('  · 只对自有仓库（仓库 owner.id == token 账号 id）');
   console.log('  · 凭证只用 classic/OAuth（scope 含 repo/public_repo）；fine-grained 会被拒绝');
   console.log('  · 严格串行、无并发（并发本身是二级限流的第一触发条件）');
   console.log(`  · 变异请求 ≤ ${HARD_MAX_MUTATING} 次；净状态不变（S0 → S0）`);
@@ -543,12 +552,13 @@ async function main() {
 
   /* ---- --run：先过全部闸门，再发第一个请求 ---- */
 
-  if (!opts.repo || !opts.repo.includes('/')) {
-    console.error('\n拒绝：--run 必须提供 --repo <owner/name>。');
+  if ((!opts.repoId && !opts.repo) || (opts.repoId && !/^[1-9]\d*$/.test(opts.repoId)) ||
+      (opts.repo && !/^[a-zA-Z0-9-]+\/[a-zA-Z0-9_.-]+$/.test(opts.repo))) {
+    console.error('\n拒绝：请提供合法 --repo-id <id> 或 --repo <owner/name>。');
     process.exit(2);
   }
-  const [owner, repo] = opts.repo.split('/');
-  if (!owner || !repo) {
+  const [owner = '', repo = ''] = opts.repo.split('/');
+  if (repo === '.' || repo === '..') {
     console.error('\n拒绝：--repo 格式应为 <owner/name>。');
     process.exit(2);
   }
@@ -573,6 +583,7 @@ async function main() {
   }
 
   const ctx = {
+    repoId: opts.repoId,
     token,
     owner,
     repo,
@@ -598,7 +609,7 @@ async function main() {
 
   try {
     await preflight(ctx);
-    console.log(`\n[P0] 目标仓库 ${owner}/${repo}｜间隔 ${ctx.gap}ms｜硬上限 ${ctx.maxMutating}`);
+    console.log(`\n[P0] 目标仓库 ${ctx.owner}/${ctx.repo}（ID ${ctx.repoId}）｜间隔 ${ctx.gap}ms｜硬上限 ${ctx.maxMutating}`);
     await snapshotRateLimit(ctx, 'P0', ctx.seq(), 'start');
 
     if (opts.levels.includes('L0')) await runL0(ctx);

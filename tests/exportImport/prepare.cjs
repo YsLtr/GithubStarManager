@@ -17,6 +17,7 @@ const FILES = [
   'constants.ts',
   'gm.ts',
   'types.ts',
+  'api/repoTarget.ts',
   'storage/exportImport.ts',
   'storage/notes.ts',
   'storage/pendingDelete.ts',

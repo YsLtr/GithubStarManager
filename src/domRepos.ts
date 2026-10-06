@@ -57,6 +57,7 @@
 
 import { getRepoItems } from './dom';
 import type { RepoData } from './types';
+import { repoFullName } from './api/repoTarget';
 
 /** 一个页面条目的投影结果：数字 id（= 标签/备注的存储键）+ 数据 + 原节点（供隐藏/回滚） */
 interface PageRepo {
@@ -96,8 +97,8 @@ function parseCount(text: string): number | undefined {
 function extractRepoFromItem(item: HTMLElement): PageRepo | null {
   // name：用 href 而非文本（第三方脚本会往 h3 里插按钮，文本不可信）
   const href = item.querySelector<HTMLAnchorElement>(TITLE_LINK)?.getAttribute('href') ?? '';
-  const name = href.replace(/^\/+/, '').replace(/\/+$/, '');
-  if (!name || !name.includes('/')) return null;
+  const name = repoFullName(href.replace(/^\/+/, '').replace(/\/+$/, ''));
+  if (!name) return null;
 
   // repoId：优先 `user-list-menu[data-repository-id]`（它同时是标签/备注的存储键，与本人缓存同键；
   // 每条有两个 —— star/unstar 各一份 —— 取第一个即可）。未登录页面上**没有**这个元素

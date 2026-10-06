@@ -1,8 +1,9 @@
 import { gmGet, gmSet } from '../gm';
 import { GRACE_PERIOD, STORAGE_KEYS } from '../constants';
 import { loadRepoCache, saveRepoCache } from './repoCache';
-import { getStorageUserId, getTags, saveTags } from './tags';
-import { getNote, saveNote } from './notes';
+import { getStorageUserId, getTags, saveTags, loadAllTags } from './tags';
+import { getNote, saveNote, loadAllNotes } from './notes';
+import { numericRepoId, repoFullName, type ResolvedRepoTarget } from '../api/repoTarget';
 import type { PendingDeleteEntry, PendingDeleteMap, RepoData } from '../types';
 
 /**
@@ -134,6 +135,7 @@ export function markRepoUnstarred(repoId: string, seed?: RepoData): void {
 
   const pending = loadPendingDelete();
   pending[repoId] = Object.assign({}, existing || seed || {}, {
+    name: seed?.name || existing?.name || '',
     unstarredAt: Date.now(),
     _tags: tags,
     _note: note,
@@ -149,10 +151,18 @@ export function markRepoUnstarred(repoId: string, seed?: RepoData): void {
 }
 
 /** 记录 re-star：从待删除区恢复数据、标签与备注 */
-export function markRepoStarred(repoId: string): void {
+export function markRepoStarred(repoId: string, resolvedName?: string): void {
   const pending = loadPendingDelete();
-  if (!pending[repoId]) return;
+  if (!pending[repoId]) {
+    const cache = loadRepoCache();
+    if (resolvedName && cache[repoId] && cache[repoId].name !== resolvedName) {
+      cache[repoId].name = resolvedName;
+      saveRepoCache(cache);
+    }
+    return;
+  }
   const entry = pending[repoId];
+  if (resolvedName) entry.name = resolvedName;
   const tags = entry._tags || [];
   const note = entry._note || '';
   delete entry.unstarredAt;
@@ -165,6 +175,45 @@ export function markRepoStarred(repoId: string): void {
   if (note) saveNote(repoId, note);
   delete pending[repoId];
   savePendingDelete(pending);
+}
+
+/** 名称键恢复：写前预检并返回写后提交函数，两次均拒绝覆盖任何既有数字 ID 数据。
+ * 这是当前恢复操作的目标规范化，不是旧版本存储迁移。数字 ID 入口沿用原恢复行为。
+ */
+export function prepareResolvedRestore(sourceKey: string, target: ResolvedRepoTarget): (() => boolean) | null {
+  if (sourceKey === target.repoId) return () => { markRepoStarred(sourceKey, target.fullName); return true; };
+  if (!repoFullName(sourceKey) || !numericRepoId(target.repoId)) return null;
+  const owner = getStorageUserId();
+  const inspect = () => {
+    if (!owner || getStorageUserId() !== owner) return null;
+    const pending = loadPendingDelete();
+    const cache = loadRepoCache();
+    const tags = loadAllTags();
+    const notes = loadAllNotes();
+    const has = (map: object, key: string) => Object.prototype.hasOwnProperty.call(map, key);
+    if (!has(pending, sourceKey) || [cache, pending, tags, notes].some(map => has(map, target.repoId)) ||
+      [cache, tags, notes].some(map => has(map, sourceKey))) return null;
+    return { pending, cache };
+  };
+  if (!inspect()) return null;
+  return () => {
+    // 网络在途可能有同步/导入写入目标；冲突时原备份原样保留，不猜测合并。
+    const state = inspect();
+    if (!state) return false;
+    const entry = { ...state.pending[sourceKey], name: target.fullName };
+    const tags = entry._tags || [];
+    const note = entry._note || '';
+    delete entry.unstarredAt;
+    delete entry._tags;
+    delete entry._note;
+    state.cache[target.repoId] = entry;
+    saveRepoCache(state.cache);
+    if (tags.length) saveTags(target.repoId, tags);
+    if (note) saveNote(target.repoId, note);
+    delete state.pending[sourceKey];
+    savePendingDelete(state.pending);
+    return true;
+  };
 }
 
 /**
@@ -186,7 +235,7 @@ export function markRepoStarred(repoId: string): void {
  *    （**不是并集** —— 与活区 D9 的规则**相同**：导入的内容更新，理应覆盖；用户 2026-10-05 裁定），
  *    并**保留原 `unstarredAt`** —— 否则一次导入就把一条即将到期的备份重新计时 24h。
  * 3. **名字同理**（4.17.0 随 `data.repoNames` 加入）：已有条目的 `name` 优先，包里的名字只用来**补空**
- *    —— 空名字不得抹掉已有名字（那是恢复入口唯一的地址来源）。
+ *    —— 空名字不得抹掉已有名字（数字 ID 仍可独立解析恢复地址）。
  *
  * **例外（重要）**：已有条目**已超期**时按「不存在」处理（新条目 + `unstarredAt = now`）。否则会
  * 造出一条「**出生即超期**」的条目：上层纪律 2 要求保留原 `unstarredAt`，而那个时刻已过 ⇒ 合并进去的
@@ -209,9 +258,7 @@ export function addPendingFromImport(repoId: string, tags: string[], note: strin
   if (!live && !hasTags && !hasNote) return false;
 
   const entry: PendingDeleteEntry = Object.assign({ name: '' }, live || {}, {
-    // 名字来自 4.17.0 的 `data.repoNames`（最小仓库标识，只为让恢复能发出那个写请求）。
-    // 若导出方本地也查不到名字 ⇒ 空串 ⇒ `RestorableEntry.name` 回退成数字 repoId，
-    // 该条目在成功同步（`fullSync` 分支 B 的 `saveRepoData`）补齐名字前不可手动恢复。
+    // repoNames 只作展示/名称降级提示；缺名字但有数字 ID 也能在恢复执行时解析。
     // **空不覆盖非空**（与标签/备注同一条纪律）：已有名字用它、没有才用包里的，绝不用空串抹掉。
     name: live?.name || name || '',
     unstarredAt: live ? live.unstarredAt ?? now : now,

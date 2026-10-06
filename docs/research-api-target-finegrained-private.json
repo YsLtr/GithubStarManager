@@ -1,0 +1,103 @@
+{
+  "startedAt": "2026-10-06T06:18:55.922Z",
+  "implementation": "4.19.0 reviewed source bundled by tests/api/prepare.mjs",
+  "credentialType": "fine-grained",
+  "browserSession": false,
+  "requests": [
+    {
+      "path": "/user",
+      "method": "GET",
+      "status": 200,
+      "requestId": "C874:2340F6:6E9454:742DED:6AC492D0"
+    },
+    {
+      "path": "/repos/YsLtr/bilibili-API-collect",
+      "method": "GET",
+      "status": 200,
+      "requestId": "C874:2340F6:6E952D:742ED1:6AC492D0"
+    },
+    {
+      "path": "/repositories/1144496611",
+      "method": "GET",
+      "status": 200,
+      "requestId": "C874:2340F6:6E9608:742FA7:6AC492D1"
+    },
+    {
+      "path": "/user/starred/YsLtr/bilibili-API-collect",
+      "method": "GET",
+      "status": 404,
+      "requestId": "C874:2340F6:6E96DE:74308B:6AC492D1"
+    },
+    {
+      "path": "/repositories/1144496611",
+      "method": "GET",
+      "status": 200,
+      "requestId": "A244:26B0EB:6E8F03:742B39:6AC492D3"
+    },
+    {
+      "path": "/user/starred/YsLtr/bilibili-API-collect",
+      "method": "PUT",
+      "status": 204,
+      "requestId": "A23E:B892:7047F4:75EE30:6AC492D2"
+    },
+    {
+      "path": "/repositories/1144496611",
+      "method": "GET",
+      "status": 200,
+      "requestId": "A244:26B0EB:6E914D:742D6C:6AC492D4"
+    },
+    {
+      "path": "/user/starred/YsLtr/bilibili-API-collect",
+      "method": "GET",
+      "status": 204,
+      "requestId": "A23E:B892:704B26:75F169:6AC492D4"
+    },
+    {
+      "path": "/repositories/1144496611",
+      "method": "GET",
+      "status": 200,
+      "requestId": "A244:26B0EB:6E93C3:743002:6AC492D5"
+    },
+    {
+      "path": "/user/starred/YsLtr/bilibili-API-collect",
+      "method": "GET",
+      "status": 204,
+      "requestId": "A23E:B892:704D9A:75F3EA:6AC492D6"
+    },
+    {
+      "path": "/repositories/1144496611",
+      "method": "GET",
+      "status": 200,
+      "requestId": "A244:26B0EB:6E95C8:743274:6AC492D6"
+    },
+    {
+      "path": "/user/starred/YsLtr/bilibili-API-collect",
+      "method": "DELETE",
+      "status": 204,
+      "requestId": "A23E:B892:704FBE:75F614:6AC492D7"
+    },
+    {
+      "path": "/repositories/1144496611",
+      "method": "GET",
+      "status": 200,
+      "requestId": "A244:26B0EB:6E9829:743505:6AC492D8"
+    },
+    {
+      "path": "/user/starred/YsLtr/bilibili-API-collect",
+      "method": "GET",
+      "status": 404,
+      "requestId": "A23E:B892:705228:75F89C:6AC492D8"
+    }
+  ],
+  "baselineRestored": true,
+  "target": {
+    "repoId": "1144496611",
+    "fullName": "YsLtr/bilibili-API-collect",
+    "ownedByCredential": true,
+    "private": true
+  },
+  "baselineStarred": false,
+  "flipVerified": true,
+  "completedAt": "2026-10-06T06:19:05.667Z",
+  "mutations": 2
+}

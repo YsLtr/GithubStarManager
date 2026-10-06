@@ -12,14 +12,15 @@
 // 排队语义（ADR 0003）：
 // - 卡片乐观翻转后入队；**排队中**再次点击 → 撤销该条（用户改主意不必等它发出）；
 // - 已在执行的条目**不可撤销**（请求已发出，撤销只会制造「本地以为没做、远端做了」）；
-// - 同一仓库在队列中最多一条（由调用方用 isMutationQueued 判断，避免重复入队）。
+// - 同一目标由队列统一去重，覆盖排队、间隔等待、解析和写请求执行期。
 
 /** 相邻两次变异请求的**开始时刻**最小间隔（官方建议值，刻意不自动调参） */
 export const MUTATION_GAP_MS = 1000;
 
 /** 队列条目的执行结果由调用方定义（本模块只透传） */
 interface QueuedMutation<T> {
-  /** 展示用标识（如 `owner/repo`），用于「同一仓库最多一条」判断与进度显示 */
+  key: string;
+  /** 只展示，不用于去重。 */
   label: string;
   run: () => Promise<T>;
 }
@@ -35,6 +36,8 @@ export interface MutationHandle<T> {
 }
 
 interface Item<T> {
+  keys: Set<string>;
+  completionAtEnqueue: number;
   label: string;
   run: () => Promise<T>;
   cancelled: boolean;
@@ -43,6 +46,10 @@ interface Item<T> {
 }
 
 const queue: Item<unknown>[] = [];
+const live = new Set<Item<unknown>>();
+let active: Item<unknown> | null = null;
+let completion = 0;
+const completedKeys = new Map<string, number>();
 /** 上次变异请求的**开始**时刻（墙钟）；0 = 还没发过 */
 let lastStartAt = 0;
 let draining = false;
@@ -54,12 +61,15 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => window.setTimeou
  * 队列自身不抛错：`run` 抛出的异常会被转成「不可能出现的内部错误」并继续处理后续条目
  * （写路径的失败已在 starWrites 里归一为返回值，不会走到这里）。
  */
-export function enqueueMutation<T>(mutation: QueuedMutation<T>): MutationHandle<T> {
+export function enqueueMutation<T>(mutation: QueuedMutation<T>): MutationHandle<T> | null {
+  if (!mutation.key || isMutationQueued(mutation.key)) return null;
   let resolve!: (result: T | null) => void;
   const done = new Promise<T | null>((r) => {
     resolve = r;
   });
   const item: Item<T> = {
+    keys: new Set([mutation.key]),
+    completionAtEnqueue: completion,
     label: mutation.label,
     run: mutation.run,
     cancelled: false,
@@ -67,6 +77,7 @@ export function enqueueMutation<T>(mutation: QueuedMutation<T>): MutationHandle<
     resolve,
   };
   queue.push(item as Item<unknown>);
+  live.add(item as Item<unknown>);
 
   const handle: MutationHandle<T> = {
     label: mutation.label,
@@ -74,6 +85,7 @@ export function enqueueMutation<T>(mutation: QueuedMutation<T>): MutationHandle<
       if (item.started) return false;
       if (item.cancelled) return true;
       item.cancelled = true;
+      live.delete(item as Item<unknown>);
       return true;
     },
     isQueued(): boolean {
@@ -86,11 +98,26 @@ export function enqueueMutation<T>(mutation: QueuedMutation<T>): MutationHandle<
   return handle;
 }
 
-/** 队列里是否已有该 label 的**未执行**条目（同仓库最多一条） */
-export function isMutationQueued(label: string): boolean {
-  return queue.some((it) => it.label === label && !it.started && !it.cancelled);
+/** 包括正在执行的目标；调用方不用再分别做“检查 + 入队”。 */
+export function isMutationQueued(key: string): boolean {
+  return [...live].some((it) => it.keys.has(key));
 }
 
+/** 名称入口在执行时才拿到 ID，必须再认领一次；同批队列已完成的别名也不能重复写。 */
+export function claimMutationTarget(key: string): boolean {
+  if (!active) return true; // setStarState 的独立调用仍可用（产品入口全部经过队列）。
+  if ([...live].some(it => it !== active && it.keys.has(key))) return false;
+  if ((completedKeys.get(key) ?? 0) > active.completionAtEnqueue) return false;
+  active.keys.add(key);
+  return true;
+}
+
+/** 每个真实变异请求（包括 REST → 网页降级）都经过这里，而非把解析起点当写起点。 */
+export async function waitForMutationSlot(): Promise<void> {
+  const wait = lastStartAt + MUTATION_GAP_MS - Date.now();
+  if (wait > 0) await sleep(wait);
+  lastStartAt = Date.now();
+}
 
 async function drain(): Promise<void> {
   draining = true;
@@ -110,7 +137,7 @@ async function drain(): Promise<void> {
         continue;
       }
       item.started = true;
-      lastStartAt = Date.now();
+      active = item;
       let result: unknown = null;
       try {
         result = await item.run();
@@ -119,8 +146,14 @@ async function drain(): Promise<void> {
         result = null;
       }
       item.resolve(result);
+      completion += 1;
+      for (const key of item.keys) completedKeys.set(key, completion);
+      live.delete(item);
+      active = null;
     }
   } finally {
     draining = false;
+    active = null;
+    completedKeys.clear();
   }
 }

@@ -28,6 +28,7 @@ pnpm build          # 产出 dist/github-star-manager.user.js
 pnpm typecheck      # tsc --noEmit
 pnpm check          # typecheck + build
 pnpm test:exportimport   # 导入导出纯逻辑断言（无需浏览器；项数以实际输出为准，别写死数字）
+pnpm test:api            # ID 寻址、写通道、队列、恢复与同步回归（mock 网络，不读真实 token）
 node scripts/verify-css.cjs                      # 产物 CSS 与源 CSS 等价性
 node scripts/ratelimit-probe.cjs --repo <me/repo> # 限流实测探针（默认 dry-run，零网络请求）
 ```
@@ -168,6 +169,8 @@ src/
                       凭证指纹缓存（4.18.0 起指纹实现与缓存读写都移到 `storage/accountIdentity.ts`，不存 token 明文）、accountPairKey。
                       只在「有 token + 有登录会话 + 两侧 id 都取到」时判定，其余一律 unknown（见 ADR 0007 / D25）
   mutationQueue.ts    全局串行变异队列（4.9.0）：间隔 ≥1000ms、排队中可撤销、失败不阻断后续
+  api/repoTarget.ts   纯 ID/名称规范化和端点地址构造；存储与 DOM 投影可复用，不联网
+  api/repositories.ts ID 优先解析当前仓库名、星标核对与核对预算（4.19.0）；不读写存储、不建 UI
   restore.ts          恢复编排（4.9.0）：restoreOne / restoreMany（严格串行·可取消·不重试）/ pushRestoreNotice（同仓库通知去重）
   fullSync.ts         API 主模式同步：scanStarred 单遍条件扫描、波次并发、整表 diff、star 时间回填、进页 probe、runFullSync / registerSyncMenu / hasApiData
                      —— **同步状态单一真相（4.10.0）**：SyncState（idle/running/failed）+ getSyncState / subscribeSyncState / setSyncState
@@ -427,18 +430,17 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete_<归属id>`
 - `addPendingFromImport()`（**导入路径专用**，4.17.0 新增）：把「本地确认未 star / 无法确认」的仓库及其标签/备注放进宽限期。**不复用上面那个**（导入没有「删缓存、清活区」的前提）。三条纪律（与活区**同一条胜负规则**，用户 2026-10-05 裁定：导入的内容更新，理应覆盖）：**空不覆盖非空**（包内为空/缺省 ⇒ 保留已有 `_tags`/`_note`/`name`）、**非空整体替换**（包内非空即覆盖该字段，**不是并集**；**`name` 除外** —— 已有名字优先，见下条）、**不重置** `unstarredAt`（不用导入给即将到期的备份续命）；**已有条目已超期时按「不存在」处理**（否则合并出来的条目「出生即超期」—— 纪律 2 保留的 `unstarredAt` 已过 ⇒ 数据既不在恢复窗口也不在卡片上，等于写进谁也读不到的地方；**不是**因为收尾会跑 `cleanupExpiredUnstarred()`，它只在 `ensureStarsSetup()` 与仓库详情页跑）。
 
 **移出宽限区的既有路径**：下一次成功同步发现「远端已 star」⇒ `fullSync` 的分支 B 调 `markRepoStarred()`（标签/备注抄回活区 + 条目写回 `stars_repo_cache` + 删除本条），紧跟 `saveRepoData(patch)` 用**远端**元数据补齐 —— 导入产生的条目**没有描述性元数据**（导出包不再带；它只有一个名字 `data.repoNames`，用于让恢复能发出写请求），其余全靠这一步补。
-**手动恢复的前提 = 条目有 `owner/repo`**（`restore.ts` 的守卫 `if (!name.includes('/'))`）：手动恢复要往
-`POST /user/starred/{owner}/{repo}` 发请求，没有名字就发不出去。⇒ 导出包随带 **`data.repoNames`**
-（每个仓库的 `owner/repo`，见上一节），导入时写进宽限期条目的 `name` ⇒ 恢复菜单显示真名、按钮可用。
-**仍然恢复不了的两种情形**（此时按钮会如实报「仓库名缺失，无法恢复」）：① 导出方本地也查不到该仓库的名字
-（有标签但从未 star）；② 导入的是**旧包**（没有 `repoNames`）。两者都会在下一次成功同步
-（`fullSync` 分支 B 的 `saveRepoData`）补齐名字后变成可恢复 —— 这属于**降级**，不是缺陷。
+**4.19.0 起手动恢复可以只有数字 ID**：执行时解析当前名称，远端成功后才还原数据。
+`repoNames` 用于展示和缺 ID 时的名称降级；旧包缺名字也不再因此被拒绝。
+ID 不可见、名称复用到不同 ID、或目标完全缺失时明确失败，保留备份。详见 ADR 0011。
 
 ### 外部 unstar 检测
 
 星状态真相**只由整表 diff 权威判定**：扫描远端列表，远端无而本地有 → `applyExternalUnstar()`（宽限管线 + 幂等自愈：已入宽限区不重复写区但仍清缓存脏态）。逐条双 404 核对队列、到货快照、位移挂起等历史链路已随 API 主模式整体移除。
 
-切片混合模式下，local-only 嫌疑先逐条 `checkStarredGone()`：204 = 切片平局误报（保留）/ 404 = 真取关 / null = 本轮不动 —— 防同秒 `starred_at` 跨 304|200 边界互换造成假取关。
+切片混合模式下，local-only 嫌疑交给 `collectStarredChecks()`：先按 ID 确认名称，再查星标。
+星标 204 = 保留，已确认目标上的星标 404 = 取关；元数据 404/身份不符/不可判定 = 保留。
+全部核对结束后才提交本地变化；额度不足、限流或 401 整轮放弃；普通权限 403 / 网络失败保留该项，其他已确认项仍可提交。全 304 与正文权威模式不额外查仓库。
 
 > **改 GitHub 原生元素的尺寸时，选择器必须收窄到「那一个」**（4.13.0 真机教训）：头像规则原来写的是裸
 > `.Layout-sidebar .avatar-user`，结果把侧栏里 Sponsors 区块的小头像一起撑大（13 个 35px → 120px，被迫竖排）。
@@ -479,7 +481,7 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete_<归属id>`
 
 > **4.17.0 起**：导出包**不再含 `repoCache`**（上面那行只为说明 4.7.0–4.16.x 的形状），改为随带最小的
 > **`repoNames`**（每个仓库的 `owner/repo`）—— 描述性元数据（语言/star 数/描述）由同步承载，
-> 而 `owner/repo` 是「恢复」写请求的目标地址，缺了它导入进宽限期的条目就无法手动恢复。
+> 4.19.0 起 `owner/repo` 是名称提示，数字 ID 可在恢复时独立解析（ADR 0011）。
 > 导入路径**不往整表缓存写任何条目**；旧包（仍带 `repoCache`、`schemaVersion` 仍为 1）照常导入，
 > 该字段**只校验、不写入**。详见 `docs/adr/0001` 的「4.17.0 修订」段。
 
@@ -546,15 +548,17 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete_<归属id>`
 
 ### 写路径（4.9.0：两条通道，静默分派）
 
-`starWrites.setStarState(patOrEmpty, 'owner/repo', wantStar)` 是**唯一**的写入口，结果归一为
-`{ok:true, via}` 或 `{ok:false, reason, status, detail}`（不抛错）。通道由它**静默分派**，调用方与用户都不感知（ADR 0006）：
+`starWrites.setStarState(patOrEmpty, {repoId, fullName?}, wantStar)` 是**唯一**的写入口，结果归一为
+`{ok:true, via, target:{repoId, fullName}}` 或 `{ok:false, reason, status, detail?}`。ID 优先，名称仅作提示；
+无 ID 可经名称取得身份。目标解析规则见 ADR 0011，通道仍由它**静默分派**（ADR 0006）：
 
 | 条件 | 通道 | 成功判据 |
 |---|---|---|
 | token 是 classic PAT（`ghp_`）或 OAuth（`gho_`） | REST `PUT`/`DELETE /user/starred/{o}/{r}`，`Bearer` | `204`（`304` 一并当成功） |
-| 无上述 token，**或** REST 返回权限 403，且 `hasWebSession()` | 网页端点 `POST /{o}/{r}/star`（`/unstar`），Cookie 会话 | `200`，**且在页面上存在该仓库表单时**复核方向已翻转（未翻转即失败） |
+| 无上述 token，**或** REST 返回权限 403，且 `hasWebSession()` | 网页端点 `POST /{o}/{r}/star`（`/unstar`），Cookie 会话 | HTTP 成功（通常 `200`）；原生两种表单并存，不作为方向复核 |
 
-**两条通道都是每仓库恰好 1 个写请求**。4.9.0 实测推翻了原「422 → 取仓库页表单 token 重发」的回退
+通常每次操作 1 个写请求；REST 权限失败后回落网页会有 2 个，均经过真实写起点的 1000ms 间隔门。
+元数据解析通常另有 1 次 GET，ID 404 后名称核验可能再多一次。4.9.0 实测推翻了原「422 → 取仓库页表单 token 重发」的回退
 （仓库页原始 HTML **0 个 `<form>`**，详见 `docs/adr/0006` 与 `docs/research-web-star-endpoints.md` 附录 A），
 故降级只剩两段：**页面有该仓库表单 → 用它的真实 token；否则只带 VF 头**；都失败就报错。
 
@@ -592,7 +596,7 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete_<归属id>`
 「`PUT/DELETE /user/starred` 会不会触发二级限流、primary 记账是 1 还是 5」：
 
 - **默认 `--dry-run`：零网络请求**，只打印计划、硬约束与判定矩阵；真发请求必须显式 `--run`。
-- 硬约束（协议 §4.7，CLI 无法抬高）：变异请求 ≤60 次、只对**自有**仓库（owner == token 登录名，否则拒绝运行）、
+- 硬约束（协议 §4.7，CLI 无法抬高）：变异请求 ≤60 次、只对**自有**仓库（owner.id == token 账号 id，否则拒绝运行）、
   凭证必须是 classic/OAuth（`x-oauth-scopes` 缺失即拒绝）、严格串行无并发、净状态不变（S0 → S0，结束时校验）、
   任一次 403/429 立即整轮停止并按 60→120→240s 指数退避（≤3 次）、不做并发探测。
 - 判定不以 `x-ratelimit-*` 为准：二级限流的**唯一**可靠信号是响应体含 `secondary rate limit`
@@ -605,7 +609,7 @@ unstar 时数据不立即删除，而是移入 `stars_pending_delete_<归属id>`
 `restore.ts`（编排）+ `ui/restoreMenu.ts`（窗口）+ `fullSync.ts` 收尾。
 
 - **恢复 = 真实远端写请求**：`restoreOne()` 走队列 → `setStarState(..., true)` → 成功才 `markRepoStarred()`（复原标签/备注）+ `syncCardAfterStarChange()`。**禁止只做本地回滚**（那会制造「本地有星、远端无星」，下一轮同步又判成外部取关）。
-- `restoreMany()` **逐条 await**（严格串行）、执行中**可取消**（只停后续，已发出的不回滚）、**不自动重试**、无数量阈值。
+- `restoreMany()` **逐条 await**（严格串行）、执行中**可取消**（只停后续，已发出的不回滚）、**不自动重试**、无数量阈值；限流或凭证失效停止后续。
 - TM 菜单「♻️ 恢复已取消的 star（24h 内）」= 可勾选 + 一键「恢复选中」+ **每行一个 ☆ 恢复 按钮**；`confirm` 显示条数与预估耗时（≥1s/条）。
 - **变化简报**（`emitSyncReport`）：任何 `runFullSync` 路径收尾都弹；口径只有「取消 star / 新增 / 恢复」，**元数据刷新只进控制台**；无变化也弹「无变化（共 N 个 star）」（304 免额度早退路径同样弹）；**不判重**；每条外部取关**各弹一条带「恢复」按钮的通知**。
 - **通知栈**（`ui/notifications.ts`）：常挂 `document.body`（**不是** header 子节点），锚在**全局头部下方**（`div.header-wrapper.js-header-wrapper` 底边 + 8px，滚动/改窗口时 rAF 重算，头部滚出视口后回落视口顶部 8px）、新条目从底部追加、无条数上限、3s 自动消失、**悬停整个区域暂停计时**、带动作按钮的条目成功后原地划掉并重置 3s。**观感 = GitHub 自己的 `.flash`**（内联消息族）：`bgColor-*-muted` 浅色底 + `borderColor-*-muted` 1px 真描边 + 16px 细线 octicon 着 `fgColor-*` + `KIND_STYLE` 一张表管全套；尺度对齐本脚本既有 UI（6px 圆角、`0 1px 3px rgba(0,0,0,.08)` 阴影、`12px 16px` 内边距、按钮 14px / `6px 14px`）。**不要**用 Primer `Toast` 的 48px 满饱和图标条 + 三层悬浮投影（浮动 toast 族，与卡片/横幅语言不同族）。样式全内联（可出现在任意 github.com 页面，不依赖 Stars 视图注入的样式表）。**4.10.0 起容器入口带视口门**：`ensureContainer()` 在窄视口返回 `null`，`pushNotice` 交回**空句柄**并留一条 console —— 否则窄视口下从 TM 菜单触发一次同步就会把整座栈懒重建出来（与「窄视口完全惰性」冲突）。
@@ -788,4 +792,3 @@ agent-browser-cli exec --tab <id> --file tests/smoke/assert-search.js
 ## 13. 待办与调研索引
 
 见仓库根目录 `todo`（功能待办）；调研证据文档的「结论去向 / 是否仍被引用」见 **`docs/research-index.md`**。
-

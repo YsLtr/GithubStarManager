@@ -1,0 +1,156 @@
+{
+  "startedAt": "2026-10-06T05:16:19.231Z",
+  "records": [
+    {
+      "label": "identity",
+      "method": "GET",
+      "status": 200,
+      "at": "2026-10-06T05:16:19.848Z",
+      "remaining": "4984",
+      "requestId": "B8BE:2420AA:6E4F9E:729012:6AC48423"
+    },
+    {
+      "label": "own-public-samples",
+      "method": "GET",
+      "status": 200,
+      "at": "2026-10-06T05:16:20.432Z",
+      "remaining": "4983",
+      "requestId": "B8BE:2420AA:6E5097:72910C:6AC48423"
+    },
+    {
+      "label": "resolve-id",
+      "method": "GET",
+      "status": 200,
+      "at": "2026-10-06T05:16:20.966Z",
+      "remaining": "4982",
+      "requestId": "B8BE:2420AA:6E5233:729298:6AC48424"
+    },
+    {
+      "label": "baseline",
+      "method": "GET",
+      "status": 404,
+      "at": "2026-10-06T05:16:21.358Z",
+      "remaining": "4995",
+      "requestId": "B8BE:2420AA:6E5382:7293D7:6AC48424"
+    },
+    {
+      "label": "PUT:before",
+      "method": "GET",
+      "status": 404,
+      "at": "2026-10-06T05:16:21.745Z",
+      "remaining": "4994",
+      "requestId": "B8BE:2420AA:6E546C:7294D5:6AC48425"
+    },
+    {
+      "label": "PUT:numeric-candidate",
+      "method": "PUT",
+      "status": 404,
+      "at": "2026-10-06T05:16:22.058Z",
+      "remaining": null,
+      "requestId": "B8BE:2420AA:6E5561:7295E1:6AC48425"
+    },
+    {
+      "label": "PUT:after-numeric",
+      "method": "GET",
+      "status": 404,
+      "at": "2026-10-06T05:16:22.674Z",
+      "remaining": "4993",
+      "requestId": "B8C4:9BCC4:54278F:5866AD:6AC48426"
+    },
+    {
+      "label": "PUT:name-control",
+      "method": "PUT",
+      "status": 204,
+      "at": "2026-10-06T05:16:23.816Z",
+      "remaining": "4992",
+      "requestId": "B8CA:AAB3:56B745:5AF775:6AC48427"
+    },
+    {
+      "label": "PUT:verified",
+      "method": "GET",
+      "status": 204,
+      "at": "2026-10-06T05:16:24.198Z",
+      "remaining": "4991",
+      "requestId": "B8C4:9BCC4:542A0A:58696F:6AC48426"
+    },
+    {
+      "label": "DELETE:before",
+      "method": "GET",
+      "status": 204,
+      "at": "2026-10-06T05:16:24.624Z",
+      "remaining": "4990",
+      "requestId": "B8CA:AAB3:56B993:5AFA1B:6AC48427"
+    },
+    {
+      "label": "DELETE:numeric-candidate",
+      "method": "DELETE",
+      "status": 404,
+      "at": "2026-10-06T05:16:24.956Z",
+      "remaining": null,
+      "requestId": "B8CA:AAB3:56BA5A:5AFB0B:6AC48428"
+    },
+    {
+      "label": "DELETE:after-numeric",
+      "method": "GET",
+      "status": 204,
+      "at": "2026-10-06T05:16:25.377Z",
+      "remaining": "4989",
+      "requestId": "B8C4:9BCC4:542BFF:586B5F:6AC48428"
+    },
+    {
+      "label": "DELETE:name-control",
+      "method": "DELETE",
+      "status": 204,
+      "at": "2026-10-06T05:16:26.902Z",
+      "remaining": "4988",
+      "requestId": "B8CC:2340F6:531946:5754C7:6AC48429"
+    },
+    {
+      "label": "DELETE:verified",
+      "method": "GET",
+      "status": 404,
+      "at": "2026-10-06T05:16:27.293Z",
+      "remaining": "4987",
+      "requestId": "B8C4:9BCC4:542F14:586EA7:6AC48429"
+    },
+    {
+      "label": "cleanup-state",
+      "method": "GET",
+      "status": 404,
+      "at": "2026-10-06T05:16:27.671Z",
+      "remaining": "4986",
+      "requestId": "B8CC:2340F6:531BA9:57576F:6AC4842A"
+    },
+    {
+      "label": "final-baseline-check",
+      "method": "GET",
+      "status": 404,
+      "at": "2026-10-06T05:16:28.062Z",
+      "remaining": "4985",
+      "requestId": "B8CC:2340F6:531C64:57582E:6AC4842B"
+    }
+  ],
+  "checks": {
+    "baselineStarred": false,
+    "PUT": {
+      "numericStatus": 404,
+      "stateChanged": false,
+      "nameStatus": 204
+    },
+    "DELETE": {
+      "numericStatus": 404,
+      "stateChanged": false,
+      "nameStatus": 204
+    },
+    "baselineRestored": true
+  },
+  "mutationCount": 4,
+  "requestCount": 16,
+  "target": {
+    "repoId": 1374101984,
+    "fullName": "YsLtr/pi-subagents",
+    "ownedByCredential": true,
+    "private": false
+  },
+  "completedAt": "2026-10-06T05:16:28.064Z"
+}

@@ -10,10 +10,11 @@
 // 队列语义：本模块**逐条**入队并等它完成（而不是一次把 N 条全推进去）——这样进度天然串行、
 // 「取消」只需在入队前判断即可停住后续；已在执行的那条不可撤销（请求已发出）。
 
-import { MUTATION_GAP_MS, enqueueMutation, isMutationQueued } from './mutationQueue';
+import { MUTATION_GAP_MS, enqueueMutation } from './mutationQueue';
+import { repoTarget, repoTargetKey } from './api/repoTarget';
 import { getToken } from './tokenConfig';
 import { setStarState, writeFailureMessage, type StarWriteOutcome } from './starWrites';
-import { markRepoStarred, type RestorableEntry } from './storage/pendingDelete';
+import { prepareResolvedRestore, type RestorableEntry } from './storage/pendingDelete';
 import { syncCardAfterStarChange } from './starCheck';
 import { pushNotice, type NoticeHandle } from './ui/notifications';
 
@@ -24,6 +25,7 @@ export interface RestoreOutcome {
   ok: boolean;
   /** 失败时的用户可见原因（已过 writeFailureMessage） */
   message?: string;
+  stopBatch?: boolean;
 }
 
 /**
@@ -32,17 +34,20 @@ export interface RestoreOutcome {
  */
 export async function restoreOne(entry: { repoId: string; name: string }): Promise<RestoreOutcome> {
   const { repoId, name } = entry;
-  if (!name.includes('/')) {
-    return { repoId, name, ok: false, message: '仓库名缺失，无法恢复。' };
-  }
-  if (isMutationQueued(name)) {
-    return { repoId, name, ok: false, message: '该仓库已在队列中，请稍候。' };
-  }
-
+  const target = repoTarget(repoId, name);
+  if (!repoTargetKey(target)) return { repoId, name, ok: false, message: '仓库地址缺失，无法恢复。' };
+  const localRestore: { commit?: () => boolean } = {};
+  let conflict = false;
   const handle = enqueueMutation<StarWriteOutcome>({
+    key: repoTargetKey(target),
     label: name,
-    run: () => setStarState(getToken(), name, true),
+    run: () => setStarState(getToken(), target, true, resolved => {
+      localRestore.commit = prepareResolvedRestore(repoId, resolved) ?? undefined;
+      conflict = !localRestore.commit;
+      return !conflict;
+    }),
   });
+  if (!handle) return { repoId, name, ok: false, message: '该仓库已有操作，请稍候。' };
   const outcome = await handle.done;
 
   if (outcome === null) {
@@ -50,14 +55,17 @@ export async function restoreOne(entry: { repoId: string; name: string }): Promi
     return { repoId, name, ok: false, message: '已取消排队。' };
   }
   if (!outcome.ok) {
-    const message = writeFailureMessage(outcome.reason, outcome.status);
+    const message = conflict ? '仓库已有本地数据或备份已变化，原备份已保留，请同步后检查。' : writeFailureMessage(outcome.reason, outcome.status);
     console.warn(`[github-star-manager] 恢复失败：${name}｜${outcome.reason}｜${outcome.detail || ''}`);
-    return { repoId, name, ok: false, message };
+    return { repoId, name, ok: false, message, stopBatch: outcome.reason === 'rate-limited' || outcome.reason === 'unauthorized' };
   }
-  markRepoStarred(repoId);
-  syncCardAfterStarChange(repoId, true);
+  // 提交前再次检查，防止请求在途的同步或导入覆盖数字 ID 数据。
+  if (!localRestore.commit || !localRestore.commit()) {
+    return { repoId, name, ok: false, message: '远端已加星，但本地数据发生冲突；原备份已保留，请同步后检查。' };
+  }
+  syncCardAfterStarChange(outcome.target.repoId, true);
   console.log(`[github-star-manager] ★ 已恢复 star：${name}`);
-  return { repoId, name, ok: true };
+  return { repoId, name: outcome.target.fullName, ok: true };
 }
 
 interface BatchOptions {
@@ -95,11 +103,15 @@ export async function restoreMany(entries: RestorableEntry[], opts: BatchOptions
     if (result.ok) succeeded += 1;
     else failed.push(result);
     opts.onProgress?.(done, total, result);
+    if (result.stopBatch) {
+      cancelled = done < total;
+      break;
+    }
   }
 
   console.log(
     `[github-star-manager] 批量恢复结束：成功 ${succeeded}/${total}` +
-      `${failed.length ? `，失败 ${failed.length}` : ''}${cancelled ? '（用户取消，后续未执行）' : ''}`
+      `${failed.length ? `，失败 ${failed.length}` : ''}${cancelled ? '（已停止，后续未执行）' : ''}`
   );
   return { total, succeeded, failed, cancelled };
 }

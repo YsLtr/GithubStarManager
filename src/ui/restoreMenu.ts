@@ -297,7 +297,7 @@ close.addEventListener('click', () => {
       btnStop.hidden = true;
       refreshButtons();
       const failedText = summary.failed.length > 0 ? `，失败 ${summary.failed.length} 个` : '';
-      const cancelText = summary.cancelled ? '（已取消，部分未执行）' : '';
+      const cancelText = summary.cancelled ? '（已停止，部分未执行）' : '';
       status.textContent = `完成：成功 ${summary.succeeded}/${summary.total}${failedText}${cancelText}`;
       if (summary.failed.length > 0) {
         // 批量汇总也走 alert（ADR 0003 失败分支）：逐条列失败原因，3s 通知承载不了这个信息量

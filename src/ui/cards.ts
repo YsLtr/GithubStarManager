@@ -10,6 +10,7 @@ import { pushNotice } from './notifications';
 import { setViewStarOverride } from '../viewContext';
 import { escapeHtml, formatRelative } from '../utils';
 import type { RepoData } from '../types';
+import { repoTarget, repoTargetKey } from '../api/repoTarget';
 
 
 /** 用缓存数据构建卡片（跨页筛选时使用） */
@@ -111,9 +112,10 @@ function createStarButtonElement(isStarred: boolean): HTMLButtonElement {
  * 6. 失败 → 回滚外观 + 结果导向的通知（不暴露通道细节；401 照旧上报配置面板）。
  */
 export function createStarButtonForCached(card: HTMLElement, data: RepoData, isStarred?: boolean): void {
-  const fullName = data.name;
-  if (!fullName) return;
   const repoId = card.dataset.repoId || '';
+  const requestTarget = repoTarget(repoId, data.name);
+  if (!repoTargetKey(requestTarget)) return;
+  const fullName = data.name || repoId;
   // `isStarred` 显式给出时以它为准：他人页卡片的状态来自**本人缓存成员关系**（`data.unstarredAt`
   // 是「本方自己的表」的语义，投影条目根本没有这个字段 ⇒ 不显式传就会全判成已加星）
   const btn = createStarButtonElement(isStarred ?? !data.unstarredAt);
@@ -140,9 +142,15 @@ export function createStarButtonForCached(card: HTMLElement, data: RepoData, isS
     setStarButtonVisual(btn, target); // 乐观翻转
 
     const handle = enqueueMutation<StarWriteOutcome>({
+      key: repoTargetKey(requestTarget),
       label: fullName,
-      run: () => setStarState(getToken(), fullName, target),
+      run: () => setStarState(getToken(), requestTarget, target),
     });
+    if (!handle) {
+      setStarButtonVisual(btn, !target);
+      pushNotice('该仓库已有操作，请稍候。', 'info');
+      return;
+    }
     inflight = { handle, target };
 
     void handle.done.then((outcome) => {
@@ -166,8 +174,10 @@ export function createStarButtonForCached(card: HTMLElement, data: RepoData, isS
         return;
       }
       // 成功：先落本地权威数据（宽限期备份进出），再刷新卡片
+      data.name = outcome.target.fullName;
+      requestTarget.fullName = outcome.target.fullName;
       if (repoId) {
-        if (target) markRepoStarred(repoId);
+        if (target) markRepoStarred(repoId, outcome.target.fullName);
         // unstar 时把卡片数据一并交出去：他人页上新 star 过（只在内存覆盖里）的仓库不在整表缓存，
         // 少了这份数据就没东西可备份，标签会永远留在活区（详见 markRepoUnstarred 的注释）
         else markRepoUnstarred(repoId, data);
@@ -175,7 +185,7 @@ export function createStarButtonForCached(card: HTMLElement, data: RepoData, isS
         setViewStarOverride(repoId, target);
       }
       syncCardAfterStarChange(repoId, target);
-      if (!target) pushRestoreNotice(repoId, fullName, 'manual');
+      if (!target) pushRestoreNotice(repoId, outcome.target.fullName, 'manual');
     });
   });
 

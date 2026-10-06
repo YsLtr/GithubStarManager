@@ -1,0 +1,38 @@
+{
+  "startedAt": "2026-10-06T06:18:24.272Z",
+  "requests": [
+    {
+      "label": "fine identity",
+      "path": "/user",
+      "status": 200,
+      "requestId": "CA26:220C26:95F185:9B8B84:6AC492B0",
+      "id": 130123551,
+      "login": "YsLtr"
+    },
+    {
+      "label": "classic private metadata",
+      "path": "/repos/YsLtr/bilibili-API-collect",
+      "status": 200,
+      "requestId": "CA26:220C26:95F288:9B8CC7:6AC492B1",
+      "id": 1144496611,
+      "private": true,
+      "fullName": "YsLtr/bilibili-API-collect"
+    },
+    {
+      "label": "fine private by ID",
+      "path": "/repositories/1144496611",
+      "status": 404,
+      "requestId": "CA26:220C26:95F3A0:9B8DDE:6AC492B1"
+    },
+    {
+      "label": "fine public metadata",
+      "path": "/repos/YsLtr/pi-subagents",
+      "status": 200,
+      "requestId": "CA26:220C26:95F4AA:9B8EC9:6AC492B1",
+      "id": 1374101984,
+      "private": false,
+      "fullName": "YsLtr/pi-subagents"
+    }
+  ],
+  "mutations": 0
+}

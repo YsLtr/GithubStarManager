@@ -42,6 +42,8 @@ import type { FullSyncMeta, RepoCache, RepoData } from './types';
 import { currentGeneration, ifCurrent } from './lifecycle';
 import { isDesktop } from './utils';
 import { mountAccountGuard } from './ui/accountBanner';
+import { numericRepoId, repoFullName, repoTarget } from './api/repoTarget';
+import { collectStarredChecks } from './api/repositories';
 
 interface RemoteStar {
   repoId: string;
@@ -71,6 +73,7 @@ const PROBE_COOLDOWN_MS = 60_000;
 const FULL_SYNC_TTL_MS = 48 * 60 * 60 * 1000;
 let syncing = false;
 let lastProbeAt = 0;
+let scanRemaining: number | null = null;
 
 /* ================================================================
  * 同步状态（4.10.0）：**模块内单一真相**，头部 Sync 按钮是它唯一的视图。
@@ -137,7 +140,7 @@ function parseItem(raw: unknown): RemoteStar | null {
   if (!raw || typeof raw !== 'object') return null;
   const item = raw as Record<string, unknown>;
   const repo = (item.repository ?? item.repo ?? item) as Record<string, unknown>;
-  if (typeof repo.id !== 'number' || typeof repo.full_name !== 'string') return null;
+  if (typeof repo.id !== 'number' || !numericRepoId(repo.id) || !repoFullName(repo.full_name)) return null;
 
   const meta: Partial<RepoData> = { name: String(repo.full_name) };
   if (typeof repo.description === 'string') meta.desc = repo.description;
@@ -236,6 +239,7 @@ async function fetchStarredPage(tok: string, page: number, signal: AbortSignal, 
 
   const remainingHeader = resp.headers.get('x-ratelimit-remaining');
   const remaining = remainingHeader === null ? NaN : Number(remainingHeader);
+  if (Number.isFinite(remaining)) scanRemaining = scanRemaining === null ? remaining : Math.min(scanRemaining, remaining);
   if (Number.isFinite(remaining) && remaining < RATE_FLOOR) {
     throw new Error(`速率余量 ${remaining} < ${RATE_FLOOR}，本次放弃（须为逐条核对留出余量）`);
   }
@@ -339,25 +343,7 @@ function buildLocalSlices(cache: RepoCache): RemoteStar[][] | null {
   return slices;
 }
 
-/**
- * 单条核对：GET /user/starred/{owner}/{repo} → false=仍 star（204，切片误报）/ true=已取关（404）/ null=不可判定。
- * 仅切片混合模式的 local-only 嫌疑用（每条 1 点额度）；全正文模式整表即权威，不走这里。
- */
-async function checkStarredGone(tok: string, path: string): Promise<boolean | null> {
-  if (!path || !path.includes('/')) return null;
-  try {
-    const resp = await fetch(`https://api.github.com/user/starred/${path}`, {
-      cache: 'no-store',
-      headers: apiHeaders(tok),
-    });
-    if (resp.status === 204) return false;
-    if (resp.status === 404) return true;
-    if (resp.status === 401 || resp.status === 403) reportAuthIssue(resp);
-    return null;
-  } catch {
-    return null;
-  }
-}
+// 单条核对已移到 api/repositories：先按 ID 确认名称，再查询星标；解析 404 不代表取关。
 
 /**
  * 无条件整表兜底（无基线 / 超 48h TTL / 切片阀门失守共用）：第 1 页先行拿 Link 头预知总页 →
@@ -664,6 +650,7 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
     // 单遍扫描（4.0.8）：逐页 If-None-Match 一把梭——全 304 免额度早退；200 页收正文、
     // 304 页用本地切片复用缓存（starred_at 降序复算，不重拉）；无基线/超 TTL/阀门失守 → 无条件整表。
     const storedMeta = gmGet<FullSyncMeta>(STORAGE_KEYS.fullSyncMeta, {});
+    scanRemaining = null;
     const scan = await scanStarred(tok, storedMeta);
     if (scan.kind === 'unchanged') {
       console.log(`[github-star-manager] ETag 304：${(storedMeta.etags ?? []).length} 页全部无变化（免额度），跳过整表比对`);
@@ -690,23 +677,29 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
     // A. 外部 unstar：本地缓存有、远端无 → 走既有宽限管线。
     // 全正文模式：整表即权威确认；切片混合模式：嫌疑先逐条 GET 核对（204=切片平局误报保留 / 404=真取关）。
     const cacheBefore = loadRepoCache();
+    const suspects = Object.keys(cacheBefore).filter(id => !remoteMap.has(id));
+    // 全部网络核对在任何本地变更之前完成。失败/额度耗尽时不可能已搬走前几条标签。
+    const checked = scan.hybrid ? await collectStarredChecks(tok,
+      suspects.map(id => repoTarget(id, cacheBefore[id].name)), scanRemaining, response => {
+        if (response.status === 401 || response.status === 403) reportAuthIssue(response);
+      }) : [];
     /** 本轮新确认的外部取关（简报要逐条给「恢复」按钮，故留名字） */
     const unstarredItems: Array<{ repoId: string; name: string }> = [];
     let unstarred = 0;
-    for (const repoId of Object.keys(cacheBefore)) {
-      if (remoteMap.has(repoId)) continue;
+    for (const [index, repoId] of suspects.entries()) {
+      let path = cacheBefore[repoId].name || '';
       if (scan.hybrid) {
-        const gone = await checkStarredGone(tok, cacheBefore[repoId].name || '');
-        if (gone === false) {
+        const result = checked[index];
+        if (result.ok && !result.gone) {
           console.log(`[github-star-manager] 嫌疑核对：${cacheBefore[repoId].name || repoId} 仍 star（切片平局误报），保留`);
           continue;
         }
-        if (gone === null) {
+        if (!result.ok) {
           console.log(`[github-star-manager] 嫌疑核对不可判定（网络/异常状态），本轮不动：${cacheBefore[repoId].name || repoId}`);
           continue;
         }
+        path = result.target.fullName;
       }
-      const path = cacheBefore[repoId].name || '';
       if (applyExternalUnstar(repoId, path)) {
         unstarred += 1;
         unstarredItems.push({ repoId, name: path.replace(/^\//, '') || repoId });
@@ -745,6 +738,7 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
       if (!scan.freshIds.has(it.repoId)) continue; // 切片条目：304 证明未变，不写不数
       const m = it.meta;
       let metaChanged = false;
+      if (m.name !== undefined && entry.name !== m.name) { entry.name = m.name; metaChanged = true; }
       if (m.desc !== undefined && entry.desc !== m.desc) { entry.desc = m.desc; metaChanged = true; }
       if (m.lang !== undefined && entry.lang !== m.lang) { entry.lang = m.lang; metaChanged = true; }
       if (m.stars !== undefined && entry.stars !== m.stars) { entry.stars = m.stars; metaChanged = true; }
@@ -755,6 +749,14 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
       if (m.isTemplate !== undefined && entry.isTemplate !== m.isTemplate) { entry.isTemplate = m.isTemplate; metaChanged = true; }
       if (m.mirror !== undefined && entry.mirror !== m.mirror) { entry.mirror = m.mirror; metaChanged = true; }
       if (metaChanged) refreshed += 1;
+    }
+    // 切片平局核对证明仍 star 的条目也可能已改名；只在全部核对通过提交阶段刷新名称。
+    for (const [index, repoId] of suspects.entries()) {
+      const result = checked[index];
+      if (result?.ok && !result.gone && cache[repoId] && cache[repoId].name !== result.target.fullName) {
+        cache[repoId].name = result.target.fullName;
+        refreshed += 1;
+      }
     }
     saveRepoCache(cache);
 
