@@ -101,6 +101,12 @@
   必须**分片建好再一次 `replaceChildren`**（清空那一刻网格为空 ⇒ 整页只剩一屏高 ⇒ 浏览器把 `scrollY` 夹到 0，
   而重建不会还回来）。刻意**不**用「保存并还原 `scrollY`」代替。**D12 只适用于本方自己的 stars 页**
   （他人页被只读门挡住，属净收益）。
+- **D12 补 · 页码保持的不变式**：重绘不改变筛选条件时，调用方必须显式传 `applyFilters({ keepPage: true })`。
+  `applyFilters` 的默认分支渲染第 1 页，故遗漏该参数的表现就是「在第 N 页操作后回到第 1 页」。已确认的同类调用点：
+  同步后重绘（`fullSync.ts`）、卡片星标变更（`starCheck.syncCardAfterStarChange`）、导入后重绘（`index.ts` 的
+  `setAfterImportHandler`）、卡片标签增删（`ui/tagFilter.ts` 的删除按钮与 `commit()`）。筛选条件本身的变更
+  （勾选标签 / 语言 / 类型 / 排序 / 搜索）**不**传该参数，页码回第 1 页属预期。结果集收缩导致的页码越界由
+  `renderBrowsePage` 的夹取兜住，调用点无需自行判断。
 - **D18 · 窄视口（<768px）完全惰性**：语义 = 「脚本没装过」（不注入样式、不建节点、不改 DOM、不弹 UI、不发进页自动同步）。
   CSS 会自动失效、**JS 不会** ⇒ 门必须开在注入之前（`transformAndReveal()` 首行）；**挂在原生节点上的监听也是写入**，
   必须由 `lifecycle` 作用域持有、teardown 解绑（禁止用 data 标记串代替）。判据以 `grep -rn 'isDesktop()' src/` 为准。
