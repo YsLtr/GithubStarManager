@@ -15,3 +15,4 @@ tests/api/.build/
 
 # 本地 agent 临时工作区（deep-plan 等）
 .pi/
+todo
