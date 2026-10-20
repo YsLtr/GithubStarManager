@@ -11,30 +11,17 @@
 // - 每条显示**剩余时长**（列表按剩余时间升序，最该先处理的在前）。
 //
 // 样式全内联（同 exportImportMenu：TM 菜单可在任意 github.com 页面打开，不能依赖只有
-// Stars 视图才注入的样式表）。失败只报结果，不暴露写通道实现（ADR 0006）。
+// Stars 视图才注入的样式表）。**颜色/投影一律在打开时从页面现场解析**（`ui/theme.ts`）：
+// GitHub 已删掉 `--color-*` 一代变量，写旧名就会在暗色主题下命中浅色兜底（issue #1）。
+// 失败只报结果，不暴露写通道实现（ADR 0006）。
 
 import { gmRegisterMenuCommand } from '../gm';
 import { estimateBatchSeconds, restoreMany, restoreOne, type RestoreOutcome } from '../restore';
 import { formatRemaining, listRestorable, type RestorableEntry } from '../storage/pendingDelete';
 import { pushNotice } from './notifications';
+import { borderCss, resolveUiTheme } from './theme';
 
 let keyHandler: ((e: KeyboardEvent) => void) | null = null;
-
-const boxStyle: Partial<CSSStyleDeclaration> = {
-  position: 'relative',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '12px',
-  width: 'min(560px, 92vw)',
-  maxHeight: 'min(640px, 86vh)',
-  padding: '20px 22px',
-  background: 'var(--color-canvas-default, #fff)',
-  border: '1px solid var(--color-border-default, #d0d7de)',
-  borderRadius: '12px',
-  boxShadow: '0 8px 40px rgba(0,0,0,0.35)',
-  fontFamily: 'inherit',
-  color: 'var(--color-fg-default, #1f2328)',
-};
 
 function closeDialog(): void {
   if (keyHandler) {
@@ -58,25 +45,42 @@ function el<K extends keyof HTMLElementTagNameMap>(
 function openRestoreDialog(): void {
   closeDialog();
 
+  // 主题现场解析（每次打开一次）：用户可能在两次打开之间切了 light / dark
+  const theme = resolveUiTheme();
+
   const overlay = el('div', {
     position: 'fixed',
     inset: '0',
     zIndex: '9999',
-    background: 'rgba(0,0,0,0.55)',
+    background: theme.backdrop,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
   });
   overlay.className = 'gsm-restore-overlay';
 
-  const box = el('div', boxStyle);
+  const box = el('div', {
+    position: 'relative',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+    width: 'min(560px, 92vw)',
+    maxHeight: 'min(640px, 86vh)',
+    padding: '20px 22px',
+    background: theme.canvas,
+    border: borderCss('1px', theme.border),
+    borderRadius: theme.radiusLarge,
+    boxShadow: theme.floatingShadow,
+    fontFamily: 'inherit',
+    color: theme.fg,
+  });
   box.setAttribute('role', 'dialog');
   box.setAttribute('aria-label', '恢复已取消的 star');
 
   const title = el('div', { fontSize: '18px', fontWeight: '600' }, '♻️ 恢复已取消的 star');
   const hint = el(
     'div',
-    { fontSize: '13px', color: 'var(--color-fg-muted, #656d76)' },
+    { fontSize: '13px', color: theme.fgMuted },
     '取消 star 时标签与备注会被保留 24 小时，期间可以在这里恢复。超时的条目已从列表消失。',
   );
 
@@ -86,33 +90,33 @@ function openRestoreDialog(): void {
     flexDirection: 'column',
     gap: '6px',
     overflowY: 'auto',
-    border: '1px solid var(--color-border-default, #d0d7de)',
-    borderRadius: '8px',
+    border: borderCss('1px', theme.border),
+    borderRadius: theme.radiusMedium,
     padding: '8px',
     minHeight: '80px',
   });
 
   // 底部状态行 + 按钮行
-  const status = el('div', { fontSize: '13px', color: 'var(--color-fg-muted, #656d76)', minHeight: '18px' });
+  const status = el('div', { fontSize: '13px', color: theme.fgMuted, minHeight: '18px' });
   const actions = el('div', { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' });
 
   const btnPrimary: Partial<CSSStyleDeclaration> = {
     cursor: 'pointer',
     fontSize: '14px',
     padding: '6px 14px',
-    borderRadius: '6px',
-    border: '1px solid var(--color-border-default, #d0d7de)',
-    background: 'var(--color-btn-primary-bg, #1f883d)',
-    color: '#fff',
+    borderRadius: theme.radiusMedium,
+    border: borderCss('1px', theme.btnPrimaryBorder),
+    background: theme.btnPrimaryBg,
+    color: theme.btnPrimaryFg,
   };
   const btnPlain: Partial<CSSStyleDeclaration> = {
     cursor: 'pointer',
     fontSize: '14px',
     padding: '6px 14px',
-    borderRadius: '6px',
-    border: '1px solid var(--color-border-default, #d0d7de)',
-    background: 'var(--color-btn-bg, #f6f8fa)',
-    color: 'var(--color-btn-text, #1f2328)',
+    borderRadius: theme.radiusMedium,
+    border: borderCss('1px', theme.btnBorder),
+    background: theme.btnBg,
+    color: theme.btnFg,
   };
 
   const btnAll = el('button', btnPlain, '全选');
@@ -136,7 +140,7 @@ function openRestoreDialog(): void {
     cursor: 'pointer',
     fontSize: '20px',
     lineHeight: '1',
-    color: 'var(--color-fg-muted, #656d76)',
+    color: theme.fgMuted,
   }, '×');
   (close as HTMLButtonElement).type = 'button';
   (close as HTMLButtonElement).setAttribute('aria-label', '关闭');
@@ -168,7 +172,7 @@ close.addEventListener('click', () => {
     if (rows.size === 0 && !list.querySelector('.gsm-restore-empty')) {
       const empty = el(
         'div',
-        { fontSize: '13px', color: 'var(--color-fg-muted, #656d76)', padding: '8px' },
+        { fontSize: '13px', color: theme.fgMuted, padding: '8px' },
         '当前没有可恢复的条目。'
       );
       empty.className = 'gsm-restore-empty';
@@ -183,12 +187,17 @@ close.addEventListener('click', () => {
       alignItems: 'center',
       gap: '10px',
       padding: '6px 8px',
-      borderRadius: '6px',
+      borderRadius: theme.radiusMedium,
+      // `transparent` 是**几何占位**（与列表容器的 1px 描边对齐，不额外吃内边距），不是主题色。
+      // D35 只禁颜色字面量；CSS 关键字的 transparent 表达「没有颜色」。这里没有任何状态会改它
+      // （行不响应 hover，勾选态只体现在 checkbox 上）—— 别再照抄成「hover 用」。
       border: '1px solid transparent',
     });
 
     const cb = document.createElement('input');
     cb.type = 'checkbox';
+    // 原生 checkbox 的选中色由主题 token 决定：暗色主题下默认的亮蓝白勾会与深底打架
+    cb.style.accentColor = theme.checked;
     cb.addEventListener('change', () => {
       if (cb.checked) checked.add(entry.repoId);
       else checked.delete(entry.repoId);
@@ -202,13 +211,13 @@ close.addEventListener('click', () => {
     if (entry.hasNote) marks.push('备注');
     const extra = el(
       'span',
-      { flex: '0 0 auto', fontSize: '12px', color: 'var(--color-fg-muted, #656d76)' },
+      { flex: '0 0 auto', fontSize: '12px', color: theme.fgMuted },
       marks.join(' · '),
     );
 
     const remain = el(
       'span',
-      { flex: '0 0 auto', fontSize: '12px', color: 'var(--color-fg-muted, #656d76)', minWidth: '56px', textAlign: 'right' },
+      { flex: '0 0 auto', fontSize: '12px', color: theme.fgMuted, minWidth: '56px', textAlign: 'right' },
       `剩 ${formatRemaining(entry.remainingMs)}`,
     );
 
@@ -329,7 +338,7 @@ close.addEventListener('click', () => {
   if (entries.length === 0) {
     const empty = el(
       'div',
-      { fontSize: '13px', color: 'var(--color-fg-muted, #656d76)', padding: '8px' },
+      { fontSize: '13px', color: theme.fgMuted, padding: '8px' },
       '当前没有可恢复的条目。'
     );
     empty.className = 'gsm-restore-empty';

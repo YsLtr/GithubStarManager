@@ -27,6 +27,7 @@ import {
 } from '../storage/exportImport';
 import { hasApiData } from '../storage/repoCache';
 import { pushNotice } from './notifications';
+import { borderCss, resolveUiTheme, tintOver } from './theme';
 
 /** 导入完成后的收尾动作（index.ts 注入：**仅**在 Stars 页重绘，不触发同步）。放在注入里是为了让 UI 层不反向依赖 index.ts 的初始化顺序 */
 type AfterImportHandler = (report: ImportReport) => void;
@@ -194,6 +195,9 @@ function pickFile(): void {
     if (file) importFromFile(file);
   });
 
+  // 主题现场解析（每次打开一次）：弹窗样式全内联，颜色只能从当前页面取（issue #1）
+  const theme = resolveUiTheme();
+
   /* ---- 遮罩层 ---- */
   const overlay = document.createElement('div');
   overlay.className = 'gsm-import-overlay';
@@ -201,7 +205,7 @@ function pickFile(): void {
     position: 'fixed',
     inset: '0',
     zIndex: '9999',
-    background: 'rgba(0,0,0,0.55)',
+    background: theme.backdrop,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -220,11 +224,14 @@ function pickFile(): void {
     gap: '14px',
     width: 'min(480px, 86vw)',
     padding: '40px 28px',
-    background: 'var(--color-canvas-default, #fff)',
-    border: '2px dashed var(--color-border-default, #d0d7de)',
-    borderRadius: '12px',
-    boxShadow: '0 8px 40px rgba(0,0,0,0.35)',
+    background: theme.canvas,
+    border: borderCss('2px', theme.border, 'dashed'),
+    borderRadius: theme.radiusLarge,
+    boxShadow: theme.floatingShadow,
     fontFamily: 'inherit',
+    // 面板自己定色，不靠继承：继承值会随页面主题实时变，而底色是开窗那一刻的快照
+    // ⇒ 中途切主题会得到「深底 + 深字」（真机实测过）
+    color: theme.fg,
     textAlign: 'center',
     transition: 'border-color 0.15s, background-color 0.15s',
   } as Partial<CSSStyleDeclaration>);
@@ -234,7 +241,7 @@ function pickFile(): void {
   Object.assign(title.style, {
     fontSize: '20px',
     fontWeight: '600',
-    color: 'var(--color-fg-default, #1f2328)',
+    color: theme.fg,
   } as Partial<CSSStyleDeclaration>);
 
   const hint = document.createElement('div');
@@ -242,7 +249,7 @@ function pickFile(): void {
   hint.textContent = '把导出的 JSON 文件拖到这里，或点击下方按钮选择文件';
   Object.assign(hint.style, {
     fontSize: '14px',
-    color: 'var(--color-fg-muted, #656d76)',
+    color: theme.fgMuted,
   } as Partial<CSSStyleDeclaration>);
 
   const pick = document.createElement('button');
@@ -252,10 +259,10 @@ function pickFile(): void {
     cursor: 'pointer',
     fontSize: '15px',
     padding: '8px 22px',
-    borderRadius: '6px',
-    border: '1px solid var(--color-border-default, #d0d7de)',
-    background: 'var(--color-btn-bg, #f6f8fa)',
-    color: 'var(--color-btn-text, #1f2328)',
+    borderRadius: theme.radiusMedium,
+    border: borderCss('1px', theme.btnBorder),
+    background: theme.btnBg,
+    color: theme.btnFg,
   } as Partial<CSSStyleDeclaration>);
   // 页面内真实点击 = transient user activation，这里 click() 才能唤起文件选择器
   pick.addEventListener('click', () => input.click());
@@ -273,7 +280,7 @@ function pickFile(): void {
     cursor: 'pointer',
     fontSize: '20px',
     lineHeight: '1',
-    color: 'var(--color-fg-muted, #656d76)',
+    color: theme.fgMuted,
   } as Partial<CSSStyleDeclaration>);
   close.addEventListener('click', () => closeImportDialog());
 
@@ -283,8 +290,15 @@ function pickFile(): void {
   /* ---- 拖拽：drop 不需要 user activation，DataTransfer 直接给 File ---- */
   let dragDepth = 0;
   const highlight = (on: boolean): void => {
-    box.style.borderColor = on ? 'var(--color-accent-emphasis, #0969da)' : 'var(--color-border-default, #d0d7de)';
-    box.style.backgroundColor = on ? 'var(--color-accent-subtle, #ddf4ff)' : 'var(--color-canvas-default, #fff)';
+    // 空串在这里的语义是「撤销这条 longhand」⇒ 回到创建时 shorthand 写下的值。
+    // 所以**必须无条件写**：若像别处那样「取不到就不写」，highlight(true) 写进去的强调色
+    // 会永久粘住（dragleave 时无从恢复）。
+    // 底色同理不能直接写 `accentBg`：暗色主题下它是 alpha 色，直接铺会让面板在拖拽时
+    // 变半透明（`tintOver` 把语义色盖在不透明 canvas 上）。
+    box.style.borderColor = on ? theme.accentFg : theme.border;
+    const paint = tintOver(theme.canvas, on ? theme.accentBg : '');
+    box.style.backgroundColor = paint.background;
+    box.style.backgroundImage = paint.backgroundImage;
     hint.textContent = on ? '松手开始导入' : '把导出的 JSON 文件拖到这里，或点击下方按钮选择文件';
   };
   overlay.addEventListener('dragenter', (e) => {

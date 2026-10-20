@@ -12,8 +12,11 @@
 // 用户 2026-10-02 判定过中间的 Primer `Toast` 版「与卡片格格不入」，**不要**回退到那一族。
 // 样式**全内联 + transition**（不用 keyframes、不依赖只有 Stars 视图才注入的样式表）：
 // 同步简报可能出现在任意 github.com 页面（如详情页手动同步）。
+// **配色一律从当前页面现场解析**（`ui/theme.ts` 的 `resolveUiTheme()`）：GitHub 已把
+// `--color-*` 一代变量整体改名，写死字面量就会在暗色主题下退回浅色（issue #1）。
 import { createScope, type LifecycleScope } from '../lifecycle';
 import { isDesktop } from '../utils';
+import { borderCss, resolveUiTheme, tintOver } from './theme';
 type NoticeKind = 'info' | 'warn' | 'success' | 'danger';
 
 interface NoticeOptions {
@@ -48,7 +51,7 @@ const SLIDE_MS = 180;
 const EASE_IN = 'cubic-bezier(0.22, 0.61, 0.36, 1)';
 const EASE_OUT = 'cubic-bezier(0.55, 0.06, 0.68, 0.19)';
 
-/* ---------------- GitHub（Primer）观感：取值全部来自官方来源 ---------------- */
+/* ---------------- GitHub（Primer）观感：取值全部来自当前页面 ---------------- */
 //
 // 4.9.1 改口径：观感从 Primer `Toast`（**浮动** toast 族，48px 满饱和图标条 + 三层重投影）
 // 换成 GitHub 自己的 `.flash`（**内联消息**族）——后者与本脚本既有 UI 同族：1px 真描边、
@@ -56,51 +59,25 @@ const EASE_OUT = 'cubic-bezier(0.55, 0.06, 0.68, 0.19)';
 // 对照的既有 UI：`.stars-grid-card`（`1px solid var(--borderColor-default)` + 6px + hover `0 1px 3px`）、
 // `.gsm-setup-banner`（同描边/圆角，`padding: 12px 16px`）、`restoreMenu` 的按钮（14px / `6px 14px`）。
 //
-// - 底 / 描边 / 图标色 = 线上 `.flash` 家族的**成套配对**（逐条抄自 github.com 当前样式表）：
-//   `.flash`        → `bgColor-accent-muted`    + `borderColor-accent-muted`    + `fgColor-accent`
-//   `.flash-warn`   → `bgColor-attention-muted` + `borderColor-attention-muted` + `fgColor-attention`
-//   `.flash-error`  → `bgColor-danger-muted`    + `borderColor-danger-muted`    + `fgColor-danger`
-//   `.flash-success`→ `bgColor-success-muted`   + `borderColor-success-muted`   + `fgColor-success`
-//   实测值：#ddf4ff/#54aeff66/#0969da、#fff8c5/#d4a72c66/#9a6700、#ffebe9/#ff818266/#d1242f、#dafbe1/#4ac26b66/#1a7f37。
-// - 只走 GitHub 的 CSS 变量（实测 `:root` 上存在）+ 浅色兜底 ⇒ 自动跟随 light / dark / dimmed。
+// - 底 / 描边 / 图标色 = 线上 `.flash` 家族的**成套配对**，全部由 `resolveUiTheme()`
+//   从当前页面现场解析（同名 token：`bgColor-*-muted` + `borderColor-*-muted` + `fgColor-*`）：
+//   `.flash`        → accent     · `.flash-warn` → attention
+//   `.flash-error`  → danger     · `.flash-success` → success
+//   实测（2026-10-20 暗色主题）：#388bfd1a/#388bfd66/#4493f8 等，天然跟随 light / dark / dimmed。
 // - 图标是 `@primer/octicons` 的 `build/data.json` 里 16px **细线**版 path（官方数据直取，非手绘）。
 // - 入场时长/缓动沿用 `.Toast--animateIn` 的 0.18s + 官方缓动（`.flash` 本身没有入场动画）。
 // - 内边距取 **12px 16px**（与 `.gsm-setup-banner` 一致），不取 `.flash` 的 20px：3s 瞬态通知要更紧凑。
 
-/** 各语义的成套配色（底 / 描边 / 图标色）+ 细线图标 path —— 与 `.flash` 家族一一对应 */
-const KIND_STYLE: Record<NoticeKind, { bg: string; border: string; fg: string; icon: string }> = {
-  info: {
-    bg: 'var(--bgColor-accent-muted, #ddf4ff)',
-    border: 'var(--borderColor-accent-muted, #54aeff66)',
-    fg: 'var(--fgColor-accent, #0969da)',
-    icon: 'M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z',
-  },
-  success: {
-    bg: 'var(--bgColor-success-muted, #dafbe1)',
-    border: 'var(--borderColor-success-muted, #4ac26b66)',
-    fg: 'var(--fgColor-success, #1a7f37)',
-    icon: 'M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm1.5 0a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm10.28-1.72-4.5 4.5a.75.75 0 0 1-1.06 0l-2-2a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018l1.47 1.47 3.97-3.97a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042Z',
-  },
-  warn: {
-    bg: 'var(--bgColor-attention-muted, #fff8c5)',
-    border: 'var(--borderColor-attention-muted, #d4a72c66)',
-    fg: 'var(--fgColor-attention, #9a6700)',
-    icon: 'M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z',
-  },
-  danger: {
-    bg: 'var(--bgColor-danger-muted, #ffebe9)',
-    border: 'var(--borderColor-danger-muted, #ff818266)',
-    fg: 'var(--fgColor-danger, #d1242f)',
-    icon: 'M2.344 2.343h-.001a8 8 0 0 1 11.314 11.314A8.002 8.002 0 0 1 .234 10.089a8 8 0 0 1 2.11-7.746Zm1.06 10.253a6.5 6.5 0 1 0 9.108-9.275 6.5 6.5 0 0 0-9.108 9.275ZM6.03 4.97 8 6.94l1.97-1.97a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l1.97 1.97a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-1.97 1.97a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734L6.94 8 4.97 6.03a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018Z',
-  },
+/** 细线图标 path（与 `.flash` 家族一一对应）；配色不在这里，见 `resolveUiTheme().notice` */
+const KIND_ICON: Record<NoticeKind, string> = {
+  info: 'M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z',
+  success: 'M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm1.5 0a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm10.28-1.72-4.5 4.5a.75.75 0 0 1-1.06 0l-2-2a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018l1.47 1.47 3.97-3.97a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042Z',
+  warn: 'M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z',
+  danger: 'M2.344 2.343h-.001a8 8 0 0 1 11.314 11.314A8.002 8.002 0 0 1 .234 10.089a8 8 0 0 1 2.11-7.746Zm1.06 10.253a6.5 6.5 0 1 0 9.108-9.275 6.5 6.5 0 0 0-9.108 9.275ZM6.03 4.97 8 6.94l1.97-1.97a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l1.97 1.97a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-1.97 1.97a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734L6.94 8 4.97 6.03a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018Z',
 };
-/** 默认（次要）按钮的静置阴影；token 与兜底值同形 */
-const BTN_SHADOW = 'var(--button-default-shadow-resting, 0 1px 0 0 #1f23280a)';
 /** 关闭按钮的 ×（Octicon `x`，细线） */
 const ICON_X =
   'M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z';
-/** 容器阴影：取 `.stars-grid-card:hover` 的 `0 1px 3px rgba(0, 0, 0, 0.08)`（卡片量级，不是悬浮弹窗量级） */
-const CARD_SHADOW = '0 1px 3px rgba(0, 0, 0, 0.08)';
 /** GitHub 按钮的过渡（`.btn` 的 `80ms cubic-bezier(0.33, 1, 0.68, 1)`） */
 const BTN_TRANSITION = 'color 80ms cubic-bezier(0.33, 1, 0.68, 1), background-color 80ms cubic-bezier(0.33, 1, 0.68, 1), border-color 80ms cubic-bezier(0.33, 1, 0.68, 1)';
 
@@ -295,7 +272,9 @@ function removeItem(item: Item): void {
 
 /** 组装一条 GitHub `.flash` 形态的通知：一行 `[细线图标][文本][动作按钮?][关闭]`，语义浅色底 + 1px 细描边 */
 function buildItem(text: string, kind: NoticeKind, opts: NoticeOptions): Item {
-  const style = KIND_STYLE[kind];
+  // 主题现场解析：通知能在任意 github.com 页面弹出，配色只能从当前页面取（issue #1）
+  const theme = resolveUiTheme();
+  const style = theme.notice[kind];
   const box = document.createElement('div');
   box.className = `gsm-notice gsm-notice-${kind}`;
   Object.assign(box.style, {
@@ -306,18 +285,21 @@ function buildItem(text: string, kind: NoticeKind, opts: NoticeOptions): Item {
     maxWidth: 'min(450px, 92vw)',
     padding: '12px 16px', // 与 `.gsm-setup-banner` 一致
     // 真 border（不是 Toast 的 inset box-shadow）—— 与 `.stars-grid-card` / `.gsm-setup-banner` 同手法
-    border: `1px solid ${style.border}`,
-    borderRadius: 'var(--borderRadius-medium, 0.375rem)',
-    background: style.bg,
-    boxShadow: CARD_SHADOW,
-    color: 'var(--fgColor-default, #1f2328)',
+    border: borderCss('1px', style.border),
+    borderRadius: theme.radiusMedium,
+    // 语义色在暗色主题下是**半透明**的（`--bgColor-*-muted` = rgba(...,.1)）。通知是
+    // position:fixed，会压在任意页面内容上：直接铺半透明色 ⇒ 撞上亮色图片时变成
+    // 「浅字压浅底」。所以底用页面 canvas（不透明），语义色作为一层铺上去（见 `tintOver`）。
+    ...tintOver(theme.canvas, style.bg),
+    boxShadow: theme.restingShadow,
+    color: theme.fg,
     fontFamily: 'inherit',
     fontSize: 'var(--text-body-size-medium, 0.875rem)',
     lineHeight: '1.5',
   } as Partial<CSSStyleDeclaration>);
 
   // 图标：16px 细线 octicon，着该语义的强调色（`.flash-warn .octicon { color: var(--fgColor-attention) }`）
-  const icon = octicon(style.icon);
+  const icon = octicon(KIND_ICON[kind]);
   icon.classList.add('gsm-notice-icon');
   icon.style.flex = '0 0 auto';
   icon.style.color = style.fg;
@@ -339,8 +321,8 @@ function buildItem(text: string, kind: NoticeKind, opts: NoticeOptions): Item {
     btn.textContent = opts.actionLabel;
     // 默认（次要）按钮的常态值 —— 同时作为 hover/active 结束后的恢复值
     const rest = {
-      background: 'var(--button-default-bgColor-rest, #f6f8fa)',
-      borderColor: 'var(--button-default-borderColor-rest, #d1d9e0)',
+      background: theme.btnBg,
+      borderColor: theme.btnBorder,
     };
     Object.assign(btn.style, {
       flex: '0 0 auto',
@@ -351,19 +333,19 @@ function buildItem(text: string, kind: NoticeKind, opts: NoticeOptions): Item {
       fontWeight: '500',
       lineHeight: '20px',
       whiteSpace: 'nowrap',
-      borderRadius: 'var(--borderRadius-medium, 0.375rem)',
+      borderRadius: theme.radiusMedium,
       borderWidth: '1px',
       borderStyle: 'solid',
-      boxShadow: BTN_SHADOW,
+      boxShadow: theme.btnShadow,
       transition: BTN_TRANSITION,
-      color: 'var(--button-default-fgColor-rest, #25292e)',
+      color: theme.btnFg,
       ...rest,
     } as Partial<CSSStyleDeclaration>);
     withHover(
       btn,
       rest,
-      { ...rest, background: 'var(--button-default-bgColor-hover, #eff2f5)' },
-      { ...rest, background: 'var(--button-default-bgColor-active, #e6eaef)' },
+      { ...rest, background: theme.btnBgHover },
+      { ...rest, background: theme.btnBgActive },
     );
     btn.addEventListener('click', () => {
       btn.disabled = true;
@@ -419,7 +401,7 @@ function buildItem(text: string, kind: NoticeKind, opts: NoticeOptions): Item {
     complete(doneText?: string): void {
       if (doneText) label.textContent = doneText;
       label.style.textDecoration = 'line-through';
-      label.style.color = 'var(--fgColor-muted, #59636e)';
+      label.style.color = theme.fgMuted;
       buttonWrap?.remove();
       item.buttonWrap = null;
       item.remaining = NOTICE_LIFETIME_MS; // 重置 3s（ADR 0003）

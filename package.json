@@ -1,14 +1,14 @@
 {
   "name": "github-star-manager",
   "private": true,
-  "version": "4.19.2",
+  "version": "4.19.3",
   "type": "module",
   "description": "GitHub Stars 页面优化管理油猴脚本",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run build",
+    "check": "npm run typecheck && node scripts/verify-theme-tokens.cjs && npm run build",
     "test:exportimport": "node tests/exportImport/prepare.cjs && node tests/exportImport/run.cjs",
     "test:api": "node tests/api/prepare.mjs && node tests/api/run.cjs"
   },
