@@ -680,7 +680,7 @@ filterState.page          // 本地浏览页码（1-based）
 filterState.totalPages    // ceil(count / NATIVE_PAGE_SIZE)
 ```
 
-是否处于筛选态用 `hasActiveFilter()` 派生（tags/langs/types/search 任一激活）；sort/direction 属浏览状态，不算筛选、不进信息条。**不变式**：凡不改变筛选条件的重绘都必须显式传 `applyFilters({ keepPage: true })` —— 同步后重绘、卡片星标变更、导入后重绘、卡片标签增删（`ui/tagFilter.ts` 的删除按钮与 `commit()`）都属此类；遗漏该参数的表现就是「在第 N 页操作后回到第 1 页」（`applyFilters` 的默认分支渲染第 1 页）。筛选条件本身的变更（勾选标签 / 语言 / 类型 / 排序 / 搜索）不传该参数，回第 1 页属预期；结果集收缩导致的页码越界由 `renderBrowsePage` 的夹取兜住，调用点无需自行判断。
+是否处于筛选态用 `hasActiveFilter()` 派生（tags/langs/types/search 任一激活）；sort/direction 属浏览状态，不算筛选、不进信息条。**不变式**：凡不改变筛选条件的重绘都必须显式传 `applyFilters({ keepPage: true })` —— 同步后重绘、卡片星标变更、导入后重绘、卡片标签增删（`ui/tagFilter.ts` 的删除按钮与 `commit()`）都属此类；遗漏该参数的表现就是「在第 N 页操作后回到第 1 页」（`applyFilters` 的默认分支渲染第 1 页）。筛选条件与排序条件的变更（勾选标签 / 语言 / 类型 / 排序键 / 排序方向 / 搜索）不传该参数，回第 1 页属预期，且排序不参与 `hasActiveFilter()` 判定；结果集收缩导致的页码越界由 `renderBrowsePage` 的夹取兜住，调用点无需自行判断。该不变式的回归守卫为 `tests/diag/assert-keep-page.js`（安装与注入方式见文件头；改夹具或改 `renderBrowsePage` 后须重跑）。
 
 用对象而不是 `export let`，是因为 ESM 的导入绑定对导入方是只读的，无法跨模块重新赋值。
 
