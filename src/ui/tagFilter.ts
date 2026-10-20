@@ -236,8 +236,8 @@ export function renderTags(tagsContainer: HTMLElement, opts: TagRenderOptions = 
       saveTags(repoId, current);
       renderTags(tagsContainer, opts);
       if (filterToggle) {
-        // applyFilters 会按需创建/收窄/撤条（4.3.5 删冗余直调）
-        applyFilters();
+        // applyFilters 会按需创建/收窄/撤条（4.3.5 删冗余直调）；保存标签不改变筛选条件 ⇒ keepPage
+        applyFilters({ keepPage: true });
       }
     });
 
@@ -269,8 +269,8 @@ export function renderTags(tagsContainer: HTMLElement, opts: TagRenderOptions = 
         saveTags(repoId, current);
         renderTags(tagsContainer, opts);
         if (filterToggle) {
-          // 新标签入库后 applyFilters→refreshTagFilterBar 会建条/收窄（4.3.5 删冗余直调）
-          applyFilters();
+          // 新标签入库后 applyFilters→refreshTagFilterBar 会建条/收窄（4.3.5 删冗余直调）；条件未变 ⇒ keepPage
+          applyFilters({ keepPage: true });
         }
       } else {
         input.remove();
