@@ -680,7 +680,7 @@ filterState.page          // 本地浏览页码（1-based）
 filterState.totalPages    // ceil(count / NATIVE_PAGE_SIZE)
 ```
 
-是否处于筛选态用 `hasActiveFilter()` 派生（tags/langs/types/search 任一激活）；sort/direction 属浏览状态，不算筛选、不进信息条。**不变式**：筛选条件未变而结果集变化的重绘，必须显式传 `applyFilters({ keepPage: true })` —— 同步后重绘、卡片星标变更、导入后重绘、卡片标签增删（`ui/tagFilter.ts` 的删除按钮与 `commit()`）都属此类；遗漏该参数的表现就是「在第 N 页操作后回到第 1 页」（`applyFilters` 的默认分支渲染第 1 页）。筛选条件本身的变更（勾选标签 / 语言 / 类型 / 搜索）与排序条件的变更（排序键 / 排序方向）不传该参数，回第 1 页属预期，且排序不参与 `hasActiveFilter()` 判定；结果集收缩导致的页码越界由 `renderBrowsePage` 的夹取兜住，调用点无需自行判断。回归守卫 `tests/diag/assert-keep-page.js` 覆盖的调用点是 `ui/tagFilter.ts` 的删除按钮与 `commit()`，不覆盖同步后重绘、导入后重绘与星标变更三个调用点（安装与注入方式见该文件头，夹具由 `tests/diag/gen-keep-page-harness.cjs` 生成）。
+是否处于筛选态用 `hasActiveFilter()` 派生（tags/langs/types/search 任一激活）；sort/direction 属浏览状态，不算筛选、不进信息条。**不变式**：筛选条件未变的重绘（无论命中成员集合是否变化 —— 同步只更新可见元数据时成员集合不变，同样保持当前页），必须显式传 `applyFilters({ keepPage: true })` —— 同步后重绘、卡片星标变更、导入后重绘、卡片标签增删（`ui/tagFilter.ts` 的删除按钮与 `commit()`）都属此类；遗漏该参数的表现就是「在第 N 页操作后回到第 1 页」（`applyFilters` 的默认分支渲染第 1 页）。筛选条件本身的变更（勾选标签 / 语言 / 类型 / 搜索）与排序条件的变更（排序键 / 排序方向）不传该参数，回第 1 页属预期，且排序不参与 `hasActiveFilter()` 判定；结果集收缩导致的页码越界由 `renderBrowsePage` 的夹取兜住，调用点无需自行判断。回归守卫 `tests/diag/assert-keep-page.js` 覆盖的调用点是 `ui/tagFilter.ts` 的删除按钮与 `commit()`，不覆盖同步后重绘、导入后重绘与星标变更三个调用点（安装与注入方式见该文件头，夹具由 `tests/diag/gen-keep-page-harness.cjs` 生成）。
 
 用对象而不是 `export let`，是因为 ESM 的导入绑定对导入方是只读的，无法跨模块重新赋值。
 

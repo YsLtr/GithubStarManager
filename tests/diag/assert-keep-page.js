@@ -93,7 +93,7 @@ return (async function () {
     assertFirstCard('删标签', cardBefore);
     if (pillTexts().includes(TAG)) out.errors.push('删标签后胶囊仍在: ' + TAG);
 
-    // ③ 点标签胶囊 = 筛选条件变更 ⇒ 回第 1 页（与 ①② 的保页码形成对照，证明断言不是恒真）
+    // ③ 点标签胶囊 = 筛选条件变更 ⇒ 回第 1 页（与 ①② 形成对照：保页码只对条件未变的重绘成立）
     if (!(await addTag(TAG))) return { errors: out.errors.concat(['反证阶段加标签失败']), steps: out.steps };
     const target = qa('.stars-grid-container .stars-grid-card .stars-tag')
       .find((e) => e.textContent.replace('×', '').trim() === TAG);

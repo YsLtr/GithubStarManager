@@ -29,9 +29,19 @@ window.__gmStore = {
 ${cacheEntries.join(',\n')}
   },
   stars_full_sync_meta: { lastFullSyncAt: Date.now(), count: ${REPOS}, etags: ['W/"x"'] },
-  stars_pending_delete: {},
+  'stars_tags_999': {},
+  'stars_notes_999': {},
+  'stars_pending_delete_999': {},
   stars_hide_lists: true
 };
+/* 封闭夹具：gmGet 在「GM 值为默认值 + 存在 localStorage 镜像」时会把镜像迁回 GM（src/gm.ts:66-68），
+   上次运行留在 file:// 源里的 probe-* 标签会因此渗进本次读取。开局清掉镜像，保证每次运行起点一致。 */
+try {
+  const lsPrefix = 'github-star-manager::';
+  for (const key of Object.keys(localStorage)) {
+    if (key.startsWith(lsPrefix)) localStorage.removeItem(key);
+  }
+} catch { /* 无 localStorage 时忽略 */ }
 window.__gmLog = [];
 window.__gmMenus = [];
 window.GM_getValue = function (key, def) { window.__gmLog.push('getValue:' + key); return key in window.__gmStore ? window.__gmStore[key] : def; };
