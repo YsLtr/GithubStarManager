@@ -26,9 +26,10 @@ pnpm install        # 安装依赖
 pnpm dev            # 开发服务器：改动走 HMR，无需手动往 Tampermonkey 里粘贴
 pnpm build          # 产出 dist/github-star-manager.user.js
 pnpm typecheck      # tsc --noEmit
-pnpm check          # typecheck + build
+pnpm check          # typecheck + 内联 UI 配色守卫 + build
 pnpm test:exportimport   # 导入导出纯逻辑断言（无需浏览器；项数以实际输出为准，别写死数字）
 pnpm test:api            # ID 寻址、写通道、队列、恢复与同步回归（mock 网络，不读真实 token）
+node scripts/verify-theme-tokens.cjs             # 内联 UI 配色守卫（已含在 pnpm check 里，可单独跑）
 node scripts/verify-css.cjs                      # 产物 CSS 与源 CSS 等价性
 node scripts/ratelimit-probe.cjs --repo <me/repo> # 限流实测探针（默认 dry-run，零网络请求）
 ```
@@ -186,14 +187,30 @@ src/
     pendingDelete.ts  待删除区（unstar 宽限期，含标签/备注/名字备份 + listRestorable/formatRemaining 供恢复窗口；4.17.0 新增 addPendingFromImport —— 导入路径专用，空不覆盖非空、非空整体替换、不重置 unstarredAt）
     exportImport.ts   导入导出**纯逻辑**（4.7.0；**4.17.0**：导出 = tags/notes + 最小标识 repoNames、导入按「仓库在不在整表缓存里」逐仓库分派）：buildExportPackage / validateExportPackage / applyImportPackage；不碰 DOM、不弹对话框
   ui/
+    theme.ts          内联 UI 的主题解析（**4.19.3 新增**，issue #1）：`resolveUiTheme()` 在**打开 UI 的那一刻**
+                      从页面现场取值，返回 `UiTheme`（canvas/fg/fgMuted/border/accent*/btn*/checked/backdrop/
+                      shadow*/radius*/notice[4 种 tone]）。三级来源：① `:root` 上的当前一代 token
+                      （`--bgColor-*` / `--fgColor-*` / `--borderColor-*` / `--button-*` / `--overlay-*` / `--shadow-*`）；
+                      ② 取不到就**采样 GitHub 原生节点**（`[role=dialog]` / `.Box` / `.btn` / `.btn-primary` /
+                      `a[href]` / `.Overlay-backdrop` / `.flash*`）的 computed style；③ 两者皆空 ⇒ 返回 `''`，
+                      调用方**跳过该属性**，**绝不编颜色**（⚠️ 别写成「继承页面」：`background` 不可继承，
+                      跳过它是**透明**，只有 `color` 会真的回到页面文字色）。`borderCss(width, color, style)` 在
+                      color 为空时退回 `currentColor`。**不缓存**（用户可能在两次打开之间切换主题）。
+                      **所有内联 UI 必须走它**，不得出现颜色字面量或 `--color-*` 旧变量（判据见 D35 与
+                      `scripts/verify-theme-tokens.cjs`）
     cards.ts          卡片构建 + 星星按钮（4.9.0：乐观翻转 → 全局队列 → 排队中再点撤销 → 失败回滚 + alert）
     notifications.ts  通知栈（4.9.0 建立 / 4.9.1 改定位与观感）：锚在全局头部下方（挂 body、随滚动重算）+ 观感照 GitHub `.flash`（语义浅色底 + 1px 细描边 + 细线图标）+ transition 滑入、3s 自动消失、悬停整区暂停、划掉完成态
                       —— **4.10.0 起容器入口带视口门**：`ensureContainer()` 在窄视口返回 null，`pushNotice` 交回空句柄（否则窄视口下同步会把整座栈懒重建出来）
+                      —— **4.19.3 起配色来自 `theme.ts`**：`KIND_ICON`（只有图标 path）与 `theme.notice[kind]`
+                      （bg/border/fg 三个 tone）分家；`BTN_SHADOW`/`CARD_SHADOW` 常量已删（改 `theme.btnShadow`/`theme.restingShadow`）
     restoreMenu.ts    TM 菜单「♻️ 恢复已取消的 star」（4.9.0）：可勾选 + 一键恢复选中 + 每行 ☆ 按钮 + 进度 + 取消
+                      （4.19.3 起全部配色取自 `theme.ts` 的 `resolveUiTheme()`）
     tagFilter.ts      标签 pill、筛选栏（原位重绘 = 共现收窄，勾选不关 popover）、pill 选中态同步、refreshTagFilterBar（候选刷新唯一入口）
     hideListsMenu.ts  TM 菜单「🙈 隐藏 Lists 区块」开关（持久键 stars_hide_lists + 标签刷新 + 门控即时生效）
     notes.ts          备注渲染与编辑
     exportImportMenu.ts  TM 菜单「📤 导出 / 📥 导入」交互层（隐藏 file input、confirm/alert、下载触发、结果提示）
+                      （4.19.3 起配色同走 `theme.ts`；虚线描边用 `borderCss('2px', theme.border, 'dashed')`，
+                      别把 style 拼进 width 参数 —— 那会产出无效简写并静默退回 `currentColor` 实线）
     accountBanner.ts   归属不符警告横幅（4.11.0）：`div.gsm-account-banner`（role=alert）+ 关闭态持久化 + mountAccountGuard。
                       落位**委托** index.ts 的 placeSetupBanner（注册式回调，避免 index↔ui 成环）；
                       独立 class（**不复用** `.gsm-setup-banner` —— 那类名有 4 条撤除路径）。**不碰判定逻辑**（在 accountGuard.ts）
@@ -214,6 +231,18 @@ tests/exportImport/
   run.cjs                 导入导出纯逻辑断言：导出清洗 / 校验拒绝路径 / 合并语义 / 幂等 / 用户隔离
 scripts/
   verify-css.cjs      校验构建产物中的 CSS 与源 CSS 等价
+  verify-theme-tokens.cjs  内联 UI 配色守卫（**4.19.3 新增，已接入 `pnpm check`**）：① 旧一代 `--color-*` 变量
+                      **默认拒绝、白名单放行**（`--color-ansi-*` / `-prettylights-*` / `-marketing-*` / `-mktg-*` /
+                      `-project-*` / `-workflow-card-*` / `-notifications-row-*` / `-bg-discussions-row-*` /
+                      `-text-white` / `-user-mention-*` / `-diff-blob-selected-line-highlight-*` 之外一律算违规）；
+                      早先是按前缀枚举，实测漏了 `topic-tag` / `diff-blob` / `select-menu` / `state` / `markdown` /
+                      `label` / `pr-state` / `avatar` / `alert` / `counter` / `tabnav` 共 11 个真实存在过的分组，
+                      issue #1 的原始写法能原样过闸；② 禁止 `src/ui/**` 出现颜色字面量（`#hex` 的 3/4/6/8 四档、
+                      `#${` 模板拼接、`rgb(` / `hsl(`、常见具名色；`gray`/`grey` 故意排除以免误伤
+                      `--color-marketing-gray-*`），`src/ui/theme.ts` 白名单豁免 —— 它只做**读取**，不写颜色；
+                      ③ 注释剥离是**引号感知**的（`'a // b --color-x'` 不被截断、`'https://…'` 不被误切），
+                      整行注释直接跳过。新增内联 UI 时若守卫报错，正解是把 token 加进 `UiTheme`，
+                      不是就地写 `#hex`
   ratelimit-probe.cjs REST 变异请求限流实测探针（4.9.0，阶段 A）：默认 `--dry-run` **零网络请求**，
                       发请求须显式 `--run`；硬约束见 `docs/research-ratelimit-protocol.md` §4.7
 ```
@@ -612,7 +641,7 @@ ID 不可见、名称复用到不同 ID、或目标完全缺失时明确失败�
 - `restoreMany()` **逐条 await**（严格串行）、执行中**可取消**（只停后续，已发出的不回滚）、**不自动重试**、无数量阈值；限流或凭证失效停止后续。
 - TM 菜单「♻️ 恢复已取消的 star（24h 内）」= 可勾选 + 一键「恢复选中」+ **每行一个 ☆ 恢复 按钮**；`confirm` 显示条数与预估耗时（≥1s/条）。
 - **变化简报**（`emitSyncReport`）：任何 `runFullSync` 路径收尾都弹；口径只有「取消 star / 新增 / 恢复」，**元数据刷新只进控制台**；无变化也弹「无变化（共 N 个 star）」（304 免额度早退路径同样弹）；**不判重**；每条外部取关**各弹一条带「恢复」按钮的通知**。
-- **通知栈**（`ui/notifications.ts`）：常挂 `document.body`（**不是** header 子节点），锚在**全局头部下方**（`div.header-wrapper.js-header-wrapper` 底边 + 8px，滚动/改窗口时 rAF 重算，头部滚出视口后回落视口顶部 8px）、新条目从底部追加、无条数上限、3s 自动消失、**悬停整个区域暂停计时**、带动作按钮的条目成功后原地划掉并重置 3s。**观感 = GitHub 自己的 `.flash`**（内联消息族）：`bgColor-*-muted` 浅色底 + `borderColor-*-muted` 1px 真描边 + 16px 细线 octicon 着 `fgColor-*` + `KIND_STYLE` 一张表管全套；尺度对齐本脚本既有 UI（6px 圆角、`0 1px 3px rgba(0,0,0,.08)` 阴影、`12px 16px` 内边距、按钮 14px / `6px 14px`）。**不要**用 Primer `Toast` 的 48px 满饱和图标条 + 三层悬浮投影（浮动 toast 族，与卡片/横幅语言不同族）。样式全内联（可出现在任意 github.com 页面，不依赖 Stars 视图注入的样式表）。**4.10.0 起容器入口带视口门**：`ensureContainer()` 在窄视口返回 `null`，`pushNotice` 交回**空句柄**并留一条 console —— 否则窄视口下从 TM 菜单触发一次同步就会把整座栈懒重建出来（与「窄视口完全惰性」冲突）。
+- **通知栈**（`ui/notifications.ts`）：常挂 `document.body`（**不是** header 子节点），锚在**全局头部下方**（`div.header-wrapper.js-header-wrapper` 底边 + 8px，滚动/改窗口时 rAF 重算，头部滚出视口后回落视口顶部 8px）、新条目从底部追加、无条数上限、3s 自动消失、**悬停整个区域暂停计时**、带动作按钮的条目成功后原地划掉并重置 3s。**观感 = GitHub 自己的 `.flash`**（内联消息族）：`bgColor-*-muted` 浅色底 + `borderColor-*-muted` 1px 真描边 + 16px 细线 octicon 着 `fgColor-*`；**4.19.3 起这些颜色不再由本文件写死**，而在 `buildItem()` 里经 `resolveUiTheme()` 现场取（`theme.notice[kind]` + `theme.restingShadow` + `theme.btnShadow` + `theme.radiusMedium`），`KIND_ICON` 只留图标 path。尺度对齐本脚本既有 UI（`--borderRadius-medium`、`--shadow-resting-small`、`12px 16px` 内边距、按钮 14px / `6px 14px`）。**不要**用 Primer `Toast` 的 48px 满饱和图标条 + 三层悬浮投影（浮动 toast 族，与卡片/横幅语言不同族）。样式全内联（可出现在任意 github.com 页面，不依赖 Stars 视图注入的样式表）。**4.10.0 起容器入口带视口门**：`ensureContainer()` 在窄视口返回 `null`，`pushNotice` 交回**空句柄**并留一条 console —— 否则窄视口下从 TM 菜单触发一次同步就会把整座栈懒重建出来（与「窄视口完全惰性」冲突）。
 - **失败一律 `alert` 一行文字**（ADR 0003）：写失败、单条恢复失败、批量恢复的失败汇总都走 `alert`——3s 的通知承载不了「唯一可能造成数据丢失的事件」的反馈。
 - **重绘**：有增删差异或可见元数据更新就**立即** `applyFilters({keepPage:true})`——手动与自动来源一视同仁，**不再问「是否刷新」**（原先自动来源 + 最近 10s 有交互会改成可点击提示，已删除）。
 
@@ -722,6 +751,17 @@ filterState.totalPages    // ceil(count / NATIVE_PAGE_SIZE)
 - 样式必须只在 Stars 页注入：规则会改写 GitHub 的 `.Layout`（侧边栏压到 180px），在仓库详情页注入会误伤布局。
 - `vite.config.ts` 显式设置了 `build.cssTarget`：esbuild 默认会按现代 baseline 把 `@media (min-width: 768px)` 压成区间语法 `(width>=768px)`（Safari 16.4+ 才支持），降低 css target 可保留 `min-width`。
 - **隐藏 GitHub 原生区块的两个坑**：① GitHub 工具类带 `!important`（如 `.d-flex { display: flex !important }`），JS 里 `el.style.display = 'none'` 会被压过，必须 `el.style.setProperty('display', 'none', 'important')`；② 间距工具类加了 `tmp-` 前缀（`my-3` → `tmp-my-3`），纯类名选择器会静默失配。现成做法见 `dom.ts` 的 `hideListsSection()`：用语义特征（`h2.f3-light` + 文案）定位，打 `.stars-lists-hidden` 标记类，隐藏规则写在 `base.css` 第 4 节。
+- **内联 UI 的配色（D35 / 4.19.3）**：TM 菜单弹出的恢复窗口、导入大窗、通知栈**不注入样式表**（它们可能出现在任意 github.com 页面，包括没有 Stars 视图的页面），所以全部内联。这类内联 UI **一律经 `ui/theme.ts` 的 `resolveUiTheme()` 取色**：
+  - 不要去写 `var(--color-canvas-default, #fff)` 这一代变量 —— GitHub 已经删掉了整代 `--color-*`，`var()` 会静默落到兜底值。**这就是 issue #1 的根因**（暗色页面里弹窗白底黑字）。
+  - 不要为了「有个兜底」硬编码浅色 —— 暗色主题下兜底色本身就是错的。取不到就**不写该属性**。
+    ⚠️ 注意别把它说成「继承页面」：`background` **不是**可继承属性，跳过它得到的是**透明面板**（透明底 + `currentColor` 描边 + 仍然拦点击的透明遮罩）。这是规则逼出来的降级形态，不是优雅继承。
+  - **采样原生节点时有三条硬约束**（都是实机踩出来的，别退回朴素写法）：① 必须跳过脚本自己的节点（`theme.ts` 的 `OWN_UI`；收录判据 = 脚本自建**且**会命中 `NATIVE` 某个选择器，现存 9 个根：两个弹窗 / 通知栈 / 两个横幅 / 标签筛选浮层 / 三个筛选浮层）—— 两个弹窗同时在场时，后开的会采到先开那个写进去的旧主题，等于 issue #1 现象复活；② 必须逐**元素**推进而不是逐**选择器**推进，首个命中透明/无边框就继续看下一个；③ 采描边前要查 `border-style !== none`，否则 `borderTopColor` 返回 `currentColor`（拿到一道文本色的粗线）。另外 `a[href]` 的第一个命中是全站跳过导航链接（`color-fg-on-emphasis`，暗色下是白），`.btn` 的第一个命中可能是主/危险按钮 —— 两者都必须排除。⚠️ **已知缺口**：脚本在网格里自建的 `<a href>`（卡片标题、`.Link--muted` 计数、分页 `prev`/`next`）仍会命中 `accentText` 第二级；不排除整个网格是因为网格里也有原生节点，一刀切会损失正常路径的采样源。
+  - **不许做跨域兜底**：文本色不能拿面板底色兜、底色不能拿文本色兜。`checked` 与 `btnPrimaryFg` 取不到就留空（交给浏览器默认），否则会造出「白勾选框压白面板」这种硬错。
+  - **主按钮的底与前景必须同域配对**：`btnPrimaryBg` 可以退到 `btnBg`（默认面，亮色约 `#f6f8fa`），但那时 `btnPrimaryFg` **整个**要留空、让文字继承页面前景色。只对 `--fgColor-onEmphasis` 那一级设约束是不够的 —— 只缺 `--button-primary-bgColor-rest` 而 `--button-primary-fgColor-rest` 还在时，会得到白字压近白底（约 1.05:1）。这种错比 issue #1 更难发现：按钮看起来「没坏」，只是读不出来。实现里用 `primaryBgEmphasis` 标记底是否仍在强调域。
+  - 语义色在暗色主题下是**半透明**的（`--bgColor-*-muted` / `--bgColor-accent-muted` 的 token 原值是 8 位带 alpha 的十六进制，如 `#388bfd1a` = 10%、`#2ea04326` = 15%；`backgroundColor` 上读出来是 `rgba(...,.1)`）。通知是 `position:fixed`、导入窗是整屏遮罩，直接铺 alpha 色会让面板透出下面的页面内容。所以一律用 `theme.ts` 的 `tintOver(base, tint)`：底用页面 `canvas`（不透明），语义色作为 `backgroundImage` 叠一层。**两处调用点都别退回直接写 `background`**（`notifications.ts` 的通知底、`exportImportMenu.ts` 的拖拽高亮）。
+  - 新增一种语义色（例如又一种通知 tone）时，把 token 名加进 `UiTheme` 与 `resolveUiTheme()` 的解析链，再在调用点用 `theme.xxx`。
+  - `scripts/verify-theme-tokens.cjs` 会拦下「旧变量」与「颜色字面量」两种写法，它随 `pnpm check` 跑。唯一豁免是 `ui/theme.ts` 本身。
+  - 已知边界：`confirm()` / `alert()` 是浏览器原生对话框，主题由浏览器决定，脚本改不了。
 
 ## 10. 约束
 
@@ -759,6 +799,21 @@ pnpm test:exportimport   # = prepare.cjs（编译被测模块 → tests/exportIm
 - `loadRepoCache` 是**纯读**（4.16.0 起）：不做清洗、不写盘。此前它会剔掉 `updated` / `langColor` 死字段与脏 `lang` 并持久化，该机制已按 AGENTS.md **D30** 删除。
 
 
+### 内联 UI 配色守卫（4.19.3，随 `pnpm check` 跑）
+
+```bash
+node scripts/verify-theme-tokens.cjs
+```
+
+两条判据（任一命中即 `exit 1`，并打印 `文件:行: 说明 —— 原文`）：
+
+1. `src/**` 的非注释代码里引用了**白名单之外**的 `--color-*` 变量 —— 判定是「默认拒绝」而不是按前缀枚举：`--color-ansi-*` / `-prettylights-*` / `-marketing-*` / `-mktg-*` / `-project-*` / `-workflow-card-*` / `-notifications-row-*` / `-bg-discussions-row-*` / `-text-white` / `-user-mention-*` / `-diff-blob-selected-line-highlight-*` 放行（真机实测 `:root` 上仍活着的 62 个变量全部落在这几组，没有一个能用来给面板上色），其余一律违规。**曾经是枚举式**，实测漏了 `topic-tag` / `diff-blob` / `select-menu` / `state` / `markdown` / `label` / `pr-state` / `avatar` / `alert` / `counter` / `tabnav` 共 11 个真实分组 —— issue #1 的原始写法能原样过闸，所以换向；
+2. `src/ui/**` 里出现颜色字面量（`#hex` 的 3/4/6/8 四档、`#${` 模板拼接、`rgb(` / `hsl(`、常见具名色；`gray`/`grey` 因会误伤 `--color-marketing-gray-*` 而故意不收）—— 内联 UI 必须从页面取色。查字面量之前会先剔掉自定义属性**名**。注释剥离是**引号感知**的：`// see issue #123` 里的 `#123` 不算颜色，而 `'a // b --color-x'` 这种字符串也不会被截断成假阴性。
+
+**它证明不了什么**：只证明「没有字面量」。运行期用 `'#' + hex` 拼出来的颜色、CSS 系统色（`CanvasText` / `AccentColor`）、`src/ui` 之外定义的颜色常量、以及任何一种「值合法但语义错」的采样（采到跳过导航链接、采到脚本自己的节点）它都看不见。后者只能靠真机量测。
+
+豁免只有 `src/ui/theme.ts`（它负责**读取**，不产生颜色）。所以修报告的正解是「把 token 加进 `UiTheme` 与解析链」，不是加豁免。验证方式见 AGENTS.md「本轮交接：4.19.3」。
+
 ### 构建产物 CSS 等价性
 
 ```bash
@@ -780,14 +835,15 @@ agent-browser-cli exec --tab <id> --file tests/smoke/assert-transform.js
 agent-browser-cli exec --tab <id> --file tests/smoke/assert-search.js
 ```
 
-> 快速构建期约定：不跑 smoke 测试，改完只 `pnpm check`，由用户在真实页面判断。
+> 快速构建期约定：不跑 smoke 测试，改完只 `pnpm check`（= typecheck + 配色守卫 + build），由用户在真实页面判断。
 
 ## 12. 发布
 
 1. 改 `package.json` 的 `version`（`vite.config.ts` 直接读取它写入脚本头）。
-2. `pnpm check`。
+2. `pnpm check`（含内联 UI 配色守卫）。
 3. 跑第 11 节的两项验证。
 4. 用 `dist/github-star-manager.user.js` 覆盖安装，或作为 release 附件发布。
+5. 动过任何内联 UI 的话，先在真实 github.com 页面上**两套主题各开一次**窗口取证（`getComputedStyle` 读 `backgroundColor` / `color` / `borderTopColor`），见 AGENTS.md「本轮交接：4.19.3」的跑法 —— 夹具与截图都看不出「白底白字」这类同色系错误。
 
 ## 13. 待办与调研索引
 

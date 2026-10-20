@@ -1,12 +1,26 @@
 # GithubStarManager — Agent Handoff
 
 > **权威分工（本文件不重复它们的内容）**
-> 架构 / 模块职责 / 数据流 / 存储模型 → **`DEVELOPER.md`**；历史过程 → **`git log`**；决策全文与依据 → **`docs/adr/0001`–`0011`**；实施计划与逐条验证 → **`docs/plans/`**（历史在 `archive/2026/`）；可复用的验证数字 / A/B 反证 → gbrain `people/me`。
+> 架构 / 模块职责 / 数据流 / 存储模型 → **`DEVELOPER.md`**；历史过程 → **`git log`**；决策全文与依据 → **`docs/adr/0001`–`0012`**；实施计划与逐条验证 → **`docs/plans/`**（历史在 `archive/2026/`）；可复用的验证数字 / A/B 反证 → gbrain `people/me`。
 > 本文件只留四样：**下一轮交接、当前状态、仍生效的硬口径、调试要点与下一步**。
 
 ---
 
-## 本轮交接：4.19.1 —— 本地数据编辑保页码（D12 补）
+## 本轮交接：4.19.3 —— 内联 UI 主题从页面现场解析（issue #1）
+
+交接时间：**2026-10-20 22:05 +0800**；分支 `master`。
+
+- **现象与根因**（<https://github.com/YsLtr/GithubStarManager/issues/1>「恢复已取消的 star 弹出菜单暗黑模式不兼容」）：TM 菜单的三个内联 UI（恢复窗口 / 导入大窗 / 通知栈）把颜色写成 `var(--color-canvas-default, #fff)` 这一代变量 + 浅色兜底。GitHub 已把这代变量整体改名成 `--bgColor-*` / `--fgColor-*` / `--borderColor-*`；真机实测（暗色 stars 页）这批 `--color-*` 在 `:root` 上**全部为空**，于是每个 `var()` 都命中硬编码浅色 ⇒ 暗色主题下弹窗白底黑字。
+- **口径（用户裁定）**：主题**从原始页面取，禁止自己写**。新增 `src/ui/theme.ts` 的 `resolveUiTheme()`：每次打开 UI 现场解析 —— ① 读页面真实存在的当前一代 token；② token 缺失时**采样 GitHub 原生节点**（`[role=dialog]` / `.Box` / `.btn` / `.Overlay-backdrop` / `.flash*`）的 computed style；③ 两者都取不到 ⇒ 该项留空、调用方**不写**该属性（继承页面），**不编颜色**。遮罩/投影/圆角一并改成页面 token（`--overlay-backdrop-bgColor` / `--shadow-floating-large` / `--borderRadius-*`）。
+- **改动面**：`ui/theme.ts`（新）、`ui/restoreMenu.ts`、`ui/exportImportMenu.ts`、`ui/notifications.ts`（`KIND_STYLE` 拆成 `KIND_ICON` path 表 + `theme.notice[kind]`）。
+- **回归守卫**：`scripts/verify-theme-tokens.cjs`（**已接入 `pnpm check`**）：禁止已删除的 `--color-(canvas|fg|border|btn|accent|…)` 旧名进入 `src/`，并禁止 `src/ui/` 出现颜色字面量（`#hex` / `rgb()` / `hsl()`）。决策全文见 `docs/adr/0012`，实施与踩坑记录见 `docs/plans/archive/2026/2026-10-20-inline-ui-dark-mode-theme.md`。
+- **验证**（真实 <https://github.com/YsLtr?tab=stars> 页，`agent-browser-cli exec` 注入真实 `dist`，`.diag/` 内工装不入库）：暗色下修复前 `boxBg=rgb(255,255,255)` / `boxFg=rgb(31,35,40)`（白底黑字，复现 issue）；修复后 `boxBg=rgb(1,4,9)` / `boxFg=rgb(240,246,252)`，普通按钮 `rgb(33,40,48)`、主按钮 `rgb(35,134,54)`、checkbox accent `rgb(31,111,235)`、遮罩 `rgba(33,40,48,.4)`；同页强制切 light ⇒ 全部回到 `#fff` / `#f6f8fa` / `#0969da`。通知栈实测 info：暗色 `rgba(56,139,253,.1)` + 图标 `rgb(68,147,248)`，亮色 `rgb(221,244,255)` + `rgb(9,105,218)`。截图 `.diag/stars-{before,after}-dark.png` / `stars-after-light.png`。`pnpm check` 绿、dist 214.51 kB、`@grant` 恰 5 项。
+- **边界**：`confirm()` / `alert()` 是浏览器原生对话框，主题由浏览器决定，脚本管不到（issue 若要「整窗一致」，需把它们换成页面内弹窗，属另一次决策）。降级路径（token 全缺 → 采样原生节点）未单独构造用例：把 token 置无效会同时打断 GitHub 自己的整页配色，测出来只是黑底，无判别力。
+- **审查后加固**（四路代理 + 实机复测，逐条已修，详见计划文档末节）：跨弹窗**自采样**（两个弹窗的关闭函数只删各自遮罩 ⇒ 后开的会采到先开那个写进去的旧主题，issue #1 现象复活）→ `OWN_UI` 子树整棵跳过（两个弹窗 / 通知栈 / 两个横幅 / 标签筛选浮层 / 三个筛选浮层；判据 = 脚本自建**且**会命中 `NATIVE` 某个选择器）；`a[href]` 首个命中是**跳过导航链接**（实测 `rgb(255,255,255)`）→ 强调色改以 `.Link` 优先并排除它，`checked` **禁止**拿文本色兜（会造白勾压白面板）；**主按钮底/前景必须同域配对** —— 底退到 `btnBg` 时前景整个留空，否则只缺 `--button-primary-bgColor-rest` 就会白字压近白底（约 1.05:1，比 issue #1 更难发现，因为按钮看起来「没坏」只是读不出来）；`borderTopColor` 对无边框元素返回 `currentColor` → 采样前查 `border-style`；`sample()` 改**逐元素**推进；导入窗补 `color`（否则中途切主题 → 深底深字）；**语义色不能直接当底色**（暗色 `--bgColor-*-muted` / `-accent-muted` 的 token 原值是 8 位 hex，如 `#388bfd1a`=10%；压在亮色图上是浅字压浅底，旧实现不透明 ⇒ 那是对比度回退）→ 统一走 `theme.ts` 的 `tintOver(base, tint)`，**通知底与拖拽高亮两处都用它**；`canvas` 采样链末位补 `body`（页面画布色），使最差形态不是透明面板。**守卫改成「默认拒绝 + 白名单放行」**：名单式枚举必然漏（`topic-tag` / `diff-blob` / `select-menu` / `state` / `markdown` / `label` / `pr-state` / `avatar` / `alert` / `counter` / `tabnav` 共 11 个前缀都曾漏过，issue #1 的原始写法能原样过闸），白名单只保留实测仍活在 `:root` 上的 62 个变量所属的组（ansi / prettylights / marketing / project / workflow-card / …，全都没有弹窗配色用途）；另补 `#${` 模板拼接、常见具名色、`#0000`/`#fff8` 四位带 alpha 的十六进制，修掉 `--color-marketing-*` 与行尾注释 `#123` 的误报，注释剥离改成**引号感知**（`'a // b --color-x'` 不再假阴性、`'https://…'` 不再被切断），扫描后缀扩到 `.tsx/.js/.jsx/.mjs/.cjs`。
+
+---
+
+## 上一轮交接：4.19.1 —— 本地数据编辑保页码（D12 补）
 
 交接时间：**2026-10-20 17:15 +0800**；分支 `master`。
 
@@ -21,10 +35,11 @@
 
 ## 当前状态
 
-版本 **4.19.1**（`package.json` 是单一版本源，`vite.config.ts` 读它写脚本头）。
+版本 **4.19.3**（`package.json` 是单一版本源，`vite.config.ts` 读它写脚本头）。
 
-本轮落点 = 4.19.1（D12 补）。版本演进与每轮改了什么查 `git log`，决策依据查 `docs/adr/`。
-唯一需要跨版本记住的两条实测结论：
+本轮落点 = 4.19.3（issue #1 主题解析）。版本演进与每轮改了什么查 `git log`，决策依据查 `docs/adr/`。
+唯一需要跨版本记住的三条实测结论：
+- **主题 token**：GitHub 的 `--color-*` 一代已整体改名（`--bgColor-*` / `--fgColor-*` / `--borderColor-*`）；真机暗色页实测旧名在 `:root` 上**全为空**。内联 UI 一律走 `ui/theme.ts` 的 `resolveUiTheme()`，**不写死颜色**（`scripts/verify-theme-tokens.cjs` 把关）。
 - **限流**（D1）：写入 = 1 点/请求、余量 15× ⇒ **不据此改 1000ms 默认值**（`docs/research-ratelimit-measurement.md`）。
 - **网页写端点通道**已双向实测成立（`docs/research-web-star-endpoints.md` 附录 A）。
 
@@ -58,6 +73,7 @@
 - **D32 · 导入导出改版**：导出**去掉** `data.repoCache`（旧包照旧校验、内容一律忽略）。导入按 `stars_repo_cache` 成员关系分派 —— ⚠️ **判据不许再带 `hasApiData()`**。胜负规则：**归一化后非空 ⇒ 覆盖；为空 / 缺省 ⇒ 保留**（标签与备注；**`name` 相反 —— 已有名字优先**）。归一化在分派之前只做一次，单条标签文本本身不 trim。`repoNames` 只作名称提示：**查不到就不写**、绝不写进缓存、**空不覆盖非空**。其余细则见 `DEVELOPER.md` §7。
 - **D33 · 归属账号 = token 账号**（改写 D27）：取 `GET /user` 的 `id`，取不到才回退登录者，两者皆空 ⇒ **读空表 / 写 no-op + console warn**，**仍不回落**无隔离旧键。四条不可动的形状：① **身份在保存 token 时确定**，顺序钉死「先写身份缓存 → 再落库 token」；401 拒绝保存，网络/5xx/429/**403** **仍保存**（**不得**改成「查不到就拒绝保存」，那是把网络抖动变成「token 没存上」）。② **宽限期备份必须键分区**。③ **两个面不许混**：数据面 = 归属谁；成员关系/可编辑性面 = 浏览器里有没有「我」。④ **配置面板的空输入不清除 token**（「留空 = 清除」只在 TM 菜单那条 prompt 里）。披露只用既有归属横幅（**不新增任何 UI**，用户裁定）：「归档 chip」方案已被显著否定，别再提议。已接受代价：关掉横幅后页面再无归属痕迹；`stars_repo_cache` 仍不分区（风险 14），只落了 `full_sync_meta.accountId`（**只写不判**）。求值点、关闭态键、三道门等细则见 `docs/adr/0010`。
 - **D34 · API 目标 ID 优先**：寻址全链路保留数字 ID；`/repositories/{id}` 解析当前全名，ID 404 才可名称查找且必须核验同 ID。星标继续用名称端点（数字候选实测失败）。Cookie 路径用同 ID 原生行 + 精确表单确认目标。元数据 404 ≠ 已取关；限流/401 整轮放弃。细则见 `docs/adr/0011`。
+- **D35 · 内联 UI 配色只从页面取**（issue #1）：TM 菜单的内联 UI（`ui/restoreMenu.ts` / `ui/exportImportMenu.ts` / `ui/notifications.ts`）**不许出现任何颜色字面量，也不许引用 `--color-*` 旧一代变量**。一律 `resolveUiTheme()` 现场解析（token → 采样原生节点 → 取不到就**不写该属性**）。判据由 `scripts/verify-theme-tokens.cjs` 在 `pnpm check` 里把关；新增内联 UI 时把新 token 加进 `UiTheme`，不要就地写 `#hex`。`confirm`/`alert` 是浏览器原生对话框，不在本约束内（脚本改不了）。
 
 ---
 
@@ -72,9 +88,12 @@
 
 ## 真机调试要点（只留最贵的坑）
 
+- **验证页要选用户真正会用的那一页**：TM 菜单的内联 UI 虽然能在任意 github.com 页面打开，但它实际被点开的地方是 `https://github.com/<me>?tab=stars`（那里同时有脚本接管后的网格与弹窗）。在 issue 详情页验证，主题**结论不受影响**（token 与原生节点采样全站同源），但「真实使用场景下对不对」不成立 —— 我这一轮就先在 issue 页测、被用户纠正过。
+- **别新开一堆标签页**：复用已在的 stars 页（`agent-browser-cli tabs` 找一个 connected 的 id）。反复 `open` 同一 URL 会留下一串同标题页面，且新页可能立刻 `未连接`。
 - **必须前台标签页**：后台标签的测量/交互/定时器全部失真（定时器节流到 1 次/分钟，CDP 受信任点击静默失效）。先 `{"method":"Page.bringToFront","params":{},"allowFocus":true}`（`allowFocus` 是 **`method` 的同级参数**），每次量测前回读 `document.visibilityState`。
 - **冻结标签页会给出过期 `computedStyle`**：判据 —— **「连 inline `!important` 都改不动 computed 值」= 标签页被冻结**。可靠做法是 `agent-browser-cli open --focus <url>` 新开一页并确认 `visibilityState === 'visible'`。过渡冻结则先 `document.getAnimations().forEach(a => { try { a.finish(); } catch {} })` 再读。
-- **`agent-browser-cli` 的 `tab_id` 不可信**：只用 `agent-browser-cli tabs` 按 URL **靠前的片段**（如 `.diag/`）找 id —— 它把 URL 截断到约 65 字符。
+- **`agent-browser-cli` 的 `tab_id` 不可信**：只用 `agent-browser-cli tabs` 按 URL **靠前的片段**（如 `.diag/`）找 id —— 它把 URL 截断到约 65 字符。`open` 返回的 id 可能立刻失效（`会话ID … 未连接`），此时重列 `tabs` 换一个 connected 的 id。
+- **`screenshot --out` 必须给绝对路径**：给相对路径时它按**守护进程自己的工作目录**解析，会打印 `status: success` + `path`，但文件不在仓库里 —— `Test-Path` 一定要复核，别只信返回 JSON。
 - **夹具 URL 必须带 `?tab=stars`**，否则脚本不转换，`grid: 0` 会被**误读成全绿**。改 `src/` 后必须重跑生成器（夹具内联 dist）。场景数以 `grep -o "scenario === '[a-z-]*'"` 为准，别在此维护数量。
 - **批量跑夹具的三道门**：① 场景名必须在生成器里有对应分支；② 回读 `window.__gsmScenario` + `location.hash`（`open` 经 `python subprocess` 会丢 `&scenario=X`，静默退化成 `own`）；③ 按 `title` 精确匹配标签页，**禁止 `tail -1`**。`fail` 计数也含 NO TAB / 场景不符 / 解析失败。**改工装后先用探针确认夹具活着**：**场景不生效的表现是「断言全绿」**。
 - **未提交改动做破坏性 A/B 时禁止 `git checkout -- <file>` 还原**：`cp` 到 `.pi/tmp/` → 改 `src/` → 跑 → `cp` 还原 → 核对 `git diff --stat` 与实验前一致。
@@ -110,7 +129,8 @@
 - **网页通道均无法靠原生表单复核方向**（两种表单同时存在），只能以 HTTP 成功为准。
 - **TM 菜单标签不跨标签页同步**；**老版 TM（< 5.0）下「隐藏 Lists」菜单项会累积重复**（功能不受影响）。
 - **一键批量恢复会代发请求**，落在 AUP §4 的邻域（缓解 = 严格串行 ≥1s + 进度可见 + 可取消 + 确认弹窗）。「写通道不向用户披露」与 RDA §4(v) 的偏差记在 `docs/adr/0006`。
-- **通知栈无条数上限**；**兜底颜色是浅色硬编码**。**底部份页器提交后焦点会掉到 `BODY`**（有意留下）。
+- **通知栈无条数上限**。**底部份页器提交后焦点会掉到 `BODY`**（有意留下）。（原「兜底颜色是浅色硬编码」已由 4.19.3 的 D35 消除：取不到就留空、不再兜浅色。**注意**：留空的真实后果不是「继承页面」—— `background` 不可继承；`canvas` 有 `body` 画布色兜底所以最差是「页面色的实心面板」，其余字段留空则是透明 + `currentColor` 描边，且遮罩仍拦点击。）
+- **D35 的四条已接受残留**（4.19.3 审查裁定，不修）：① `confirm()` / `alert()` 是浏览器原生对话框，亮系统 + 暗页面时流程中途仍会弹白框；② 弹窗配色是**打开那一刻的快照**，批量恢复（≥1s/条，可开几分钟）期间切主题不会跟随；③ 通知是**每条各自解析**，两条通知之间切主题会让栈里出现两种底色（有意选「各自正确」而非「整栈一致」）；④ GitHub 原生 `<dialog showModal>`（如 cmd-K）在 top layer，会把脚本的 `zIndex:9999` 遮罩压在下面且不在其焦点/inert 作用域内 —— 任何 z-index 都赢不了。另：采样依赖 `.Box` / `.btn` / `.Link` 等无官方契约的类名，GitHub 改版时降级方向是「取不到就不写」。
 - **归属校验与登录者回退都依赖无官方契约的页面 meta**（`octolytics-actor-id` / `user-login`）：被改名时归属校验**静默失效**（判 `unknown`，有意的降级方向），`getStorageUserId()` 的回退支路也失效。已确认过身份的 token 用户不受影响（走指纹缓存），但 `saved-unverified` 那一支仍依赖 meta。**GHES / SAML SSO 下行为未确证**。
 - **归属解析的「快照窗口」**：任何「有 token 但指纹缓存无该凭证」的状态都会在会话首次 `getStorageUserId()` 把归属快照在登录者上、整会话不翻转（有意的取舍）；「身份冷缓存时导出、缓存变热后导入」还会被归属校验拒绝。
 - **夹具的非空转守卫**：分区键一改名，夹具若仍种在旧键上会让断言「因读空而全绿」（批量脚本只看 `_errors`）。已为 `other-editstate` / `own-unstar` / `other-logout-pending` 加守卫并把结论折进 `_errors` —— 再改分区键时先确认这三组。
@@ -126,7 +146,7 @@
 
 ## 下一步
 
-1. **升级 4.19.1 后，用 dev 脚本的人必须重装 dev loader**（机制见「dev 模式」第 4 条）；正式版不受影响。
+1. **升级 4.19.3 后，用 dev 脚本的人必须重装 dev loader**（机制见「dev 模式」第 4 条）；正式版不受影响。
 2. **keepPage 守卫的真机确认**：按「本轮交接」的跑法在真实 github.com 上于第 2 页加/删标签确认页码不变；顺带处理「未决问题」②–④（起点断言、`stars_lang_colors` 被连带清理、清理失败静默）。
 3. **风险 21 的真机确认**：换一份属于另一个账号的 token ⇒ 横幅应点名两个账号并含归属句；错号期间的标签落在 token 账号命名空间；关掉横幅后换 token 或换登录账号应重新弹出；配置面板留空点「保存并同步」应只报提示、不清除 token。
 4. **`tests/smoke/` 不属于快速构建期**：要跑请按 `DEVELOPER.md` §11（**不随 `pnpm check` 跑**）。
@@ -142,7 +162,7 @@
 ## 常用命令
 
 ```bash
-pnpm check     # tsc --noEmit + build（改完必跑）
+pnpm check     # tsc --noEmit + 内联 UI 配色守卫 + build（改完必跑）
 pnpm build     # → dist/github-star-manager.user.js
 pnpm dev       # HMR，需先解决上面 CSP 那条；入口 http://127.0.0.1:5173/__vite-plugin-monkey.install.user.js
 pnpm build && node scripts/verify-css.cjs   # 产物 CSS 与源 CSS 等价性
