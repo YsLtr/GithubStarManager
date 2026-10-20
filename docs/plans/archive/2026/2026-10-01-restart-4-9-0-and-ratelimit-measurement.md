@@ -135,7 +135,7 @@ archived: 2026-10-04
 ### D17 · 详情页相关能力收缩（落地 todo 作废项）
 
 **结论**：删除 `watchRepoStarState` 与旧版 `form[action$="/unstar"]` 监听；星状态真相只由整表同步判定，位置无关。
-**证据**：`src/index.ts:80-117`（两者为同一功能的两个实现）；`todo:30`（「详情页star/unstar检测」已标作废）。
+**证据**：`src/index.ts:78-115`（两者为同一功能的两个实现）；`todo:30`（「详情页star/unstar检测」已标作废）。
 **置信度**：high。
 
 ### D18 · 网页路径的**成功判定**：`resp.ok` + 事后重读表单方向，不用 `{"count":"N"}`

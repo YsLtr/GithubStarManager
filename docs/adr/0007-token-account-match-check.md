@@ -81,7 +81,7 @@
 
    **同轮复审推翻了我自己第一版的修法**（用户质询后重新实测）：第一版把 classic 分支写成
    「**都会**记到 @tokenowner（**不会**改动 @session）」，这同样是过度断言 —— 写通道是**按次**决定的：
-   `setStarState` 在 REST 返回 **403（非限速）且存在登录会话**时会回落网页端点（`src/starWrites.ts:299`），
+   `setStarState` 在 REST 返回 **403（非限速）且存在登录会话**时会回落网页端点（`src/starWrites.ts:283`），
    那一次写就落到登录者名下。实测证据（`.diag/assert-account-fallback.js`，跑真代码、非手搓请求）：
 
    ```

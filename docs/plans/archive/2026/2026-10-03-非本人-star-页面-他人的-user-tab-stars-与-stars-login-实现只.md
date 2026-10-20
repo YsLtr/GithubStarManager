@@ -24,9 +24,9 @@ completed: 2026-10-03
 脚本用 `isStarsPage()` = `/[?&]tab=stars/.test(location.search)` 判定是否接管页面（`src/boot.ts:25-27`），**只看 URL，不看这是谁的页**。于是打开他人的 stars 页时：
 
 1. 网格数据来自**全局单份**缓存 `stars_repo_cache`（`src/constants.ts:37`，`src/storage/repoCache.ts:8` 注释「所有用户共享」），而 `hasApiData()` 也与账号无关（`src/fullSync.ts:962-965`）⇒ 在别人的页面上画出**我自己的** star 列表，并把对方的原生列表整段隐藏（`src/transform.ts:36-45`）。
-2. 卡片星按钮的初态来自缓存字段 `!data.unstarredAt`（`src/ui/cards.ts:116`），**完全不读页面 DOM**，也与页面主人无关 ⇒ 出现「本人没有 star 的仓库显示为实心黄星」这类冲突。
+2. 卡片星按钮的初态来自缓存字段 `!data.unstarredAt`（`src/ui/cards.ts:115`），**完全不读页面 DOM**，也与页面主人无关 ⇒ 出现「本人没有 star 的仓库显示为实心黄星」这类冲突。
 3. 标签/备注的存储键按**页面主人** id 隔离（`src/storage/tags.ts:5-14`、`notes.ts:6-9`，走 `octolytics-dimension-user_id`）⇒ 在他人页上读写的是**对方**的命名空间（AGENTS.md 已知风险第 16 条；本轮已实测确证：`/mattn?tab=stars` 上 `dimension-user_id = 10111` 而登录者 `actor-id = 130123551`）。
-4. 进页 2s 自动同步（`src/index.ts:209` → `fullSync.ts:968-995`）会在任何 stars 页触发整库 API 拉取。
+4. 进页 2s 自动同步（`src/index.ts:207` → `fullSync.ts:968-995`）会在任何 stars 页触发整库 API 拉取。
 
 ## 2. 目标 / 非目标
 
@@ -60,9 +60,9 @@ completed: 2026-10-03
 | F6 | `?page=N` 在 **HTML** stars 页被忽略（返回第 1 页内容，不是空页）；真实翻页是 `after=`/`before=` 游标 | research §6.1/§6.3 —— **与现有 AGENTS.md 表述冲突，需纠正** |
 | F7 | `form[action$="/star"]` **不会**误命中 `/unstar`（合成元素 + 真实元素双重实测 `false`）；真正会误命中的是去掉斜杠的 `[action*="star"]` | research §1.6 —— **与现有 AGENTS.md「DOM 变更对照」冲突，需纠正** |
 | F8 | 条目内可稳定取出数字 repoId（`user-list-menu[data-repository-id]`）与显示名（`h3 a[href="/{o}/{r}"]`） | research §1.3、§7 |
-| F9 | 现状：网格数据源硬编码 `loadRepoCache()`（`src/filters.ts:104-105`）；`applyFilters`/分页/筛选/搜索**零网络**；`runFullSync` 恰 4 个调用点（3 个用户显式 + 1 个进页隐式）；写入口只有卡片按钮与批量恢复两处 | scout §4.2/§5.1/§5.2/§5.3 |
+| F9 | 现状：网格数据源硬编码 `loadRepoCache()`（`src/filters.ts:107-108`）；`applyFilters`/分页/筛选/搜索**零网络**；`runFullSync` 恰 4 个调用点（3 个用户显式 + 1 个进页隐式）；写入口只有卡片按钮与批量恢复两处 | scout §4.2/§5.1/§5.2/§5.3 |
 | F10 | 现状：`getStarsUserId()` 的全部消费者只有 `tags.ts:18,23,41`、`notes.ts:13,19`、`exportImport.ts:58,142-146`；本人页上它与 actor-id 数值相等 | scout §2.1 |
-| F11 | 现状：`viewTeardown` 有 10 项按痕迹回滚；`GSM_HIDDEN_ATTR` 的用途限定为「我们改过它的 display」 | scout §6、`src/constants.ts:53-60` |
+| F11 | 现状：`viewTeardown` 有 10 项按痕迹回滚；`GSM_HIDDEN_ATTR` 的用途限定为「我们改过它的 display」 | scout §6、`src/constants.ts:51-58` |
 
 ## 4. 设计
 

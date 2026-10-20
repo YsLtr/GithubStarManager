@@ -30,18 +30,18 @@ completed: 2026-10-05
 
 | 视图 | 现状 | 位置 |
 |---|---|---|
-| `'other'` | 逐仓库三态 → 只读时读**宽限期备份**，数据仍显示 | `src/cardAreas.ts:63-64` → `src/cardState.ts:110-116` |
+| `'other'` | 逐仓库三态 → 只读时读**宽限期备份**，数据仍显示 | `src/cardAreas.ts:63-64` → `src/cardState.ts:118-124` |
 | `'own'` | 无条件调可编辑渲染器，只读**活区** | `src/cardAreas.ts:49-51` |
 
 而点卡片星按钮取消 star 时，`markRepoUnstarred()` 会把标签/备注**搬进** `stars_pending_delete` 备份并**清空活区**：
 
 ```
-src/storage/pendingDelete.ts:120  saveTags(repoId, []);
-src/storage/pendingDelete.ts:121  saveNote(repoId, '');
-src/ui/cards.ts:173               markRepoUnstarred(repoId, data)   // 星按钮成功回调
-src/ui/cards.ts:177               syncCardAfterStarChange(repoId, target)
-src/starCheck.ts:155              if (isReadOnlyView()) …           // own 页为假
-src/starCheck.ts:160              renderCardTagAndNoteAreas(card, 'own')
+src/storage/pendingDelete.ts:149  saveTags(repoId, []);
+src/storage/pendingDelete.ts:150  saveNote(repoId, '');
+src/ui/cards.ts:183               markRepoUnstarred(repoId, data)   // 星按钮成功回调
+src/ui/cards.ts:187               syncCardAfterStarChange(repoId, target)
+src/starCheck.ts:162              if (isReadOnlyView()) …           // own 页为假
+src/starCheck.ts:167              renderCardTagAndNoteAreas(card, 'own')
 src/cardAreas.ts:49-51            renderTags / renderNotes          // 只读活区 = 空
 ```
 
@@ -88,7 +88,7 @@ renderCardTagAndNoteAreas(card, 'own')
 ```
 
 **不**在 `cardAreas` 里内联写 `getPendingInGrace` 判据 —— 判定逻辑只住 `cardState.ts`，否则就是给
-同一个概念再开第二处判据。调用点签名不变，`src/filters.ts:302` / `src/starCheck.ts:156,160` 三处实参不动。
+同一个概念再开第二处判据。调用点签名不变，`src/filters.ts:302` / `src/starCheck.ts:163,160` 三处实参不动。
 
 ### D2 · own 视图判定收窄为二态（`editable` / `locked-pending`），不引入 `locked-empty`
 
@@ -153,7 +153,7 @@ unstar 后保留 tags/notes 不删、`po4yka/ratatoskr-vault`（2026-10-01）用
 
 ### D5 · 只读形态只在「不改动列表的路径」上成立（卡片随后重绘会消失）
 
-`markRepoUnstarred` 会 `delete cache[repoId]`（`src/storage/pendingDelete.ts:118-119`），
+`markRepoUnstarred` 会 `delete cache[repoId]`（`src/storage/pendingDelete.ts:147-148`），
 所以下一次整页重绘（有激活筛选时的 `applyFilters({keepPage:true})`、同步后重渲染、翻页、导入后重绘）
 时 `queryRepos()` 不再产出该仓库，卡片从网格消失。**不为此把 pending 条目注入查询结果**：
 那会让「已 unstar 的仓库继续出现在我的 stars 列表里」，与 unstar 语义冲突，
@@ -178,13 +178,13 @@ own 的 `locked-pending` 卡片同样写 `data-gsm-card-state='locked-pending'`�
 | `src/styles/base.css:358-361` | 「它**只存在于他人页**…⇒ 自有页观感一字不变」 |
 | `docs/adr/0009-other-users-stars-page-readonly-grid.md:493-495` | 同上款表述 |
 
-另需同步：`src/filters.ts:301`、`src/starCheck.ts:143`、`DEVELOPER.md:112-115`、
+另需同步：`src/filters.ts:301`、`src/starCheck.ts:150`、`DEVELOPER.md:113-116`、
 `AGENTS.md` 的 D26/D29 措辞（新增 D31 条目记账），以及 `src/readonly.ts:100` 里那句
 「那正是 4.13.0『unstar 后标签立刻消失』的成因」的语境补充。
 
 ### D7 · 零网络 / 渲染路径零写入不变量不变
 
-修复只增加**读**：`getPendingInGrace` = `loadPendingDelete()` = `gmGet`（`src/storage/pendingDelete.ts:34-43`）。
+修复只增加**读**：`getPendingInGrace` = `loadPendingDelete()` = `gmGet`（`src/storage/pendingDelete.ts:62-71`）。
 不新增 `GM_setValue`、不新增 `fetch`。`cardState.ts` 头注释的「不写存储」纪律继续成立。
 
 ### D8 · 夹具必须补场景：现状对「own 页 unstar」零覆盖
@@ -306,7 +306,7 @@ pending 状态下**会**出现 `.gsm-ro-*`，故 R7 的 `own` 场景种子里**�
 | own 复用三态 `getCardState`（引入 `locked-empty`） | D2：meta 失效 ⇒ 本人页全页只读；且这类卡片在本人页本就**不会被渲染**（只来自缓存），给它造只读态是空转 —— 用户 2026-10-05 亦确认「应该不显示才对」 |
 | unstar 时不清空活区，让标签留在活区自然显示 | 与 ADR 0003 的宽限期语义冲突；pending 超期清理后活区数据永久残留且卡片仍可编辑（与「只读」相反） |
 | 把 pending 条目并入 `queryRepos()` 让卡片常驻 | D5：与 unstar 语义冲突、要给查询管线加第三条半来源；用户 2026-10-05 确认「重渲染/刷新后应当不存在」 |
-| **导入时**把「未 star 仓库的标签/备注」直接搬进 24h 宽限期（V8 的字面读法） | 宽限期到期即**永久删除**（`cleanupExpiredUnstarred`，`src/storage/pendingDelete.ts:144-158`）⇒ 导入进来的数据会在 24h 后被静默删掉；且导入导出的语义是「数据搬运」，不该顺带触发删除倒计时（ADR 0001 / 0005） |
+| **导入时**把「未 star 仓库的标签/备注」直接搬进 24h 宽限期（V8 的字面读法） | 宽限期到期即**永久删除**（`cleanupExpiredUnstarred`，`src/storage/pendingDelete.ts:274-288`）⇒ 导入进来的数据会在 24h 后被静默删掉；且导入导出的语义是「数据搬运」，不该顺带触发删除倒计时（ADR 0001 / 0005） |
 | unstar 后强制整页重绘让卡片立刻消失 | 与用户「要只读，不要消失」的诉求直接相反 |
 | 给只读卡片加可见提示条 / 「去恢复」按钮 | 用户两次裁定「卡片不要多余描述文字」；恢复入口已存在（星按钮 / TM 菜单） |
 | 给只读卡片加 `aria-readonly` / `inert` / 主动播报 | 4.14.0 已逐条评估并否决（`aria-readonly` 只对 9 个 widget role 有效；无 WCAG 条款要求「控件消失必须播报」） |

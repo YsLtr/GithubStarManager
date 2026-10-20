@@ -28,7 +28,7 @@ completed: 2026-10-02
 |---|---|---|
 | 浏览器侧身份 | 只被用于「存储键隔离」与「导入包归属校验」，**从不与 token 比对** | `src/storage/tags.ts:6-9`（`getStarsUserId()` 读 `meta[name="octolytics-dimension-user_id"]`）；消费者 `src/storage/exportImport.ts:138-147` |
 | 会话存在性 | 只判**有没有**登录（`body.logged-in` + meta 非空），**从不读 meta 的值** | `src/starWrites.ts:93-99`（`hasWebSession`，未 export，仅 2 处调用：`starWrites.ts:299`、`306`） |
-| token 侧身份 | **根本不存在**：全库无 `GET /user`、不读 `x-oauth-scopes` | `api.github.com` 引用仅 3 处，全是 `/user/starred*`：`src/fullSync.ts:347`、`src/fullSync.ts:571`、`src/starWrites.ts:124` |
+| token 侧身份 | **根本不存在**：全库无 `GET /user`、不读 `x-oauth-scopes` | `api.github.com` 引用仅 3 处，全是 `/user/starred*`：`src/fullSync.ts:347`、`src/fullSync.ts:554`、`src/starWrites.ts:124` |
 | 保存 token 时 | 无任何验证请求；唯一动作是 `runFullSync('button')` | `src/index.ts:507-513` |
 
 ### 1.3 真实错号路径（本功能的动机）
@@ -161,7 +161,7 @@ div.gsm-account-banner
 └─ button.btn.gsm-account-dismiss  「关闭」（右上/末尾）
 ```
 
-- 落位：`placeSetupBanner(bar, host)`，`host = getStarsMainColumn() || document.getElementById('user-starred-repos')`；取不到 host 直接 return（与 `src/index.ts:240-242` 同口径）。与配置横幅并存时插在其之前（同一落位路径天然确定顺序，`prepend`/`before` 语义见 `src/index.ts:326-335`）。
+- 落位：`placeSetupBanner(bar, host)`，`host = getStarsMainColumn() || document.getElementById('user-starred-repos')`；取不到 host 直接 return（与 `src/index.ts:248-250` 同口径）。与配置横幅并存时插在其之前（同一落位路径天然确定顺序，`prepend`/`before` 语义见 `src/index.ts:347-356`）。
 - 样式：新增 `.gsm-account-banner` 规则，写在 `src/styles/base.css` 现有 `.gsm-setup-banner` 规则块旁（`base.css:660-713` 之后），**沿用同一套 Primer 变量与尺度**（`--bgColor-*-muted` 底 + 1px 真描边 + 6px 圆角 + `12px 16px` 内边距，见 D11）。**不新建 `@media` 门**（窄视口由 JS 门负责，同 D18）。
 - 关闭按钮交互：`withHover` 式的三态（如不走 notifications 的内部工具，则直接 `style.opacity` 0.7/0.5 与 notifications 的 `.flash-close` 口径对齐），点击 → 写 `STORAGE_KEYS.accountBannerDismissed = tokenId#sessionId` → `bar.remove()`。
 - 关闭态判定：`showAccountBanner` 前先比对当前 `tokenId#sessionId` 与已存值，相同则跳过。
@@ -187,7 +187,7 @@ accountBannerDismissed: 'stars_account_banner_dismissed', // '<tokenId>#<session
 
 ### 5.5 生命周期与回滚
 
-- `viewTeardown.ts` 第 3 项选择器串（`src/viewTeardown.ts:56-62`）追加 `.gsm-account-banner`。
+- `viewTeardown.ts` 第 3 项选择器串（`src/viewTeardown.ts:44-50`）追加 `.gsm-account-banner`。
 - 关闭状态键与身份缓存键**不随视口回滚**（D8 / D20 的「视图级 vs 页面级」边界）。
 - 无新增持久监听、无新增定时器 ⇒ 不需要 `lifecycle` 作用域（横幅上的监听随节点一起销毁）。
 

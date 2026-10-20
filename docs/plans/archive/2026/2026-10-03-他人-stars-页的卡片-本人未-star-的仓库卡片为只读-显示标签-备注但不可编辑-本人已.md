@@ -33,9 +33,9 @@ completed: 2026-10-03
 
 | 现象 | 根因 | 证据 |
 |---|---|---|
-| 「点了 star 就整页变成可编辑」 | 只读是**视图级单一布尔**，不是逐仓库状态 | `src/viewContext.ts:70-72` `isReadOnlyView()` 只判 `otherPage !== null`；`src/filters.ts:256` 取一次、`:286-294` 用它决定**全部**卡片的标签/备注渲染器 |
-| 点 star 后卡片真的换成可编辑控件 | 点击成功的副作用链**无条件**调可编辑渲染器，且全函数无只读判断 | `src/ui/cards.ts:175` → `src/starCheck.ts:147-150`（`renderTags` / `renderNotes`，二者直接绑 `saveTags` / `saveNote`） |
-| unstar 后标签/备注立刻消失 | `markRepoUnstarred` 把标签/备注搬进备份并**清空活区** | `src/storage/pendingDelete.ts:70-84`（`:76-77` 备份、`:82-83` 清空、`:80-81` 从 cache 删除） |
+| 「点了 star 就整页变成可编辑」 | 只读是**视图级单一布尔**，不是逐仓库状态 | `src/viewContext.ts:70-72` `isReadOnlyView()` 只判 `otherPage !== null`；`src/filters.ts:261` 取一次、`:286-294` 用它决定**全部**卡片的标签/备注渲染器 |
+| 点 star 后卡片真的换成可编辑控件 | 点击成功的副作用链**无条件**调可编辑渲染器，且全函数无只读判断 | `src/ui/cards.ts:185` → `src/starCheck.ts:147-150`（`renderTags` / `renderNotes`，二者直接绑 `saveTags` / `saveNote`） |
+| unstar 后标签/备注立刻消失 | `markRepoUnstarred` 把标签/备注搬进备份并**清空活区** | `src/storage/pendingDelete.ts:98-112`（`:76-77` 备份、`:82-83` 清空、`:80-81` 从 cache 删除） |
 | 「24h 内仍显示」目前**无任何实现** | 没有任何渲染器从 pending 读数据 | `src/readonly.ts:82-102` 的只读渲染器只读 `getTags` / `getNote`（活区） |
 | 在他人页筛过东西后再点 star，会去改**别人页面**的原生筛选栏 | `applyFilters` 只有 `!isDesktop()` 一道门；`filterState` 是跨页共享模块态且进出他人页**不清** | `src/filters.ts:431-442`（`:439` `updateLocalFilterControls` → `:584-595` 对原生菜单 `hideNativeNode`、`:442` `refreshTagFilterBar`、`:466` 信息条）；`src/starCheck.ts:154` 是唯一能间接激活它的路径；`src/viewContext.ts:12-21` 明确 filterState 跨页保留 |
 
@@ -63,7 +63,7 @@ getCardState(repoId):
   return 'locked-empty'
 ```
 
-- `pendingInGrace(repoId)`：`pending[repoId]?.unstarredAt + GRACE_PERIOD > Date.now()`，**渲染时现算**，不依赖 `cleanupExpiredUnstarred()` 是否跑过（它只在 `init()` 与导入后跑：`src/index.ts:56`、`:568`）。
+- `pendingInGrace(repoId)`：`pending[repoId]?.unstarredAt + GRACE_PERIOD > Date.now()`，**渲染时现算**，不依赖 `cleanupExpiredUnstarred()` 是否跑过（它只在 `init()` 与导入后跑：`src/index.ts:54`、`:568`）。
 - 三者的渲染差异：
 
 | 状态 | 数据来源 | 渲染器 | 控件 |
@@ -88,7 +88,7 @@ renderCardTagAndNoteAreas(card: HTMLElement): void
 
 - **乐观性**：可编辑性只认「已提交」状态（内存覆盖表 / 整表缓存），**不**读按钮 DOM class、**不**读在途请求。点 star 后进卡片仍是只读，成功回调的重绘才补上控件。（代价：成功后约 1 个队列间隔内仍是只读，可接受；避免「写失败回滚后星星已回退、标签却已改」的不一致。）
 - **宽限期备份的建立判据**：`markRepoUnstarred(repoId, seed?)` 改为「**有东西要保全就必须建备份**」——`cache[repoId]` 存在，**或** `seed` 给出（他人页卡片的投影数据），**或**该 repoId 有非空标签/备注 ⇒ 建 pending 条目；三者皆无 ⇒ 什么都不做。
-  理由：今天缓存里没有该条目时 `markRepoUnstarred` 直接 `return`（`src/storage/pendingDelete.ts:72-73`），而他人页允许「star（只在内存覆盖里）→ 加标签 → unstar」这条顺序 ⇒ 标签会**永远**留在活区，而只读卡片又没有删除入口，用户再也清不掉它。
+  理由：今天缓存里没有该条目时 `markRepoUnstarred` 直接 `return`（`src/storage/pendingDelete.ts:100-101`），而他人页允许「star（只在内存覆盖里）→ 加标签 → unstar」这条顺序 ⇒ 标签会**永远**留在活区，而只读卡片又没有删除入口，用户再也清不掉它。
 - **标签渲染器的上下文开关**：`renderTags(container, opts?)`，`opts.filterToggle = false`（他人页）时 ① 胶囊不绑「切换筛选」点击；② 不加 `stars-tag-active`；③ 保存后不调 `applyFilters()` / `refreshTagPillStates()`。默认 `true` = 与今天逐字相同的行为（本方自己的页零变化）。`renderNotes` 无需改动（其编辑路径本就不依赖 `applyFilters`）。
   **不**新写一份他人页专用可编辑渲染器——两份实现必然漂移，而漂移就是本次要修的缺陷。
 - **`applyFilters` 补只读门**：首部增加 `if (isReadOnlyView()) return;`（与既有 `!isDesktop()` 门并列），并在 `syncCardAfterStarChange` 的 `applyFilters` 之前判视图（他人页直接 return）。
@@ -194,9 +194,9 @@ renderCardTagAndNoteAreas(card: HTMLElement): void
 | V2 | 只读卡片的编辑控件处置 | **完全不渲染**（不建禁用态按钮、不建只读输入框） | 调研 §6：`aria-readonly` 仅限 9 个 widget role、`inert` 无视觉提示、整簇禁用踩禁用态全部负面项 | 低 |
 | V3 | 宽限期内是否显示一行可见状态说明 | **不显示**，仅只读节点 `title` 按状态分叉 | 用户既往裁定「不加说明行/提示条」；调研虽建议显示，但明确「未找到 WCAG 强制要求」 | 低 —— 本方案最可能有分歧处，请重点过目 |
 | V4 | 状态切换是否给屏读用户程序化播报 | **不注册**（不加 `aria-live` / `role="status"`） | 调研 §3：无 WCAG 条款要求「控件消失必须播报」；4.1.3 只约束已存在的状态消息 | 低 |
-| V5 | 可编辑性是否跟随星按钮的乐观翻转 | **只认已提交状态**（内存覆盖表 → 整表缓存） | `src/ui/cards.ts:139` 乐观翻转 vs `:170-173` 成功后才落数据；调研 §5（可编辑性须与已提交状态同源） | 低 |
-| V6 | 无本人缓存 / 未登录访客的可编辑性 | **一律不可编辑**（仍可只读显示） | 复用既有 `canShowStar` 的宁缺勿假口径（`src/filters.ts:262`） | 低 |
-| V7 | 他人页「点标签 = 切换筛选」是否保留 | **关闭**：点标签不筛选、不加选中高亮、保存后不调 `applyFilters()` | 他人页无筛选栏，`queryRepos` 对投影刻意忽略 `filterState`（`src/filters.ts:95-101`） | 低 |
+| V5 | 可编辑性是否跟随星按钮的乐观翻转 | **只认已提交状态**（内存覆盖表 → 整表缓存） | `src/ui/cards.ts:141` 乐观翻转 vs `:170-173` 成功后才落数据；调研 §5（可编辑性须与已提交状态同源） | 低 |
+| V6 | 无本人缓存 / 未登录访客的可编辑性 | **一律不可编辑**（仍可只读显示） | 复用既有 `canShowStar` 的宁缺勿假口径（`src/filters.ts:267`） | 低 |
+| V7 | 他人页「点标签 = 切换筛选」是否保留 | **关闭**：点标签不筛选、不加选中高亮、保存后不调 `applyFilters()` | 他人页无筛选栏，`queryRepos` 对投影刻意忽略 `filterState`（`src/filters.ts:100-106`） | 低 |
 
 ---
 
