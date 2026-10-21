@@ -184,6 +184,14 @@ Development environment setup (the CSP / Local Network Access prerequisites for 
 
 ---
 
+## Thanks
+
+### Thank you to the following communities for helping to promote it.
+
+[<img src="https://www.nodeloc.com/uploads/default/original/3X/d/2/d2dbcb2628506da9299792c1d422c58c0f185528.svg" height="32" />](https://www.nodeloc.com)
+
+---
+
 ## License
 
 [MIT](LICENSE) © YsLtr
