@@ -10,7 +10,6 @@
     out.afterSearch = {
       cachedCards: document.querySelectorAll('.stars-grid-card-cached').length,
       infoBarText: text(document.querySelector('.stars-tag-info-bar')),
-      originalFiltered: document.querySelectorAll('.stars-tag-filtered').length,
       customLangBtn: !!document.getElementById('stars-custom-lang-button'),
       langOptions: Array.from(document.querySelectorAll('#stars-custom-lang-overlay .ActionListItem-label')).map((e) => e.textContent)
     };

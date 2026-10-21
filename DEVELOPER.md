@@ -222,10 +222,13 @@ src/
     persistent.css    常驻小表（注入后不移除：右栏默认隐藏 + 侧边栏/头像过渡）
 tests/smoke/
   fixture.html            仿 GitHub Stars 页面的最小 DOM + GM API stub + 加载构建产物
-  fixture-detail.html     仿仓库详情页（宽限期流程：预置缓存 + unstar/re-star）
+                          （**活输入**：`gen-*.cjs` 读它生成场景夹具，删了会连锁破坏夹具生成）
   assert-transform.js     转换/标签/备注/筛选栏断言
   assert-search.js        搜索断言
-  assert-detail.js        详情页宽限期断言（4.8.0 起不再断言缓存提取）
+  （详情页那一组 `fixture-detail.html` / `assert-detail.js` 已删除：详情页自 4.9.0/D17 起
+    **不再监听** star/unstar，夹具里点 star 按钮没有任何被测代码响应，断言只会读到种子原样。
+    宽限期流程改由 `test:exportimport` 的恢复组与 `test:api` 的 restore 组覆盖，
+    详情页只剩「零注入 / 不写缓存」这一条可用 `tests/diag/selectors.js` 现场观察。）
 tests/exportImport/
   prepare.cjs             把被测模块编译成 node 可 require 的 .cjs（产物在 .build/，已 gitignore）
   run.cjs                 导入导出纯逻辑断言：导出清洗 / 校验拒绝路径 / 合并语义 / 幂等 / 用户隔离
@@ -824,7 +827,7 @@ pnpm build && node scripts/verify-css.cjs
 
 ### 浏览器冒烟测试
 
-`tests/smoke/fixture.html` 是仿 GitHub Stars 页面的最小 DOM，内置 GM API stub（内存 store）并加载 `dist/github-star-manager.user.js`；`fixture-detail.html` 同理仿详情页。断言脚本用 `agent-browser-cli` 注入执行：
+`tests/smoke/fixture.html` 是仿 GitHub Stars 页面的最小 DOM，内置 GM API stub（内存 store）并加载 `dist/github-star-manager.user.js`（同时是各 `gen-*.cjs` 生成场景夹具的模板）。断言脚本用 `agent-browser-cli` 注入执行：
 
 ```bash
 pnpm build

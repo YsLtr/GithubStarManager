@@ -55,7 +55,6 @@
     document.querySelector('.stars-card-tags .stars-tag').click();
     out.afterTagClick = {
       cachedCards: document.querySelectorAll('.stars-grid-card-cached').length,
-      originalFiltered: document.querySelectorAll('.stars-tag-filtered').length,
       infoBarText: text(document.querySelector('.stars-tag-info-bar')),
       customLangBtn: !!document.getElementById('stars-custom-lang-button'),
       customSortBtn: !!document.getElementById('stars-custom-sort-button'),
