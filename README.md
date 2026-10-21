@@ -184,6 +184,16 @@ pnpm build     # 产出 dist/github-star-manager.user.js
 
 ---
 
+## 致谢
+
+### 感谢以下社区帮助推广
+[<img src="https://cdn3.ldstatic.com/original/4X/d/1/4/d146c68151340881c884d95e0da4acdf369258c6.png" height="32" />](https://linux.do/)
+
+[<img src="https://www.nodeloc.com/uploads/default/original/3X/d/2/d2dbcb2628506da9299792c1d422c58c0f185528.svg" height="32" />](https://www.nodeloc.com)
+
+
+---
+
 ## 许可
 
 [MIT](LICENSE) © YsLtr
