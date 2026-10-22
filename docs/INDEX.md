@@ -34,11 +34,11 @@
 
 布局规定顶层与部分的主题文件达到 9 份即拆到下一层，路径不带日期。当前偏差与解除条件如下。
 
-- **拆分未执行**：顶层 14 份、`adr/` 11 份、`plans/archive/2026/` 12 份均超过 9 份阈值，超 400 行的文件为 `research-ratelimit-protocol.md`（609 行）、`research-web-star-endpoints.md`（447 行）、`research-web-endpoint-integration.md`（425 行）、`research-pager-jump-a11y-spinner.md`（425 行）。
+- **拆分未执行**：顶层 15 份、`adr/` 13 份、`plans/archive/2026/` 14 份均超过 9 份阈值，超 400 行的文件为 `research-ratelimit-protocol.md`（609 行）、`research-web-star-endpoints.md`（447 行）、`research-web-endpoint-integration.md`（425 行）、`research-pager-jump-a11y-spinner.md`（425 行）。
   **解除条件**：拆分须同时改名，而文件名引用分布在 `DEVELOPER.md`、`AGENTS.md`、`docs/` 其余文件与 `src/` 注释中；`DEVELOPER.md` 与 `src/` 不在文档写入范围内，单方面改名将留下失效引用。拆分与改名在同一批改动中执行。
 - **两份文件保留日期后缀**：`filters-sort-design-2026-09-23.md` 与 `github-api-research-2026-09-22T22-12-37.md`。
   **解除条件**：与上一条同批处理，避免同一目录内并存两套命名。
 
 ## 4. 开放问题
 
-已核对：当前不存在影响上述登记的未知事项。ADR 编号 0001–0011 与 D1–D34 的对应关系由 `AGENTS.md` 的硬口径段维护，本文不复述。
+已核对：当前不存在影响上述登记的未知事项。ADR 编号 0001–0013 与 D1–D36 的对应关系由 `AGENTS.md` 的硬口径段维护，本文不复述。

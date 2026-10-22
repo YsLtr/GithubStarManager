@@ -646,7 +646,11 @@ ID 不可见、名称复用到不同 ID、或目标完全缺失时明确失败�
 - **变化简报**（`emitSyncReport`）：任何 `runFullSync` 路径收尾都弹；口径只有「取消 star / 新增 / 恢复」，**元数据刷新只进控制台**；无变化也弹「无变化（共 N 个 star）」（304 免额度早退路径同样弹）；**不判重**；每条外部取关**各弹一条带「恢复」按钮的通知**。
 - **通知栈**（`ui/notifications.ts`）：常挂 `document.body`（**不是** header 子节点），锚在**全局头部下方**（`div.header-wrapper.js-header-wrapper` 底边 + 8px，滚动/改窗口时 rAF 重算，头部滚出视口后回落视口顶部 8px）、新条目从底部追加、无条数上限、3s 自动消失、**悬停整个区域暂停计时**、带动作按钮的条目成功后原地划掉并重置 3s。**观感 = GitHub 自己的 `.flash`**（内联消息族）：`bgColor-*-muted` 浅色底 + `borderColor-*-muted` 1px 真描边 + 16px 细线 octicon 着 `fgColor-*`；**4.19.3 起这些颜色不再由本文件写死**，而在 `buildItem()` 里经 `resolveUiTheme()` 现场取（`theme.notice[kind]` + `theme.restingShadow` + `theme.btnShadow` + `theme.radiusMedium`），`KIND_ICON` 只留图标 path。尺度对齐本脚本既有 UI（`--borderRadius-medium`、`--shadow-resting-small`、`12px 16px` 内边距、按钮 14px / `6px 14px`）。**不要**用 Primer `Toast` 的 48px 满饱和图标条 + 三层悬浮投影（浮动 toast 族，与卡片/横幅语言不同族）。样式全内联（可出现在任意 github.com 页面，不依赖 Stars 视图注入的样式表）。**4.10.0 起容器入口带视口门**：`ensureContainer()` 在窄视口返回 `null`，`pushNotice` 交回**空句柄**并留一条 console —— 否则窄视口下从 TM 菜单触发一次同步就会把整座栈懒重建出来（与「窄视口完全惰性」冲突）。
 - **失败一律 `alert` 一行文字**（ADR 0003）：写失败、单条恢复失败、批量恢复的失败汇总都走 `alert`——3s 的通知承载不了「唯一可能造成数据丢失的事件」的反馈。
-- **重绘**：有增删差异或可见元数据更新就**立即** `applyFilters({keepPage:true})`——手动与自动来源一视同仁，**不再问「是否刷新」**（原先自动来源 + 最近 10s 有交互会改成可点击提示，已删除）。
+- **重绘由 D36 的挂起门统管**（4.20.0，取代原「立即重绘、不问是否刷新」）：有增删差异或可见元数据更新就调 `applyFilters({keepPage:true})`，手动与自动来源一视同仁 —— 但**是否真的立刻重绘由 `applyFilters` 开头那道门决定**：页面上存在未提交的编辑会话（`inlineEdit.hasInlineEditor()`）⇒ 整条筛选漏斗挂起（连常驻控件都不刷，避免半应用态），编辑结束（捕获相位 `blur` / `keyup` / 指针松开）后 `setTimeout(0)` 补跑一次。**不要**在调用方自己判「是否在编辑」：判据只在那一道门里，两处判据不一致就是 4.13.0 那类缺陷。挂起态由 `viewTeardown` 与 `exitOtherStarsView` 撤除（`cancelDeferredApply()`），否则迟到的补跑会往已还原的原生页面写控件。详见 ADR `0013`。
+
+### 内联编辑器的提交时机（4.20.1）
+
+`blur` 在节点被摘除**之前**派发（实测那一刻 `isConnected` 仍为 `true`），所以「节点还在就直接提交」会把**脚本自己发起的重绘**误认成用户失焦。三个渲染器清空容器时把自己包进 `inlineEdit.suppressInlineCommit()`（`ui/notes.ts`、`ui/tagFilter.ts`、`readonly.ts`），段内产生的 `blur` 一律不算提交；两个编辑器另有 `finished` 一次性闸，同一次编辑只写一次盘。**新增任何会清空编辑容器的渲染路径，都必须同样包起来**，否则症状是：草稿被写回活区（外部取关后活区该为空），且 `renderNotes()` 会把「点击进编辑」的监听重新绑上 —— 只读卡片又能点开编辑框。与之相反，`commitInlineEditors()`（销毁路径）**不做**抑制：那里要的就是提交。
 
 ### 全缓存搜索与筛选联动
 
@@ -674,6 +678,10 @@ ID 不可见、名称复用到不同 ID、或目标完全缺失时明确失败�
 处理**延到一拍之后**（`queueMicrotask`）再判 `input.isConnected`：仍在文档里 = 真失焦 → 提交；已被摘掉
 = 外层渲染接管 → 静默作废。`finish()` 在同拍内先还原单元格、按**当前**页码重写文字，再
 `cell.focus({ preventScroll: true })` 把焦点还给按钮（顶部那份不经 remove/插回，焦点能存活）。
+
+**注意这和 D36 的挂起是两件事**：分页器的页码输入框**不在**「编辑会话」判据里（`src/inlineEdit.ts` 只认卡片内的两种编辑器），
+所以它开着时重绘照常发生 —— 靠的就是上面这套「摘掉即作废」的自愈逻辑。把分页输入框也算进挂起会反过来破坏它
+（挂起 = 不重绘 = 页码永远兑现不了），这是有意为之的排除项。
 
 初始值由 `initFiltersFromUrl()` 从 URL 参数对齐（**URL 只读不写**）：`language` / `type` 支持逗号分隔多值，`none`/`(none)` = 无语言，非法值丢弃，大小写归一（哨兵合并先于去重）。
 
@@ -712,7 +720,19 @@ filterState.page          // 本地浏览页码（1-based）
 filterState.totalPages    // ceil(count / NATIVE_PAGE_SIZE)
 ```
 
-是否处于筛选态用 `hasActiveFilter()` 派生（tags/langs/types/search 任一激活）；sort/direction 属浏览状态，不算筛选、不进信息条。**不变式**：筛选条件未变的重绘（无论命中成员集合是否变化 —— 同步只更新可见元数据时成员集合不变，同样保持当前页），必须显式传 `applyFilters({ keepPage: true })` —— 同步后重绘、卡片星标变更、导入后重绘、卡片标签增删（`ui/tagFilter.ts` 的删除按钮与 `commit()`）都属此类；遗漏该参数的表现就是「在第 N 页操作后回到第 1 页」（`applyFilters` 的默认分支渲染第 1 页）。筛选条件本身的变更（勾选标签 / 语言 / 类型 / 搜索）与排序条件的变更（排序键 / 排序方向）不传该参数，回第 1 页属预期，且排序不参与 `hasActiveFilter()` 判定；结果集收缩导致的页码越界由 `renderBrowsePage` 的夹取兜住，调用点无需自行判断。回归守卫 `tests/diag/assert-keep-page.js` 覆盖的调用点是 `ui/tagFilter.ts` 的删除按钮与 `commit()`，不覆盖同步后重绘、导入后重绘与星标变更三个调用点（安装与注入方式见该文件头，夹具由 `tests/diag/gen-keep-page-harness.cjs` 生成）。
+是否处于筛选态用 `hasActiveFilter()` 派生（tags/langs/types/search 任一激活）；sort/direction 属浏览状态，不算筛选、不进信息条。
+
+**重绘页码不变式**（判据写在调用点，不由 `renderBrowsePage` 猜）：哪种重绘要不要保页码，取决于**成员集合可能变了没有**，而不是「结果集变了没有」。
+
+| 重绘来源 | 传 `keepPage: true`？ | 理由 |
+|---|---|---|
+| 同步后重绘（`fullSync.ts`）、导入后重绘（`index.ts`）、卡片星标变更（`starCheck`）、卡片标签增删（`ui/tagFilter.ts` 的删除按钮与 `commit()`） | **传** | 筛选条件一字未改；成员集合即便变化（外部取关/新增/按当前条件重算），用户视线仍在同一页 |
+| 仅改**排序键 / 排序方向**（`filters.ts` 的两个排序 handler） | **不传** | 排序不进 `hasActiveFilter()`，但它是用户主动发起的视图切换，与「改筛选条件」同族 —— 回第 1 页看新的队首 |
+| 改筛选条件（勾选标签 / 语言 / 类型 / 搜索词） | **不传** | 命中集合换了，第 1 页才是预期 |
+
+遗漏参数的唯一表现就是「在第 N 页操作后回到第 1 页」（`applyFilters` 的默认分支渲染第 1 页）；结果集收缩导致的页码越界由 `renderBrowsePage` 的夹取兜住，调用点无需自行判断。挂起期间（D36）这条语义照样成立：挂起槽的合并规则是「任一方要求回第 1 页则以它为准」，全部 `keepPage` 才保持当前页。
+
+回归守卫：`tests/diag/assert-keep-page.js`（夹具 `tests/diag/gen-keep-page-harness.cjs`）只覆盖 `ui/tagFilter.ts` 的删除按钮与 `commit()` 两个调用点，**不覆盖**同步后重绘、导入后重绘与星标变更；另一个守卫 `tests/diag/assert-defer-rerender.js`（夹具 `tests/diag/gen-defer-rerender-harness.cjs`）在第 2 页上顺带断言「挂起 → 兑现」全程页码不变。
 
 用对象而不是 `export let`，是因为 ESM 的导入绑定对导入方是只读的，无法跨模块重新赋值。
 
