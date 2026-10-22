@@ -3,6 +3,7 @@ import { getNativeFilterRow } from '../dom';
 import { filterState } from '../state';
 import { applyFilters, computeTagCandidates, hasAnyTags } from '../filters';
 import { getTags, saveTags } from '../storage/tags';
+import { isInlineCommitSuppressed, suppressInlineCommit } from '../inlineEdit';
 
 /** 勾选/取消一个标签筛选条件并重绘。**唯一实现** —— 筛选栏 chip 与卡片标签都走这里 */
 function toggleTagFilter(tag: string): void {
@@ -209,7 +210,12 @@ export function renderTags(tagsContainer: HTMLElement, opts: TagRenderOptions = 
   const filterToggle = opts.filterToggle !== false;
 
   const tags = getTags(repoId);
-  tagsContainer.innerHTML = '';
+  // 同 `ui/notes.ts`：清空会摘掉可能正在聚焦的输入框，而 blur 在**摘除之前**就派发
+  // （isConnected 仍为 true）⇒ 脚本自己发起的重绘不算用户提交，否则草稿写回活区、
+  // 且只读卡片上的「点击进编辑」监听会被重新绑上。
+  suppressInlineCommit(() => {
+    tagsContainer.innerHTML = '';
+  });
 
   tags.forEach((tag, idx) => {
     const span = document.createElement('span');
@@ -260,7 +266,16 @@ export function renderTags(tagsContainer: HTMLElement, opts: TagRenderOptions = 
     tagsContainer.appendChild(input);
     input.focus();
 
+    let finished = false;
+
     function commit() {
+      if (finished) return;
+      // 脚本自己发起的重绘（清空容器 / 刷只读）不算用户提交：blur 在节点**摘除之前**就派发了，
+      // `isConnected` 还是 true，只能靠发起方标出来的这个标志（见 inlineEdit.ts）。
+      if (isInlineCommitSuppressed()) return;
+      // 真正被摘掉（异步移除、卡片整体销毁）的不落盘：外部取关后活区该为空。
+      if (!input.isConnected) return;
+      finished = true;
       const val = input.value.trim();
       if (val) {
         const current = getTags(repoId);
@@ -280,7 +295,8 @@ export function renderTags(tagsContainer: HTMLElement, opts: TagRenderOptions = 
 
     input.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
-      if (ev.key === 'Escape') { input.remove(); addBtn.style.display = ''; }
+      // Escape = 取消：先落 finished 再摘节点，否则摘掉聚焦输入框时派发的 blur 会把「取消」变成提交
+      if (ev.key === 'Escape') { finished = true; input.remove(); addBtn.style.display = ''; }
     });
     input.addEventListener('blur', () => commit());
   });

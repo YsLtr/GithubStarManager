@@ -14,6 +14,7 @@ import { loadRepoCache } from './storage/repoCache';
 import { isStarredByViewer, loadViewerCacheForView } from './cardState';
 import { renderCardTagAndNoteAreas } from './cardAreas';
 import { getOtherPageRepos, isReadOnlyView } from './viewContext';
+import { hasInlineEditor } from './inlineEdit';
 import { loadAllTags } from './storage/tags';
 import { buildCardFromCache, createStarButtonForCached } from './ui/cards';
 import { refreshTagFilterBar, refreshTagPillStates } from './ui/tagFilter';
@@ -240,6 +241,10 @@ function computeTypeCandidates(): TypeFilter[] {
  * 缓存 → 查询管线 → 切 NATIVE_PAGE_SIZE/页渲染。Type 的 Public/Sources 这类大集合
  * 筛选不再一次平铺全部结果卡（渲染卡顿根因），单次渲染恒 ≤ 30 张。
  * 搜索高亮在此应用——翻页后的新卡片同样带高亮。
+ *
+ * **本函数不判断编辑会话**（D36）：挂起门在 `applyFilters` 里。直调这里只有三个入口 ——
+ * 翻页（用户点击，blur 已先提交）、他人页首帧、导入后的他人页重绘 —— 都不可能在有草稿时发生。
+ * 新增直调入口前先确认这一点，否则又会出现「重绘摘掉输入框、草稿静默丢字」。
  * @returns 查询结果总数（applyFilters 拿去渲信息条计数，避免二次全遍历）
  */
 export function renderBrowsePage(page: number): number {
@@ -431,11 +436,181 @@ function renderFilterInfoBar(count: number): void {
   colLg9.insertBefore(bar, gridContainer);
 }
 
+/* ================================================================
+ * 重绘挂起（4.20.0 / D36）：卡片里有未提交的编辑会话时，整条重绘推迟到编辑结束之后
+ *
+ * ## 缺陷是什么（夹具实测，勿照抄成「移除节点不派发 blur」）
+ *
+ * 1. 编辑态一定退出：`replaceChildren` 把整张卡片换掉，输入框跟着没了。
+ * 2. 草稿在屏上消失，而它其实可能已经落盘了 —— 分片是在 `replaceChildren` **之前**建好的
+ *    （见 `renderBrowsePage`；那是为了不出现空网格）。重绘其间发生的提交只会写进存储，
+ *    新卡片早已按旧值建好，且此后没有第二次渲染 ⇒ 用户看到的就是「字没了」。
+ * 3. 想在重绘时「先提交再重建」也救不回来：提交跑在拆旧节点的时候，
+ *    Chromium 实测会**补发** blur（夹具 `premise_blurOnRemove`），但此时目标已在文档外，
+ *    `focusout` / `blur` 都传播不到 document，挂在 document 上的收尾逻辑一条也收不到 ——
+ *    「节点离场后补发的事件不可用」本身就是要绕开的东西。
+ *
+ * ## 所以不抢救、只推迟
+ *
+ * 整条重绘（控件原位刷新 + 网格 + 信息条）一起挂起，编辑结束后原样再跑一次。挂起期间不碰
+ * 任何 DOM，也就不存在「半应用」的中间态，也不会打断输入法组合。
+ *
+ * 谁会在用户打字时请求重绘：进页自动同步（2s 后 `scheduleProbeSync` → `runFullSync('auto')`）、
+ * 手动同步、卡片星标写成功（`starCheck`）、后台同步确认外部取关、导入。其中**没有用户手势**
+ * 的那几条（进页自动同步、导入）根本没有 blur 先发生 —— 这个缺陷的主犯。
+ *
+ * 挂起槽只有一个，不是每个调用方各存一份：同一时刻只可能有一个「用户想要的结果画面」
+ * （当前筛选条件 + 当前页），多次请求按可合并的规则并成一次。
+ * ================================================================ */
+
+/** 挂起中的重绘：`apply` = 本方筛选漏斗，`page` = 他人页的直调首帧重绘（它不经 applyFilters） */
+type PendingRender = { kind: 'apply'; keepPage?: boolean } | { kind: 'page'; page: number };
+
+let pending: PendingRender | null = null;
+let flushTimer = 0;
+/**
+ * 指针按下还没松开。此刻重绘会换掉 mousedown 的目标节点，而 `click` 按规范只派发到
+ * 「按下与松开时都还挂着的最近共同祖先」⇒ 用户这一下点击静默失效。所以松手前不重绘。
+ */
+let pointerHeld = false;
+let flushListenersArmed = false;
+
+/**
+ * 编辑结束的信号有三个来源，缺一不可：
+ *
+ * 1. `blur`（**捕获阶段**）—— 用户点击别处 / 窗口失焦。必须挂在 document 的**捕获**相位：
+ *    `blur` 不冒泡，且提交处理器本身会把编辑器从 DOM 里摘掉（`renderNotes` / `renderTags` 重画），
+ *    摘掉之后的 `focusout` 目标已在文档外、**传播不到 document**（夹具实测：挂在 focusout 上
+ *    永远收不到，草稿就这么挂死了）。
+ * 2. `keyup` —— Enter / Escape 提交是**直接摘节点**：keydown 里摘、keyup 落到 body，只能靠它补。
+ * 3. `pointerup` / 窗口失焦 —— 指针没松开就不重绘（见 `pointerHeld`），松手后再排一拍。
+ *    监听挂 window 而不是 document：拖到窗口外松手时靠的是浏览器的隐式鼠标捕获，
+ *    而「按住鼠标时切走窗口」只会来 window 的 blur —— 两条都要能把标志放掉，
+ *    否则它一旦卡住，此后所有挂起的重绘都不再兑现（网格停在旧画面）。
+ */
+function armFlushListeners(): void {
+  if (flushListenersArmed) return;
+  flushListenersArmed = true;
+  document.addEventListener('blur', scheduleFlush, true);
+  document.addEventListener('keyup', scheduleFlush, true);
+  document.addEventListener('pointerdown', onPointerDown, true);
+  window.addEventListener('pointerup', releasePointer, true);
+  window.addEventListener('pointercancel', releasePointer, true);
+  window.addEventListener('blur', releasePointer);
+}
+
+function disarmFlushListeners(): void {
+  if (!flushListenersArmed) return;
+  flushListenersArmed = false;
+  document.removeEventListener('blur', scheduleFlush, true);
+  document.removeEventListener('keyup', scheduleFlush, true);
+  document.removeEventListener('pointerdown', onPointerDown, true);
+  window.removeEventListener('pointerup', releasePointer, true);
+  window.removeEventListener('pointercancel', releasePointer, true);
+  window.removeEventListener('blur', releasePointer);
+  // 连同标志一起复位：监听没了就再也不会有人来放掉它，留着一个 true 会让下一轮挂起
+  // 永远停在「指针还按着」上（那时连 pointerup 监听都没挂）。
+  pointerHeld = false;
+}
+
+function onPointerDown(): void {
+  pointerHeld = true;
+}
+
+function releasePointer(): void {
+  pointerHeld = false;
+  if (pending) scheduleFlush();
+}
+
+/** 排到当前任务之后：提交处理器（saveTags/saveNote + 局部重画）与这次手势的 click 都要先走完 */
+function scheduleFlush(): void {
+  if (!pending || flushTimer) return;
+  flushTimer = window.setTimeout(flushPendingRender, 0);
+}
+
+function flushPendingRender(): void {
+  flushTimer = 0;
+  if (!pending) {
+    disarmFlushListeners();
+    return;
+  }
+  // 又开了一个编辑器（或在两张卡之间换着编辑）⇒ 继续挂着，等下一次编辑结束
+  if (hasInlineEditor()) return;
+  if (pointerHeld) return; // 等 pointerup（它会再排一次）
+  const req = pending;
+  pending = null;
+  disarmFlushListeners();
+  console.log('[github-star-manager] 编辑已结束：补跑挂起的重绘（D36）');
+  runPendingRender(req);
+}
+
+function runPendingRender(req: PendingRender): void {
+  if (req.kind === 'page') {
+    renderBrowsePage(req.page);
+    return;
+  }
+  applyFilters({ keepPage: req.keepPage });
+}
+
+function queueRender(req: PendingRender): void {
+  const wasEmpty = pending === null;
+  if (req.kind === 'apply' && pending?.kind === 'apply') {
+    // 合并同一批挂起请求：只要有一次要求「回第 1 页」（筛选条件变了），就以它为准；
+    // 全部是 keepPage 才保持当前页 —— D12 补的语义在挂起期间不能被丢掉
+    pending = { kind: 'apply', keepPage: pending.keepPage === true && req.keepPage === true };
+  } else {
+    pending = req;
+  }
+  armFlushListeners();
+  // 只记第一次：外部来源（同步/导入）的每次探测都可能再调一次，逐次打日志会刷屏。
+  // 这条痕迹用于真机排查「简报说同步完成、网格却还没变」的那几秒。
+  if (wasEmpty) console.log('[github-star-manager] 卡片正在编辑：本次重绘推迟到编辑结束后（D36）');
+}
+
+/**
+ * 有编辑会话就把筛选漏斗挂起。
+ * @returns `true` = 已挂起，调用方**必须立刻返回**，不得再写入 DOM
+ */
+export function deferApply(opts: { keepPage?: boolean } = {}): boolean {
+  if (!hasInlineEditor()) return false;
+  queueRender({ kind: 'apply', keepPage: opts.keepPage === true });
+  return true;
+}
+
+/**
+ * 他人页的直调重绘也过同一道挂起门（D36）。
+ *
+ * 为什么不能直接 `renderBrowsePage(1)`：他人页的卡片**也可能可编辑**（D29 逐仓库三态），
+ * 而它的重绘入口刻意绕开了 `applyFilters`（那会往页面主人的原生筛选行插脚本控件）。
+ * 唯一调用方是导入后的重绘（`index.ts` 的 afterImport），导入走 TM 菜单、页面焦点不会先失焦
+ * ⇒ 不设这道门就是「在别人页上编辑备注时导入 → 备注静默丢掉」。
+ */
+export function renderBrowsePageDeferred(page: number): void {
+  if (!hasInlineEditor()) {
+    renderBrowsePage(page);
+    return;
+  }
+  queueRender({ kind: 'page', page });
+}
+
+/** 撤掉挂起态与监听（回滚 / 离开视图时必须调：迟到的重绘会往已还原的原生筛选行里插控件） */
+export function cancelDeferredApply(): void {
+  pending = null;
+  if (flushTimer) {
+    window.clearTimeout(flushTimer);
+    flushTimer = 0;
+  }
+  disarmFlushListeners();
+}
+
 /**
  * 应用当前筛选状态（4.4.0 统一漏斗）：browse 与筛选态都走本地分页渲染，
  * 只有原生 clear 条显隐与信息条随态切换——大集合筛选不再平铺全部结果卡。
  * 常驻本地控件**原位刷新**（容器只建一次），Type/Language 菜单的 popover
  * 在勾选过程中保持打开（勾选不收起）。
+ *
+ * 4.20.0（D36）：卡片里有打开的编辑框时**整条挂起**，编辑结束后自动补跑一次
+ * （见 `deferApply`）。所以调用方不需要、也不应该自己判断「现在有没有人在编辑」。
  */
 export function applyFilters(opts: { keepPage?: boolean } = {}): void {
   // 窄视口（4.9.1）：整条渲染/控件管线一行都不跑。这是**兜底门**——回调可能来自
@@ -452,6 +627,13 @@ export function applyFilters(opts: { keepPage?: boolean } = {}): void {
   // 「在自己页筛过标签 → Turbo 切到别人的 stars 页 → 在卡片上点 star」就会踩中。
   // 此前唯一的防护是「他人页入口刻意直调 renderBrowsePage 绕过 applyFilters」，属实现约定而非不变量。
   if (isReadOnlyView()) return;
+  // 编辑会话存在 ⇒ 整条挂起（D36）：此刻拆建网格会连同正在编辑的输入框一起摘掉，而
+  // 「移除聚焦元素不派发 blur」⇒ 草稿静默丢字。编辑结束后由 flushPendingRender 原样补跑。
+  if (deferApply(opts)) return;
+  // 走到这里说明页面上没有草稿：本次就是那条挂起请求的兑现，或它已被新到的请求取代。
+  // 无论哪种，挂起态都到此为止 —— 这次重绘渲的就是「当前筛选 + 当前页」，没有别的画面可补。
+  cancelDeferredApply();
+
   // 这里曾有 `.stars-grid-card-cached` 的整批预删除（已删）。它与 renderBrowsePage 的
   // 容器清空完全重复，却把「网格为空」这个可被布局观察到的中间态**提前**到渲染之前
   // ⇒ 用户滚到底部时，一次筛选/同步重绘就永久跳回顶部。拆建只在 renderBrowsePage 一处做。

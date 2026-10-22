@@ -607,8 +607,10 @@ function emitSyncReport(source: 'button' | 'auto', r: SyncReportInput): void {
 }
 
 /**
- * 同步后重绘网格：有增删差异或可见元数据更新就**立即重绘**。
- * 用户裁定：不再问「是否刷新」——自动来源同样直接换列表，简报已经说明发生了什么。
+ * 同步后重绘网格：有增删差异或可见元数据更新就重绘。
+ *
+ * 4.20.0（D36）：「立即」让位于编辑会话 —— 卡片里有未提交的标签/备注草稿时，`applyFilters`
+ * 会把整条重绘挂起到编辑结束（不是取消）。挂起期间网格保持旧画面，用户手上那一笔不被打断。
  */
 function rerenderAfterSync(changed: number): void {
   if (changed <= 0) return;

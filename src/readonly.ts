@@ -38,6 +38,7 @@
  */
 
 import { gmAddStyle } from './gm';
+import { suppressInlineCommit } from './inlineEdit';
 import readonlyCss from './styles/readonly.css?inline';
 
 /**
@@ -105,7 +106,9 @@ function buildNoteRow(note: string, title: string): HTMLElement {
  * 无标签 ⇒ 留空容器（不显示任何占位）。
  */
 export function renderTagsReadOnly(container: HTMLElement, tags: string[], title = CARDS_TITLE_LOCKED): void {
-  container.innerHTML = '';
+  suppressInlineCommit(() => {
+    container.innerHTML = '';
+  });
   if (tags.length === 0) return;
   ensureStyles();
   container.appendChild(buildTagRow(tags, title));
@@ -113,7 +116,12 @@ export function renderTagsReadOnly(container: HTMLElement, tags: string[], title
 
 /** 把备注**只读**渲染进卡片的备注容器（数据同样由调用方传入，理由见 `renderTagsReadOnly`）。无备注 ⇒ 留空容器。 */
 export function renderNotesReadOnly(container: HTMLElement, note: string, title = CARDS_TITLE_LOCKED): void {
-  container.innerHTML = '';
+  // 这一处最关键：从「可编辑」翻成只读时，容器里可能正有一个聚焦的 textarea，
+  // 而 blur 在它被摘除**之前**就派发（isConnected 仍为 true）⇒ 不抑制就会被当成用户提交：
+  // 草稿写回活区（外部取关后活区该为空）、`renderNotes()` 把编辑监听重新绑上（只读卡片又能点开）。
+  suppressInlineCommit(() => {
+    container.innerHTML = '';
+  });
   if (!note) return;
   ensureStyles();
   container.appendChild(buildNoteRow(note, title));

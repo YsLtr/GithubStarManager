@@ -3,7 +3,7 @@ import { beginGeneration, createScope } from './lifecycle';
 import { teardownStarsView } from './viewTeardown';
 import { installBootHide, isStarsPage, revealBootHide, revealTurboHide } from './boot';
 import { applyHideListsGate, getRepoIdMeta, getStarsMainColumn, hideListsSection, isHideListsEnabled } from './dom';
-import { applyFilters, exitCustomMode, initFiltersFromUrl, renderBrowsePage } from './filters';
+import { applyFilters, exitCustomMode, initFiltersFromUrl, renderBrowsePageDeferred } from './filters';
 import { hasApiData, registerSyncMenu, runFullSync, scheduleProbeSync } from './fullSync';
 import { interceptPagination } from './pagination';
 import { registerTokenMenu } from './starCheck';
@@ -559,8 +559,10 @@ function init(): void {
   setAfterImportHandler(() => {
     if (isStarsPage() && document.querySelector('.stars-grid-container')) applyFilters({ keepPage: true });
     // 他人页（4.13.0）：导入可能带来新的标签/备注 ⇒ 只重绘网格。
-    // 刻意**不**走 applyFilters（它会往原生筛选行插脚本控件，违反 V2「不挂脚本筛选栏」）
-    else if (isReadOnlyScope()) renderBrowsePage(1);
+    // 刻意**不**走 applyFilters（它会往原生筛选行插脚本控件，违反 V2「不挂脚本筛选栏」）。
+    // 4.20.0：走挂起门 —— 他人页卡片也可能可编辑（D29），而导入走 TM 菜单、页面焦点不会先失焦
+    // ⇒ 直调 renderBrowsePage 会把用户正在写的备注连同节点一起摘掉（见 D36）。
+    else if (isReadOnlyScope()) renderBrowsePageDeferred(1);
   });
   // 开关切换后重挂已存在的配置面板（🟡-1：关态下面板须挂网格列顶，不占 Lists 槽位）
   setHideListsRepositionHandler(() => {

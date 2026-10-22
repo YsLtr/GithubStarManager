@@ -1,4 +1,5 @@
 import { getNote, saveNote } from '../storage/notes';
+import { isInlineCommitSuppressed, suppressInlineCommit } from '../inlineEdit';
 
 /**
  * 备注容器上「点一下进编辑态」的那枚监听（每个容器至多一枚）。
@@ -42,7 +43,12 @@ export function renderNotes(notesContainer: HTMLElement): void {
   disposeNotesEditor(notesContainer);
 
   const note = getNote(repoId);
-  notesContainer.innerHTML = '';
+  // 清空会摘掉可能正在聚焦的 textarea，而 Chromium 在**摘除之前**就派发 blur（实测 isConnected 仍为
+  // true）⇒ 不抑制的话，这次 blur 会被 commit 当成用户提交：草稿写回活区，且 commit 里的
+  // `renderNotes()` 会把本函数重新跑一遍、把「点击进编辑」的监听重新绑上（见 inlineEdit.ts）。
+  suppressInlineCommit(() => {
+    notesContainer.innerHTML = '';
+  });
 
   if (note) {
     const textEl = document.createElement('div');
@@ -74,9 +80,17 @@ export function renderNotes(notesContainer: HTMLElement): void {
     textarea.focus();
 
     let cancelled = false;
+    /** 一次编辑只提交一次（blur 会因为「提交后重画」再被触发一次，见下面的 commit） */
+    let finished = false;
 
     function commit() {
-      if (cancelled) return;
+      if (cancelled || finished) return;
+      // 脚本自己发起的重绘（清空容器 / 刷只读）不算用户提交：那时 blur 在节点**摘除之前**就派发了，
+      // `isConnected` 还是 true，只能靠发起方标出来的这个标志（见 inlineEdit.ts）。
+      if (isInlineCommitSuppressed()) return;
+      // 已被真正摘掉（异步移除、卡片整体销毁）的节点不落盘：外部取关后活区该为空。
+      if (!textarea.isConnected) return;
+      finished = true;
       const val = textarea.value.trim();
       saveNote(repoId, val);
       renderNotes(notesContainer);

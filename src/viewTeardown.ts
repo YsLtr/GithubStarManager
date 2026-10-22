@@ -20,6 +20,8 @@ import { revealBootHide, revealTurboHide } from './boot';
 import { disposeNotificationStack } from './ui/notifications';
 import { GSM_HIDDEN_ATTR } from './constants';
 import { unmountSyncButton } from './fullSync';
+import { cancelDeferredApply } from './filters';
+import { commitInlineEditors } from './inlineEdit';
 import { disposeSearchInterception } from './search';
 import { isDesktop } from './utils';
 import { exitOtherStarsView } from './otherStarsView';
@@ -27,6 +29,12 @@ import { exitOtherStarsView } from './otherStarsView';
 export function teardownStarsView(reason: string): void {
   // 留痕（与链上其它转换一致）：网格消失后能一眼看出是谁撤的、为什么撤
   console.log(`[github-star-manager] teardown（回滚到原生视图）：${reason}`);
+  // 0) 挂起中的重绘（D36）连同它的编辑结束监听一起丢掉：网格马上就被回滚掉了，
+  //    留着它只会在若干毫秒后对着一片原生页面跑 applyFilters（往已还原的原生筛选行插控件）。
+  cancelDeferredApply();
+  // 0b) 还开着的标签/备注编辑器先按失焦语义提交：节点马上被删，而删节点时 blur 的派发时机
+  //     各引擎不一致、那一刻视图已在半拆状态 ⇒ 不主动提交就是把草稿押在引擎行为上。
+  commitInlineEditors();
   // 1) 被搬走的原生内容先还回去：`.col-lg-3`（Starred topics）的整棵子树仍在右栏容器里，
   //    归还规则（只认 GSM_TOPICS_SRC_ATTR 标记、无标记宁可不还原）见 dom.ts 的
   //    restoreTopicsFromRightSidebar —— 与他人页视图共用同一份，避免两处漂移。

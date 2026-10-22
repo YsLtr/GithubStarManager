@@ -28,7 +28,8 @@
 import { getStarsMainColumn, hideListsSection, hideNativeNode, moveTopicsToRightSidebar, restoreTopicsFromRightSidebar } from './dom';
 import { ensureLayoutStyles, removeLayoutStyles } from './layoutStyles';
 import { collectPageRepos } from './domRepos';
-import { renderBrowsePage } from './filters';
+import { cancelDeferredApply, renderBrowsePage } from './filters';
+import { commitInlineEditors } from './inlineEdit';
 import { setLangColorFetchEnabled } from './langColors';
 import { mountTopPager } from './topPager';
 import { getPageOwnerLogin } from './pageScope';
@@ -160,6 +161,12 @@ export function enterOtherStarsView(): boolean {
  * 在「他人页 → 我自己的页」的转换路径上会被直接调用，那条路不经过 teardown。
  */
 export function exitOtherStarsView(): void {
+  // 挂起中的重绘（D36）连同它的编辑结束监听一起丢掉：网格马上被抹掉，留着它只会在若干毫秒后
+  // 对着「另一张视图」（可能已经是我自己的页）跑一次首帧重绘。
+  cancelDeferredApply();
+  // 还开着的编辑器先按失焦语义提交：他人页的卡片也可能是可编辑的（D29），而节点马上被删 ——
+  // 删节点时 blur 的派发时机各引擎不一致，不能把草稿押在引擎行为上。
+  commitInlineEditors();
   document.querySelectorAll(`.${GRID_CLASS}`).forEach((el) => el.remove());
   // 顶部翻页器克隆件 + 标题行上的 flex 类（都属本次接管的产物，必须一起收干净）
   document.querySelectorAll('.gsm-top-pager').forEach((el) => el.remove());

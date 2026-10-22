@@ -14,8 +14,9 @@
 //   Read，仓库范围选 All repositories（官方 fine-grained 端点权限表
 //   "User permissions for Starring" 列出全部 5 个 /user/starred* 端点）。
 //
-import { applyFilters } from './filters';
+import { applyFilters, deferApply } from './filters';
 import { gmRegisterMenuCommand } from './gm';
+import { hasInlineEditor, mergeDraftIntoGraceBackup } from './inlineEdit';
 import { filterState } from './state';
 import { getNote, saveNote } from './storage/notes';
 import { setTokenVerified } from './storage/accountIdentity';
@@ -157,6 +158,20 @@ export function syncCardAfterStarChange(repoId: string, isStarred: boolean): voi
   // 「同一概念两处实现、判据漂移」正是 4.14.0 那个缺陷的成因（见 D29 / ADR 0009 追加 7）。
   const btn = card.querySelector<HTMLButtonElement>('.stars-star-btn');
   if (btn && btn.classList.contains('starred') !== isStarred) setStarButtonVisual(btn, isStarred);
+
+  // D36（4.20.0）：这张卡正被编辑时绝不重画它的标签/备注区（星标外观上面已经改完）——
+  // 移除聚焦节点不派发 blur，「重画区域」= 直接丢字。
+  if (hasInlineEditor(card)) {
+    if (isStarred) {
+      // 变回可编辑：可编辑性与标签/备注内容都没变 ⇒ 重画只会丢字，没有别的收益。
+      // 有激活筛选时结果集要重算，交给挂起门，编辑结束后兑现。
+      if (!isReadOnlyView()) deferApply({ keepPage: true });
+      return;
+    }
+    // 外部取关：这张卡即将转只读，挂起重绘在这里不成立 —— 数据此刻在 24h 宽限期备份里，
+    // 让编辑器继续开着等失焦提交，写进的就是活区孤儿数据。先把草稿并进备份，再往下刷只读。
+    mergeDraftIntoGraceBackup(repoId, card);
+  }
 
   // 他人页：只重画这张卡片的标签/备注，**绝不**往下走到 applyFilters。
   if (isReadOnlyView()) {
