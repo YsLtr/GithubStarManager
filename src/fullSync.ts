@@ -223,7 +223,7 @@ function authIssueMessage(resp: Response): string {
 /**
  * 拉取单页（条件可选：命中 304 → notModified；401/403/非 2xx/速率余量/非数组一律抛错——调用方保证不落地半张表）
  *
- * 每页 30s 超时：`parentSignal` 只负责「任一波次要失败 → 中止全部在途」（runWaves 的 ctrl），
+ * 每页 15s 超时：`parentSignal` 只负责「任一波次要失败 → 中止全部在途」（runWaves 的 ctrl），
  * 它自己不会到期；没有本层计时，一页卡住就整轮同步无限期停在 running。
  * 超时同样让请求以 AbortError 拒绝 ⇒ 该波判失败、ctrl.abort() 连带中止同波其余页、整体放弃（红线不变）。
  * 计时覆盖到 resp.json()：fetch 在响应头到达时即兑现，只对 fetch 计时等于没管正文读取。
@@ -231,7 +231,7 @@ function authIssueMessage(resp: Response): string {
  * 用 AbortController 手搓而不用 AbortSignal.timeout()（cssTarget 含 safari15，同 langColors.ts）。
  * 超时用 Error 而非 AbortError：pickRealError 会把 AbortError 当「我们自己的中止」跳过。
  */
-const PAGE_TIMEOUT_MS = 30_000;
+const PAGE_TIMEOUT_MS = 15_000;
 
 async function fetchStarredPage(tok: string, page: number, parentSignal: AbortSignal, ifNoneMatch?: string): Promise<PageFetch> {
   const ctrl = new AbortController();
@@ -245,7 +245,7 @@ async function fetchStarredPage(tok: string, page: number, parentSignal: AbortSi
   try {
     return await fetchStarredPageOnce(tok, page, ctrl.signal, ifNoneMatch);
   } catch (err) {
-    if (timedOut) throw new Error(`第 ${page} 页 30s 内未取回，整体放弃`);
+    if (timedOut) throw new Error(`第 ${page} 页 15s 内未取回，整体放弃`);
     throw err;
   } finally {
     window.clearTimeout(timer);
