@@ -21,7 +21,7 @@ import { disposeNotificationStack } from './ui/notifications';
 import { GSM_HIDDEN_ATTR } from './constants';
 import { unmountSyncButton } from './fullSync';
 import { cancelDeferredApply } from './filters';
-import { commitInlineEditors } from './inlineEdit';
+import { commitInlineEditors, disarmPressTracking } from './inlineEdit';
 import { disposeSearchInterception } from './search';
 import { isDesktop } from './utils';
 import { exitOtherStarsView } from './otherStarsView';
@@ -35,6 +35,9 @@ export function teardownStarsView(reason: string): void {
   // 0b) 还开着的标签/备注编辑器先按失焦语义提交：节点马上被删，而删节点时 blur 的派发时机
   //     各引擎不一致、那一刻视图已在半拆状态 ⇒ 不主动提交就是把草稿押在引擎行为上。
   commitInlineEditors();
+  // 0c) 编辑器「避开手势才收尾」那套按压跟踪也一并撤掉：脚本撤场后不该再碰页面（D18），
+  //     且监听从编辑框被创建时才挂，撤干净才不会在窄视口留下痕迹。
+  disarmPressTracking();
   // 1) 被搬走的原生内容先还回去：`.col-lg-3`（Starred topics）的整棵子树仍在右栏容器里，
   //    归还规则（只认 GSM_TOPICS_SRC_ATTR 标记、无标记宁可不还原）见 dom.ts 的
   //    restoreTopicsFromRightSidebar —— 与他人页视图共用同一份，避免两处漂移。

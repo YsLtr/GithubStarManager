@@ -63,6 +63,124 @@ export function suppressInlineCommit<T>(fn: () => T): T {
   }
 }
 
+/* ================================================================
+ * 「按下到松开之间不许改 DOM」：编辑器收尾排到这次手势之后（4.21.0）
+ *
+ * ## 缺陷（夹具 trusted click 实测，2026-10-27）
+ *
+ * 编辑框里打了字，直接点**另一处**（另一张卡的备注、另一张卡的「+」、某个标签胶囊）：那一击被
+ * 吃掉，效果等同点了空白 —— 只有 tag/备注生效。事件顺序（`.diag` 里的 `__evlog` 原文）：
+ *
+ *   pointerdown → mousedown(card2 .stars-card-notes-text) → blur(card1 .stars-tag-input)
+ *   → [commit：同步 saveTags + renderTags + applyFilters → renderBrowsePage → replaceChildren]
+ *   → pointerup → mouseup → **一条 click 都没有**
+ *
+ * `click` 的目标按规范是「mousedown 与 mouseup 目标的最近公共祖先」；commit 在按下与松开之间把
+ * 整张网格换掉，mousedown 的目标节点已不在文档里 ⇒ 公共祖先为空，Chrome 干脆不派发 click。
+ * 备注编辑框还有第二重：它 `min-height: 40px`，退出编辑态时卡片高度缩回（实测 208→183），
+ * mouseup 便落在**另一个**元素上，click 被重定向到两者共同的祖先，目标处理器同样收不到。
+ *
+ * 反证：点上方筛选栏是好的 —— 那一排在 `.stars-grid-container` **之外**，网格换掉它还在。
+ *
+ * ## 所以：数据同步落盘，改 DOM 的部分推迟到手势之后
+ *
+ * 落盘不能推（这一下点击可能立刻导航走），所以 `saveTags` / `saveNote` 仍在 blur 里同步做；
+ * 只把**拆编辑框 / 重画区域 / 重跑筛选**排到 pointerup 之后的一拍 —— 那一拍在 click 派发之后。
+ * 没有按住指针时（Tab 失焦、脚本自己 `blur()`）立即执行，与 4.20.1 的行为一致。
+ *
+ * 已知代价：按住不放期间编辑框仍在屏上（无光标），松手后一拍才收尾。人手按住通常 <1s。
+ * ================================================================ */
+
+let pressInFlight = false;
+let pressTrackingArmed = false;
+/** 排在「这次手势之后」的收尾动作 */
+let afterPress: Array<() => void> = [];
+/** 「编辑器会话结束了」的通知：重绘挂起门靠它补跑（见 filters.ts）。**只有这一个**订阅者。 */
+let settledHandler: (() => void) | null = null;
+
+function onPressDown(): void {
+  pressInFlight = true;
+}
+
+/**
+ * 松手 / 取消 / 窗口失焦：标记复位并兑现排队的收尾。
+ *
+ * 必须再等一拍（`setTimeout 0`）才动 DOM：`click` 在 mouseup 之后、同一轮事件里派发，
+ * 指针一松就拆节点等于又把 click 的目标换掉。
+ */
+function onPressEnd(): void {
+  pressInFlight = false;
+  if (afterPress.length === 0) return;
+  const queued = afterPress;
+  afterPress = [];
+  window.setTimeout(() => {
+    for (const fn of queued) fn();
+  }, 0);
+}
+
+/**
+ * 开始监听「指针按着没有」。**在编辑框被创建时调**（那时才第一次可能出现「按着的同时失焦」），
+ * 不在模块加载时挂 —— 窄视口下脚本必须一行都不碰页面（D18）。幂等：挂一次，到视图销毁才摘。
+ */
+export function armPressTracking(): void {
+  if (pressTrackingArmed) return;
+  pressTrackingArmed = true;
+  document.addEventListener('pointerdown', onPressDown, true);
+  window.addEventListener('pointerup', onPressEnd, true);
+  window.addEventListener('pointercancel', onPressEnd, true);
+  // 在窗口外松开时页面收不到 pointerup（鼠标没有隐式指针捕获），只能靠窗口失焦兜；
+  // 标志卡在 true 会让此后每次编辑器收尾都排进「等松手」而永不兑现。
+  window.addEventListener('blur', onPressEnd);
+}
+
+/** 此刻是否按着指针（重绘挂起门用它决定「现在能不能换 DOM」） */
+export function isPressInFlight(): boolean {
+  return pressInFlight;
+}
+
+/**
+ * 视图销毁时撤掉按压跟踪（D18：脚本撤场后不再碰页面）。两个回滚点各调一次。
+ *
+ * 必须连状态一起复位：监听没了就再没人来放掉这个标志，留一个 `true` 会让**此后每次**重绘都被
+ * 判成「用户还按着鼠标」，挂起重绘就永远不兑现了（网格停在旧画面）。
+ */
+export function disarmPressTracking(): void {
+  if (!pressTrackingArmed) return;
+  pressTrackingArmed = false;
+  document.removeEventListener('pointerdown', onPressDown, true);
+  window.removeEventListener('pointerup', onPressEnd, true);
+  window.removeEventListener('pointercancel', onPressEnd, true);
+  window.removeEventListener('blur', onPressEnd);
+  pressInFlight = false;
+  // 排队的收尾就地跑掉而不是丢弃：它们只做「拆编辑框 / 重画本卡区域」这类 DOM 收尾，
+  // 调用方随后会整棵拆掉视图，跑一遍是幂等的；丢掉则会在自己的注释里留下「草稿收尾会执行」
+  // 的反面事实（谁来读都会以为它已经执行过）。
+  const queued = afterPress;
+  afterPress = [];
+  for (const fn of queued) fn();
+}
+
+/** 订阅「编辑器会话结束」（挂起门在里面排一次补跑）。只有一个订阅者，所以只存一个。 */
+export function onInlineEditSettled(cb: () => void): void {
+  settledHandler = cb;
+}
+
+/**
+ * 编辑器的 DOM 收尾：没按着指针就立刻做；按着就排到这次手势之后（见本节长注释）。
+ * 收尾跑完通知订阅者 —— 挂起重绘可能正因为这个编辑器而挂着。
+ */
+export function finishInlineEdit(teardown: () => void): void {
+  const run = (): void => {
+    teardown();
+    settledHandler?.();
+  };
+  if (!pressInFlight) {
+    run();
+    return;
+  }
+  afterPress.push(run);
+}
+
 /**
  * 视图即将销毁（跨断点收窄 / 离开 Stars / 退出他人页）时，把还开着的编辑器**按失焦语义提交**。
  *

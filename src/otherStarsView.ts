@@ -29,7 +29,7 @@ import { getStarsMainColumn, hideListsSection, hideNativeNode, moveTopicsToRight
 import { ensureLayoutStyles, removeLayoutStyles } from './layoutStyles';
 import { collectPageRepos } from './domRepos';
 import { cancelDeferredApply, renderBrowsePage } from './filters';
-import { commitInlineEditors } from './inlineEdit';
+import { commitInlineEditors, disarmPressTracking } from './inlineEdit';
 import { setLangColorFetchEnabled } from './langColors';
 import { mountTopPager } from './topPager';
 import { getPageOwnerLogin } from './pageScope';
@@ -167,6 +167,8 @@ export function exitOtherStarsView(): void {
   // 还开着的编辑器先按失焦语义提交：他人页的卡片也可能是可编辑的（D29），而节点马上被删 ——
   // 删节点时 blur 的派发时机各引擎不一致，不能把草稿押在引擎行为上。
   commitInlineEditors();
+  // 按压跟踪同 `viewTeardown`：撤场后不再碰页面（D18）。只由卡片的编辑框创建时才挂，撤干净即可。
+  disarmPressTracking();
   document.querySelectorAll(`.${GRID_CLASS}`).forEach((el) => el.remove());
   // 顶部翻页器克隆件 + 标题行上的 flex 类（都属本次接管的产物，必须一起收干净）
   document.querySelectorAll('.gsm-top-pager').forEach((el) => el.remove());

@@ -1,5 +1,5 @@
 import { getNote, saveNote } from '../storage/notes';
-import { isInlineCommitSuppressed, suppressInlineCommit } from '../inlineEdit';
+import { armPressTracking, finishInlineEdit, isInlineCommitSuppressed, suppressInlineCommit } from '../inlineEdit';
 
 /**
  * 备注容器上「点一下进编辑态」的那枚监听（每个容器至多一枚）。
@@ -77,6 +77,8 @@ export function renderNotes(notesContainer: HTMLElement): void {
     textarea.value = getNote(repoId);
     textarea.placeholder = '输入备注…';
     notesContainer.appendChild(textarea);
+    // 从这一刻起可能出现「按着鼠标在别处、这里失焦」⇒ 收尾要避开那一次手势（见 inlineEdit.ts）
+    armPressTracking();
     textarea.focus();
 
     let cancelled = false;
@@ -91,9 +93,13 @@ export function renderNotes(notesContainer: HTMLElement): void {
       // 已被真正摘掉（异步移除、卡片整体销毁）的节点不落盘：外部取关后活区该为空。
       if (!textarea.isConnected) return;
       finished = true;
-      const val = textarea.value.trim();
-      saveNote(repoId, val);
-      renderNotes(notesContainer);
+      // 落盘同步做（这一下点击可能立刻导航走），换 DOM 的部分推迟到手势之后：
+      // 在按下与松开之间重画会把用户正在点的那个节点换掉，那一击的 click 就没了（见 inlineEdit.ts）。
+      saveNote(repoId, textarea.value.trim());
+      finishInlineEdit(() => {
+        if (!notesContainer.isConnected) return;
+        renderNotes(notesContainer);
+      });
     }
 
     textarea.addEventListener('blur', () => commit());

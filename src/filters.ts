@@ -14,7 +14,7 @@ import { loadRepoCache } from './storage/repoCache';
 import { isStarredByViewer, loadViewerCacheForView } from './cardState';
 import { renderCardTagAndNoteAreas } from './cardAreas';
 import { getOtherPageRepos, isReadOnlyView } from './viewContext';
-import { hasInlineEditor } from './inlineEdit';
+import { hasInlineEditor, isPressInFlight, onInlineEditSettled } from './inlineEdit';
 import { loadAllTags } from './storage/tags';
 import { buildCardFromCache, createStarButtonForCached } from './ui/cards';
 import { refreshTagFilterBar, refreshTagPillStates } from './ui/tagFilter';
@@ -468,11 +468,6 @@ type PendingRender = { kind: 'apply'; keepPage?: boolean } | { kind: 'page'; pag
 
 let pending: PendingRender | null = null;
 let flushTimer = 0;
-/**
- * 指针按下还没松开。此刻重绘会换掉 mousedown 的目标节点，而 `click` 按规范只派发到
- * 「按下与松开时都还挂着的最近共同祖先」⇒ 用户这一下点击静默失效。所以松手前不重绘。
- */
-let pointerHeld = false;
 let flushListenersArmed = false;
 
 /**
@@ -483,17 +478,19 @@ let flushListenersArmed = false;
  *    摘掉之后的 `focusout` 目标已在文档外、**传播不到 document**（夹具实测：挂在 focusout 上
  *    永远收不到，草稿就这么挂死了）。
  * 2. `keyup` —— Enter / Escape 提交是**直接摘节点**：keydown 里摘、keyup 落到 body，只能靠它补。
- * 3. `pointerup` / 窗口失焦 —— 指针没松开就不重绘（见 `pointerHeld`），松手后再排一拍。
- *    监听挂 window 而不是 document：拖到窗口外松手时靠的是浏览器的隐式鼠标捕获，
- *    而「按住鼠标时切走窗口」只会来 window 的 blur —— 两条都要能把标志放掉，
- *    否则它一旦卡住，此后所有挂起的重绘都不再兑现（网格停在旧画面）。
+ * 3. `pointerup` / 窗口失焦 —— 指针没松开就不重绘（判据见 `isPressInFlight()`，**唯一实现**在
+ *    `inlineEdit.ts`：4.21.0 起它同时决定「编辑器收尾能不能现在做」）。监听挂 window 而不是
+ *    document：拖到窗口外松手时靠的是浏览器的隐式鼠标捕获，而「按住鼠标时切走窗口」只会来
+ *    window 的 blur —— 都要能把「按住」这件事放掉，否则挂起的重绘再也不兑现（网格停在旧画面）。
+ * 4. 编辑器收尾了（`onInlineEditSettled`）—— 4.21.0 起编辑器的 DOM 收尾会**推迟到手势之后**
+ *    （见 `inlineEdit.finishInlineEdit`）。那一刻可能正好有一次挂起在等「没有编辑器」，而此刻
+ *    既没有 blur 也没有 keyup 会再来 ⇒ 不补这一枪，网格就停在旧画面上。
  */
 function armFlushListeners(): void {
   if (flushListenersArmed) return;
   flushListenersArmed = true;
   document.addEventListener('blur', scheduleFlush, true);
   document.addEventListener('keyup', scheduleFlush, true);
-  document.addEventListener('pointerdown', onPointerDown, true);
   window.addEventListener('pointerup', releasePointer, true);
   window.addEventListener('pointercancel', releasePointer, true);
   window.addEventListener('blur', releasePointer);
@@ -504,23 +501,18 @@ function disarmFlushListeners(): void {
   flushListenersArmed = false;
   document.removeEventListener('blur', scheduleFlush, true);
   document.removeEventListener('keyup', scheduleFlush, true);
-  document.removeEventListener('pointerdown', onPointerDown, true);
   window.removeEventListener('pointerup', releasePointer, true);
   window.removeEventListener('pointercancel', releasePointer, true);
   window.removeEventListener('blur', releasePointer);
-  // 连同标志一起复位：监听没了就再也不会有人来放掉它，留着一个 true 会让下一轮挂起
-  // 永远停在「指针还按着」上（那时连 pointerup 监听都没挂）。
-  pointerHeld = false;
 }
 
-function onPointerDown(): void {
-  pointerHeld = true;
-}
-
+/** 松手后补一拍：`click` 与提交处理器都要先走完（「按着」这件事本身由 inlineEdit 记状态） */
 function releasePointer(): void {
-  pointerHeld = false;
   if (pending) scheduleFlush();
 }
+
+/** 编辑器推迟的收尾跑完了 ⇒ 若还有挂起就再排一拍（模块级注册，只加一个订阅者，不碰 DOM） */
+onInlineEditSettled(scheduleFlush);
 
 /** 排到当前任务之后：提交处理器（saveTags/saveNote + 局部重画）与这次手势的 click 都要先走完 */
 function scheduleFlush(): void {
@@ -536,7 +528,7 @@ function flushPendingRender(): void {
   }
   // 又开了一个编辑器（或在两张卡之间换着编辑）⇒ 继续挂着，等下一次编辑结束
   if (hasInlineEditor()) return;
-  if (pointerHeld) return; // 等 pointerup（它会再排一次）
+  if (isPressInFlight()) return; // 等 pointerup（它会再排一次）
   const req = pending;
   pending = null;
   disarmFlushListeners();

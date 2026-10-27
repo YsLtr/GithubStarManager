@@ -3,7 +3,12 @@ import { getNativeFilterRow } from '../dom';
 import { filterState } from '../state';
 import { applyFilters, computeTagCandidates, hasAnyTags } from '../filters';
 import { getTags, saveTags } from '../storage/tags';
-import { isInlineCommitSuppressed, suppressInlineCommit } from '../inlineEdit';
+import {
+  armPressTracking,
+  finishInlineEdit,
+  isInlineCommitSuppressed,
+  suppressInlineCommit,
+} from '../inlineEdit';
 
 /** 勾选/取消一个标签筛选条件并重绘。**唯一实现** —— 筛选栏 chip 与卡片标签都走这里 */
 function toggleTagFilter(tag: string): void {
@@ -264,6 +269,8 @@ export function renderTags(tagsContainer: HTMLElement, opts: TagRenderOptions = 
     input.className = 'stars-tag-input';
     input.placeholder = '标签名';
     tagsContainer.appendChild(input);
+    // 从这一刻起可能出现「按着鼠标在别处、这里失焦」⇒ 收尾要避开那一次手势（见 inlineEdit.ts）
+    armPressTracking();
     input.focus();
 
     let finished = false;
@@ -277,20 +284,27 @@ export function renderTags(tagsContainer: HTMLElement, opts: TagRenderOptions = 
       if (!input.isConnected) return;
       finished = true;
       const val = input.value.trim();
-      if (val) {
-        const current = getTags(repoId);
-        if (current.includes(val)) { input.remove(); addBtn.style.display = ''; return; }
+      const current = getTags(repoId);
+      const added = val !== '' && !current.includes(val);
+      if (added) {
         current.push(val);
-        saveTags(repoId, current);
-        renderTags(tagsContainer, opts);
-        if (filterToggle) {
-          // 新标签入库后 applyFilters→refreshTagFilterBar 会建条/收窄（4.3.5 删冗余直调）；条件未变 ⇒ keepPage
-          applyFilters({ keepPage: true });
+        saveTags(repoId, current); // 落盘同步做（这一下点击可能立刻导航走）
+      }
+      // 换 DOM 的部分推迟到这次手势之后：在按下与松开之间重画会把用户正点的那个节点换掉，
+      // 那一击的 click 就没了（连 click 都不派发），见 inlineEdit.ts 的长注释。
+      finishInlineEdit(() => {
+        if (!tagsContainer.isConnected) return;
+        if (added) {
+          renderTags(tagsContainer, opts);
+          if (filterToggle) {
+            // 新标签入库后 applyFilters→refreshTagFilterBar 会建条/收窄（4.3.5 删冗余直调）；条件未变 ⇒ keepPage
+            applyFilters({ keepPage: true });
+          }
+          return;
         }
-      } else {
         input.remove();
         addBtn.style.display = '';
-      }
+      });
     }
 
     input.addEventListener('keydown', (ev) => {
