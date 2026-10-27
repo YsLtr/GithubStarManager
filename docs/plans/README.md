@@ -30,6 +30,7 @@
 | [`2026-10-06-完成风险-21-修复-标签-备注-宽限期备份的归属账号从-登录者-改为-token-账号-并按账.md`](archive/2026/2026-10-06-完成风险-21-修复-标签-备注-宽限期备份的归属账号从-登录者-改为-token-账号-并按账.md) | 修复风险 21：归属账号由登录者改为 token 账号 |
 | [`2026-10-20-inline-ui-dark-mode-theme.md`](archive/2026/2026-10-20-inline-ui-dark-mode-theme.md) | 修复 issue #1：内联 UI 的暗色模式不跟随（配色改为从页面现场解析） |
 | [`2026-10-22-defer-rerender-while-editing.md`](archive/2026/2026-10-22-defer-rerender-while-editing.md) | 4.20.0：编辑会话期间挂起重绘（D36，取代 D12 与 D12 补） |
+| [`2026-10-27-inline-edit-teardown-after-gesture.md`](archive/2026/2026-10-27-inline-edit-teardown-after-gesture.md) | 4.21.0：编辑器 DOM 收尾排到「按下到松开」之后（D37，issue #4） |
 
 ## 开放问题
 

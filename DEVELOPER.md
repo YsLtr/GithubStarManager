@@ -652,6 +652,20 @@ ID 不可见、名称复用到不同 ID、或目标完全缺失时明确失败�
 
 `blur` 在节点被摘除**之前**派发（实测那一刻 `isConnected` 仍为 `true`），所以「节点还在就直接提交」会把**脚本自己发起的重绘**误认成用户失焦。三个渲染器清空容器时把自己包进 `inlineEdit.suppressInlineCommit()`（`ui/notes.ts`、`ui/tagFilter.ts`、`readonly.ts`），段内产生的 `blur` 一律不算提交；两个编辑器另有 `finished` 一次性闸，同一次编辑只写一次盘。**新增任何会清空编辑容器的渲染路径，都必须同样包起来**，否则症状是：草稿被写回活区（外部取关后活区该为空），且 `renderNotes()` 会把「点击进编辑」的监听重新绑上 —— 只读卡片又能点开编辑框。与之相反，`commitInlineEditors()`（销毁路径）**不做**抑制：那里要的就是提交。
 
+### 内联编辑器的收尾必须避开「按下到松开」这一段（4.21.0）
+
+编辑中直接点另一处，那一击曾经**完全无效**（效果等同点空白）。原因不在事件监听，而在**浏览器怎么算 `click` 的目标**：`click` 派发到「mousedown 与 mouseup 目标的最近公共祖先」。`commit()` 原先在 `blur` 里**同步**重画（`renderTags` / `renderNotes` / `applyFilters` → `renderBrowsePage` → `replaceChildren`），mousedown 的那个节点在鼠标松开前就离场 ⇒ 公共祖先为空 ⇒ Chrome **连 click 都不派发**（夹具日志里一条 click 都没有）。备注编辑框还有第二重：它 `min-height:40px`，退出编辑态时卡片高度缩回（实测 208→183），mouseup 落在别的元素上，click 被重定向到共同祖先。点上方筛选栏之所以正常，正是因为那一排在 `.stars-grid-container` **之外**，换网格时它本体不动。
+
+规则（`inlineEdit.finishInlineEdit()`，判据 `isPressInFlight()` 只有一份实现）：
+
+- **落盘同步**（`saveTags` / `saveNote` 仍在 blur 里）—— 这一下点击可能立刻导航走；
+- **改 DOM 的收尾排到 `pointerup` 之后的一拍**（那时 click 已派发完），没有按住指针时（Tab 失焦、脚本自己 `blur()`）立即执行，与 4.20.1 同义；
+- 收尾里先查容器 `isConnected`（视图可能已被拆掉），跑完发 `onInlineEditSettled` —— 挂起重绘可能正等「没有编辑器」，而此刻不会再有 blur/keyup；
+- 按压跟踪由**编辑框创建时**才 `armPressTracking()`（D18：窄视口一行都不碰），两个回滚点（`viewTeardown`、`exitOtherStarsView`）调 `disarmPressTracking()`；
+- 已知代价：按住不放期间编辑框仍在屏上（无光标），松手后一拍才收尾；备注编辑态比文本态高 20px 左右这一「跳一下」仍在（进入编辑态发生在 click 之后，不再抢点击）。
+
+**新增第三种卡片内联编辑器**（D36 那条「第五种」同理）：打开时 `armPressTracking()`、收尾走 `finishInlineEdit()`，否则它会把用户的下一击吃掉。
+
 ### 全缓存搜索与筛选联动
 
 搜索与筛选统一走 `queryRepos()` 单管线：关键词按空白拆词，每词必须命中 作者 / 仓库名 / 描述 / 标签 / 备注 之一（**语言不参与全文匹配**，避免 `ASC` 命中 `javascript`）；约束叠加 = type（多选 OR）∩ lang（多选 OR，大小写不敏感；`LANG_NONE='(none)'` = 无语言）∩ tags（多选 AND）∩ 关键词（AND）。命中词以 `<mark class="gsm-search-hit">` 高亮（四字段、大小写不敏感、只包文本节点、跳过输入控件）。

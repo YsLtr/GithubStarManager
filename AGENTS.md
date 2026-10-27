@@ -1,12 +1,28 @@
 # GithubStarManager — Agent Handoff
 
 > **权威分工（本文件不重复它们的内容）**
-> 架构 / 模块职责 / 数据流 / 存储模型 → **`DEVELOPER.md`**；历史过程 → **`git log`**；决策全文与依据 → **`docs/adr/0001`–`0013`**；实施计划与逐条验证 → **`docs/plans/`**（历史在 `archive/2026/`）；可复用的验证数字 / A/B 反证 → gbrain `people/me`。
+> 架构 / 模块职责 / 数据流 / 存储模型 → **`DEVELOPER.md`**；历史过程 → **`git log`**；决策全文与依据 → **`docs/adr/0001`–`0014`**；实施计划与逐条验证 → **`docs/plans/`**（历史在 `archive/2026/`）；可复用的验证数字 / A/B 反证 → gbrain `people/me`。
 > 本文件只留四样：**下一轮交接、当前状态、仍生效的硬口径、调试要点与下一步**。
 
 ---
 
-## 本轮交接：4.20.1 —— 脚本重绘摘编辑器时，blur 不算用户提交
+## 本轮交接：4.21.0 —— 编辑器收尾避开「按下到松开」，点另一处不再被吃掉
+
+交接时间：**2026-10-27 16:15 +0800**；分支 `master`。
+
+- **现象**（用户报告，issue #4「退出编辑->新的交互少一步」）：编辑中打了字，再点**另一处**（另一张卡的备注、另一张卡的「+」、另一个标签胶囊）那一击被吃掉，效果等同点空白 —— 只有 tag/备注生效。点**上方筛选栏**则正常。
+- **根因（夹具受信任点击 + `__evlog` 实测，非推测）**：`click` 的目标按规范 = 「mousedown 与 mouseup 目标的最近公共祖先」。`commit()` 原先在 `blur` 里**同步**重画（`renderTags` / `renderNotes` / `applyFilters` → `renderBrowsePage` → `replaceChildren`），而 blur 发生在 mousedown **之后**、mouseup **之前** ⇒ 按下的那个节点在松手前离场 ⇒ 公共祖先为空，Chrome **连 click 都不派发**。日志原文：`pointerdown → mousedown(card2 notes) → blur(tag-input) → pointerup → mouseup`，**没有 click**。备注编辑框还有第二重：`min-height:40px`，退出编辑态后卡片高度缩回（实测 208→183），mouseup 落到别的元素上，click 被重定向到共同祖先。上方筛选栏在 `.stars-grid-container` **之外**，换网格时它本体不动 —— 所以它一直是好的。
+- **修法**：`src/inlineEdit.ts` 新增按压跟踪与 `finishInlineEdit(fn)` —— **落盘仍同步**（这一击可能立刻导航走），只把**改 DOM 的收尾**排到 `pointerup` 之后的一拍；没按住指针时立即执行（与 4.20.1 同义）。两个编辑器（`ui/notes.ts` / `ui/tagFilter.ts`）在编辑框创建时 `armPressTracking()`，收尾走 `finishInlineEdit()`。`filters.ts` 的 `pointerHeld` 让位给 `isPressInFlight()`（判据只剩一份），并订阅 `onInlineEditSettled` 补跑挂起重绘（推迟收尾后不会再有 blur/keyup 来敲门）。两个回滚点调 `disarmPressTracking()`（D18）。
+- **回归锁**：`tests/diag/gen-edit-click-harness.cjs`（新，6 仓库单页、每卡预置标签+备注）→ `agent-browser-cli open --focus "file:///<repo>/.diag/edit-click-harness.html?tab=stars"` → `exec --tab <id> --file tests/diag/assert-edit-click.js`。五个场景 A–E 断言「按下到 click 之间目标仍在文档里且几何不变」，并要求落盘同步发生、网格与卡片高度收尾正确。**反证**：`finishInlineEdit` 改成立即执行、重编重跑 ⇒ 7 条断言变红（含 A 的「目标离场」与 E 的「位移 -11px」），还原后复绿。
+- **验证**：三个守卫全绿（edit-click `errors:[]`、A–E 全过；`assert-defer-rerender.js` 全 steps 原样、`flushVia=blur`；`assert-keep-page.js` `2/3 ▸ 2/3 ▸ 2/3 ▸ 1/1`）。`pnpm check` 绿、dist **221.32 kB**、`@grant` 恰 5 项。
+- **受信任点击端到端（夹具，非合成事件）**：标签编辑框里打 `trusted-draft` → CDP 真实点击另一张卡的备注区 ⇒ `__evlog` = `pointerdown → mousedown → pointerup → click`（click **落在原目标上**，修复前这一串里没有 `click`）；卡 2 备注编辑框打开且获焦、卡 1 输入框已摘、`stars_tags_998['1']` 含 `trusted-draft`。**注**：`assert-edit-click.js` 里的 A–E 是合成事件链，它只能证明「逻辑接对了」；浏览器真的这么派发，靠的是这一发受信任点击。
+- **夹具互相污染（本轮踩到并修好）**：三个夹具都是 `file://` 同源，本夹具原先用账号 `999` 种 `stars_tags_999` ⇒ 写下的 localStorage 镜像被 `gm.ts:66-68` 的迁移搬进 jump 夹具的命名空间，`assert-keep-page.js` 的起点变成 `tags=["tag-6-a",…,"press-draft-3"]`（断言仍全绿 ⇒ 最难发现的那种坏）。现改为**每夹具独立账号 id**（edit-click 用 `998`，生成器与断言两处同步），并验证 jump 夹具恢复 `tags=[]`。**新增夹具一律挑一个没人用的 id**。
+- **边界**：仍是 `file://` 夹具；备注编辑态比文本态高约 20px 这「跳一下」仍在（进入编辑态在 click 之后，不再抢点击）；按住不放期间编辑框留在屏上（无光标），松手后一拍才收尾。
+- 决策全文：`docs/adr/0014-inline-edit-teardown-after-gesture.md`（D37）；实施与逐条验证：`docs/plans/archive/2026/2026-10-27-inline-edit-teardown-after-gesture.md`。
+
+---
+
+## 上一轮交接：4.20.1 —— 脚本重绘摘编辑器时，blur 不算用户提交
 
 交接时间：**2026-10-22 11:45 +0800**；分支 `master`。是 4.20.0（D36）的收尾修正。
 
@@ -69,9 +85,9 @@
 
 ## 当前状态
 
-版本 **4.20.1**（`package.json` 是单一版本源，`vite.config.ts` 读它写脚本头）。
+版本 **4.21.0**（`package.json` 是单一版本源，`vite.config.ts` 读它写脚本头）。
 
-本轮落点 = 4.20.1（D36 的收尾修正：脚本重绘摘编辑器时 blur 不算用户提交）。版本演进与每轮改了什么查 `git log`，决策依据查 `docs/adr/`。
+本轮落点 = 4.21.0（编辑器收尾避开「按下到松开」，点另一处不再被吃掉）。版本演进与每轮改了什么查 `git log`，决策依据查 `docs/adr/`。
 唯一需要跨版本记住的四条实测结论：
 - **主题 token**：GitHub 的 `--color-*` 一代已整体改名（`--bgColor-*` / `--fgColor-*` / `--borderColor-*`）；真机暗色页实测旧名在 `:root` 上**全为空**。内联 UI 一律走 `ui/theme.ts` 的 `resolveUiTheme()`，**不写死颜色**（`scripts/verify-theme-tokens.cjs` 把关）。
 - **事件在节点离场后不可用**：移除聚焦元素**会**派发 `blur`，但目标要么已在文档外（`blur`/`focusout` 都传播不到 `document`），要么——**4.20.1 实测，三次一致**——派发发生在**摘除之前**：那一刻 `isConnected` 仍是 `true`、`parentNode` 还在、`document.contains()` 也 true。两个后果都要记住：① 任何「靠 document 上的收尾事件兜住被删节点」的写法都会挂死 ⇒ 要挂在**捕获相位** `blur` 上，或者干脆别删（D36 的做法）；② **`isConnected` 挡不住「脚本重绘摘掉编辑器」** ⇒ 想区分「用户失焦」与「重绘副作用」只能靠发起方标志（`src/inlineEdit.ts` 的 `suppressInlineCommit()`）。
@@ -110,6 +126,7 @@
 - **D34 · API 目标 ID 优先**：寻址全链路保留数字 ID；`/repositories/{id}` 解析当前全名，ID 404 才可名称查找且必须核验同 ID。星标继续用名称端点（数字候选实测失败）。Cookie 路径用同 ID 原生行 + 精确表单确认目标。元数据 404 ≠ 已取关；限流/401 整轮放弃。细则见 `docs/adr/0011`。
 - **D35 · 内联 UI 配色只从页面取**（issue #1）：TM 菜单的内联 UI（`ui/restoreMenu.ts` / `ui/exportImportMenu.ts` / `ui/notifications.ts`）**不许出现任何颜色字面量，也不许引用 `--color-*` 旧一代变量**。一律 `resolveUiTheme()` 现场解析（token → 采样原生节点 → 取不到就**不写该属性**）。判据由 `scripts/verify-theme-tokens.cjs` 在 `pnpm check` 里把关；新增内联 UI 时把新 token 加进 `UiTheme`，不要就地写 `#hex`。`confirm`/`alert` 是浏览器原生对话框，不在本约束内（脚本改不了）。
 - **D36 · 编辑会话期间挂起重绘**（4.20.0；4.20.1 补第四条，取代 D12 与 D12 补）：卡片里存在未提交的编辑会话（`.stars-card-notes-edit` / `.stars-tag-input`，判据只在 `src/inlineEdit.ts` 的 `hasInlineEditor()`）⇒ **整条 `applyFilters` 挂起**（不碰任何 DOM，避免「控件刷了、网格没换」的半应用态），编辑结束后补跑一次。**不做**抢救式提交、**不做**快照重开。三条不可动的形状：① **结束信号挂在 document 捕获相位的 `blur`**（不是 `focusout`）—— 提交处理器就地摘节点，摘掉后 `focusout` 目标已在文档外、传播不到 document，靠它收尾会让挂起永久挂死；另配 `keyup` 与 `pointerup`/窗口失焦。② **重绘期间网格不得出现空态**：`renderBrowsePage` 是唯一拆建点，必须分片建好再一次 `replaceChildren`。③ **页码保持**：重绘不改变筛选条件时调用方必须显式传 `applyFilters({ keepPage: true })`（遗漏的表现 = 在第 N 页操作后回第 1 页）；筛选/排序条件变更**不传**，回第 1 页属预期；越界由 `renderBrowsePage` 夹取。挂起槽单例、合并规则「任一方要求回第 1 页则以它为准」。**新增直调 `renderBrowsePage` 的入口必须先确认自己不可能发生在编辑会话期间**；他人页走 `renderBrowsePageDeferred`。销毁路径（`viewTeardown` / `exitOtherStarsView`）必须 `cancelDeferredApply()` 并 `commitInlineEditors()`。唯一例外是**外部取关**：卡片将转只读，草稿改由 `mergeDraftIntoGraceBackup()` 并入宽限期备份，编辑器的 `isConnected` 守卫保证落盘不写进活区。④ **脚本自己发起的重绘不算用户提交**（4.20.1）：Chromium 在**摘除之前**就派发 blur（`isConnected` 仍为 true），所以 `ui/notes.ts` / `ui/tagFilter.ts` / `readonly.ts` 清空容器处必须包 `suppressInlineCommit()`，否则草稿写回活区、且 `commit` 里的 `renderNotes()` 会把编辑监听重新绑上 ⇒ 只读卡片又能点开编辑框。`commitInlineEditors()` 相反，**不做**抑制。第三条的完整判据是一张表（哪种重绘传 `keepPage`），见 `DEVELOPER.md` §7 —— 4.20.0 起不再有「前件包含排序、后句又排除排序」的自相矛盾。
+- **D37 · 编辑器的 DOM 收尾排到「按下到松开」之后**（4.21.0，全文 `docs/adr/0014`）：编辑器提交时**落盘同步**（这一击可能导航走），但**改 DOM 的收尾**（拆编辑框 / 重画本卡区域 / `applyFilters`）必须走 `inlineEdit.finishInlineEdit()` —— 按着指针就排到 `pointerup` 之后的一拍，没按着就立即执行。判据 `isPressInFlight()` **只有一份实现**在 `src/inlineEdit.ts`（`pointerdown` / `pointerup` / `pointercancel` / 窗口 `blur` 四信号），任何模块都**不许**再自己记「指针按着」的标志。原因：`click` 派发给「mousedown 与 mouseup 目标的最近公共祖先」，在 blur 里同步重画会让按下的节点在松手前离场 ⇒ Chrome **连 click 都不派发**（夹具实录里一条 click 都没有），用户那一下点击静默失效。四条不可动的形状：① 监听只在**编辑框被创建时** `armPressTracking()`（D18：窄视口一行都不碰），两个回滚点（`viewTeardown` / `exitOtherStarsView`）调 `disarmPressTracking()`，它**必须连状态与队列一起复位**（留一个 `true` 会让此后每次重绘都判成「用户还按着」而永不兑现）；② 收尾跑完发 `onInlineEditSettled` —— 挂起重绘可能正等「页面上没有编辑器」，推迟收尾后不会再有 blur/keyup 来敲门；③ 收尾里先查容器 `isConnected`（视图可能已被拆掉）；④ **新增卡片内联编辑器**必须同样 `armPressTracking()` + `finishInlineEdit()`，否则它会把用户的下一击吃掉（与 D36 第 3 条残余同一件事）。
 
 ---
 
@@ -154,7 +171,7 @@
 
 ## 已知风险 / 未决问题
 
-- **D36 的四条已接受残余**（4.20.0 / 4.20.1 裁定，不修）：① 编辑框挂着不动（用户把窗口丢在那儿）时挂起不自愈，网格停在旧画面直到下次失焦/按键；② Turbo 自己换掉整帧（点导航链接）时节点由 Turbo 删除，脚本收不到信号 —— 鼠标点击会先失焦提交，键盘导航（如 Alt+←）例外；③ 判据是「页面上有编辑器」这一 DOM 事实，**新增第五种卡片内联编辑控件时必须把类名加进 `src/inlineEdit.ts`**，否则它不受保护；④ 分页器的页码输入框**有意排除**（该节点被整体搬进分片、重绘后原样带回）；⑤ 第五种内联编辑器若直接改 `innerHTML` 而不经 `suppressInlineCommit()`，会重演 4.20.1 那个缺陷。
+- **D36/D37 的已接受残余**（4.20.0 / 4.20.1 / 4.21.0 裁定，不修）：① 编辑框挂着不动（用户把窗口丢在那儿）时挂起不自愈，网格停在旧画面直到下次失焦/按键；② Turbo 自己换掉整帧（点导航链接）时节点由 Turbo 删除，脚本收不到信号 —— 鼠标点击会先失焦提交，键盘导航（如 Alt+←）例外；③ 判据是「页面上有编辑器」这一 DOM 事实，**新增第五种卡片内联编辑控件时必须把类名加进 `src/inlineEdit.ts`**，否则它不受保护；④ 分页器的页码输入框**有意排除**（该节点被整体搬进分片、重绘后原样带回）；⑤ 第五种内联编辑器若直接改 `innerHTML` 而不经 `suppressInlineCommit()`，会重演 4.20.1 那个缺陷；⑥ **按住鼠标不放期间编辑框留在屏上**（无光标），松手后一拍才收尾 —— 这是 D37 的确定代价；⑦ 备注编辑态比文本态高约 20px 的「跳一下」仍在（进入编辑态在 click 之后，不再抢点击）；⑧ 拖选（mousedown 后拖动再松开）同属被推迟的那一段，未见问题但无用例。
 - **未决问题（4.19.1 审查裁定不修复，逐条接受）**：
   ① ~~`DEVELOPER.md` §7 前件「筛选条件未变的重绘」字面上包含**仅改排序**的重绘，与同段「排序条件的变更不传」矛盾~~ —— **4.20.0 已修**：§7 换成一张「哪种重绘传 `keepPage`」的表，前件不再包含排序（`src/filters.ts` 的排序 handler 确实不传）。
   ② 守卫缺起点断言：`tests/diag/assert-keep-page.js` 只把起点首卡与标签写进 `steps`，不写 `errors`；向 localStorage 镜像注入 `probe-leak` 后重载，起点读数异常而 `errors` 仍为空 ⇒「夹具封闭」这一性质无断言守护。
@@ -183,7 +200,7 @@
 
 ## 下一步
 
-1. **升级 4.20.1 后，用 dev 脚本的人必须重装 dev loader**（机制见「dev 模式」第 4 条）；正式版不受影响。
+1. **升级 4.21.0 后，用 dev 脚本的人必须重装 dev loader**（机制见「dev 模式」第 4 条）；正式版不受影响。
 2. **D36 的剩余真机确认**：挂起/兑现本身已在真机通过（见「本轮交接」），还差**进页自动同步**这一条真实触发源 —— 刷新 `github.com/<me>?tab=stars` 后 2s 内打开某张卡的备注编辑框并打字，看编辑框是否仍在、字还在；点别处后网格补跑一次、备注已落盘。控制台应各有一条「卡片正在编辑：本次重绘推迟到编辑结束后（D36）」与「编辑已结束：补跑挂起的重绘（D36）」。
 3. **风险 21 的真机确认**：换一份属于另一个账号的 token ⇒ 横幅应点名两个账号并含归属句；错号期间的标签落在 token 账号命名空间；关掉横幅后换 token 或换登录账号应重新弹出；配置面板留空点「保存并同步」应只报提示、不清除 token。
 4. **keepPage 守卫的真机确认**：按「本轮交接」的跑法在真实 github.com 上于第 2 页加/删标签确认页码不变；顺带处理「未决问题」②–④（起点断言、`stars_lang_colors` 被连带清理、清理失败静默）。
@@ -211,4 +228,4 @@ node scripts/ratelimit-probe.cjs --repo <me/repo>   # 限流实测探针（默�
 
 **静态验收口径**：`pnpm check` 绿、`test:exportimport` 全过、动 CSS 时 `verify-css` EXIT 0、dist 头部 `@grant` 恰 5 项；夹具各组 `__errors` 全空、他人页 `fetch = 0` / `writes = 0`、窄视口 `gsm-*` 节点与标记全 0。**快速构建期不跑 `tests/smoke/`**，由用户在真实页面判断。
 
-**建议技能**：`agent-browser-cli`（真机 DOM 探查/注入/截图/受信任点击）—— 用前先读上面「真机调试要点」。夹具与断言可重复运行：`node .diag/gen-otherstars-harness.cjs` → `file://.../?tab=stars&scenario=<名>` → `agent-browser-cli exec --tab <id> --file .diag/assert-otherstars.js`。**生成器已入库**的两组：① `node tests/diag/gen-keep-page-harness.cjs` → `file://.../.diag/jump-harness.html?tab=stars` → `agent-browser-cli exec --tab <id> --file tests/diag/assert-keep-page.js`；② `node tests/diag/gen-defer-rerender-harness.cjs` → `file://.../.diag/defer-rerender-harness.html?tab=stars` → `agent-browser-cli exec --tab <id> --file tests/diag/assert-defer-rerender.js`（D36 挂起重绘守卫；两个生成器都要先 `pnpm build`，且改 `src/` 后必须重跑）。
+**建议技能**：`agent-browser-cli`（真机 DOM 探查/注入/截图/受信任点击）—— 用前先读上面「真机调试要点」。夹具与断言可重复运行：`node .diag/gen-otherstars-harness.cjs` → `file://.../?tab=stars&scenario=<名>` → `agent-browser-cli exec --tab <id> --file .diag/assert-otherstars.js`。**生成器已入库**的三组：① `node tests/diag/gen-keep-page-harness.cjs` → `file://.../.diag/jump-harness.html?tab=stars` → `agent-browser-cli exec --tab <id> --file tests/diag/assert-keep-page.js`；② `node tests/diag/gen-defer-rerender-harness.cjs` → `file://.../.diag/defer-rerender-harness.html?tab=stars` → `agent-browser-cli exec --tab <id> --file tests/diag/assert-defer-rerender.js`（D36 挂起重绘守卫）；③ `node tests/diag/gen-edit-click-harness.cjs` → `file://.../.diag/edit-click-harness.html?tab=stars` → `agent-browser-cli exec --tab <id> --file tests/diag/assert-edit-click.js`（4.21.0「编辑中点别处不能被吃掉」守卫）。三个生成器都要先 `pnpm build`，且改 `src/` 后必须重跑。**用 CDP 受信任点击验证点击类缺陷时，必须先前置 `Emulation.setFocusEmulationEnabled`**：窗口不在前台时 `document.visibilityState` 是 `hidden`，受信任点击与 `blur` 都会失真（这一轮踩过，表现为「守卫全绿但 bug 还在」）。
