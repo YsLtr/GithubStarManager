@@ -187,6 +187,7 @@
 - **冻结标签页会给出过期 `computedStyle`**：判据 —— **「连 inline `!important` 都改不动 computed 值」= 标签页被冻结**。可靠做法是 `agent-browser-cli open --focus <url>` 新开一页并确认 `visibilityState === 'visible'`。过渡冻结则先 `document.getAnimations().forEach(a => { try { a.finish(); } catch {} })` 再读。
 - **`agent-browser-cli` 的 `tab_id` 不可信**：只用 `agent-browser-cli tabs` 按 URL **靠前的片段**（如 `.diag/`）找 id —— 它把 URL 截断到约 65 字符。`open` 返回的 id 可能立刻失效（`会话ID … 未连接`），此时重列 `tabs` 换一个 connected 的 id。
 - **`screenshot --out` 必须给绝对路径**：给相对路径时它按**守护进程自己的工作目录**解析，会打印 `status: success` + `path`，但文件不在仓库里 —— `Test-Path` 一定要复核，别只信返回 JSON。
+- **夹具必须自带 `svg { fill: currentColor }`**（2026-10-27 实测）：GitHub 页面本身有这条全局规则，`tests/smoke/fixture.html` 没有 ⇒ octicon 的 `<path>` 退回 SVG 默认填充**黑**，`color` 完全不生效。表现是「所有卡片的星星都是黑的，看着像墓碑样式串了整页」—— 实际是夹具缺规则，不是 `base.css` 的问题。同理：任何靠 `color` 上色的图标类断言，在夹具里都得先确认这条规则在。
 - **夹具 URL 必须带 `?tab=stars`**，否则脚本不转换，`grid: 0` 会被**误读成全绿**。改 `src/` 后必须重跑生成器（夹具内联 dist）。场景数以 `grep -o "scenario === '[a-z-]*'"` 为准，别在此维护数量。
 - **批量跑夹具的三道门**：① 场景名必须在生成器里有对应分支；② 回读 `window.__gsmScenario` + `location.hash`（`open` 经 `python subprocess` 会丢 `&scenario=X`，静默退化成 `own`）；③ 按 `title` 精确匹配标签页，**禁止 `tail -1`**。`fail` 计数也含 NO TAB / 场景不符 / 解析失败。**改工装后先用探针确认夹具活着**：**场景不生效的表现是「断言全绿」**。
 - **未提交改动做破坏性 A/B 时禁止 `git checkout -- <file>` 还原**：`cp` 到 `.pi/tmp/` → 改 `src/` → 跑 → `cp` 还原 → 核对 `git diff --stat` 与实验前一致。
