@@ -273,6 +273,43 @@ export function addPendingFromImport(repoId: string, tags: string[], note: strin
   return true;
 }
 
+/**
+ * 导出包回灌（4.23.0）：把包里的宽限期条目原样重建，**保留原始 `unstarredAt`**（剩余时间不重算）。
+ *
+ * 与 `addPendingFromImport()` 的区别只有一点、但它是本函数存在的理由：那个函数对**新条目**写
+ * `unstarredAt = now`（导入时重新起 24h 计时）。宽限期回灌必须用包里的时刻，否则「导出 → 隔天导入」
+ * 会让一条本该过期的备份重新活 24h，与「超时直接消失」的语义冲突。
+ *
+ * 三条纪律与 `addPendingFromImport()` 一致：空不覆盖非空、非空整体替换、不续命（已有活条目时取
+ * **较早**的 `unstarredAt`）。已超时的包内条目一律当作不存在 ⇒ 返回 `'expired'`，什么都不写。
+ */
+export function restorePendingFromExport(
+  repoId: string,
+  e: { name: string; tags: string[]; note: string; unstarredAt: number },
+  now = Date.now()
+): 'restored' | 'expired' | 'empty' {
+  if (!repoId) return 'empty';
+  const at = e.unstarredAt || 0;
+  if (at + GRACE_PERIOD <= now) return 'expired';
+
+  const pending = loadPendingDelete();
+  const existing = pending[repoId];
+  const live = existing && (existing.unstarredAt || 0) + GRACE_PERIOD > now ? existing : undefined;
+  const hasTags = e.tags.length > 0;
+  const hasNote = !!(e.note && e.note.trim());
+  if (!live && !hasTags && !hasNote) return 'empty';
+
+  const entry: PendingDeleteEntry = Object.assign({ name: '' }, live || {}, {
+    name: live?.name || e.name || '',
+    unstarredAt: Math.min(live?.unstarredAt ?? at, at),
+    _tags: hasTags ? e.tags : live?._tags || [],
+    _note: hasNote ? e.note : live?._note || '',
+  });
+  pending[repoId] = entry;
+  savePendingDelete(pending);
+  return 'restored';
+}
+
 /** 清理超过宽限期（24h）仍未 re-star 的待删除条目 */
 export function cleanupExpiredUnstarred(): void {
   const pending = loadPendingDelete();

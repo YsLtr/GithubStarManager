@@ -22,6 +22,8 @@ const FILES = [
   'storage/notes.ts',
   'storage/pendingDelete.ts',
   'storage/repoCache.ts',
+  // 4.22.0/4.23.0：墓碑的读写与「墓碑/宽限期随导出包搬运」
+  'storage/tombstone.ts',
   'storage/tags.ts',
   // 4.18.0：归属 id 改由 token 身份解析（tags.ts → storage/accountIdentity → tokenConfig），
   // 这是风险 21 的修复点 —— 单测必须把这条链编译进来才测得到。

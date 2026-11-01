@@ -25,7 +25,8 @@ const { buildExportPackage, validateExportPackage, applyImportPackage } = requir
 const { saveTags, loadAllTags } = require('./.build/storage/tags.cjs');
 const { saveNote, loadAllNotes } = require('./.build/storage/notes.cjs');
 const { saveRepoData, loadRepoCache, hasApiData } = require('./.build/storage/repoCache.cjs');
-const { loadPendingDelete, addPendingFromImport, markRepoStarred, listRestorable } = require('./.build/storage/pendingDelete.cjs');
+const { loadPendingDelete, addPendingFromImport, markRepoStarred, listRestorable, markRepoUnstarred } = require('./.build/storage/pendingDelete.cjs');
+const { markRepoTombstone, listTombstones } = require('./.build/storage/tombstone.cjs');
 
 let pass = 0;
 let fail = 0;
@@ -520,6 +521,113 @@ console.log('\n[16] setTokenVerified：唯一写入点 + 先身份后 token');
   await setTokenVerified('');
   eq('清空后：归属回退登录者', buildExportPackage().user.id, '111');
   store.delete('github_pat');
+
+
+  /* ================= 17. 墓碑 / 宽限期随包搬运（4.23.0） ================= */
+  console.log('\n[17] 墓碑 / 宽限期的导出与导入');
+  reset();
+  USER_ID = '111';
+  // 墓碑：条目仍在整表缓存，标签/备注仍在活区（与 markRepoTombstone 之后的真实状态一致）
+  saveRepoData('t1', {
+    name: 'owner/gone', desc: '已消失的仓库', lang: 'Rust', stars: 42, forks: 7,
+    updatedAt: '2026-09-01T00:00:00Z', starredAt: '2026-01-01T00:00:00Z', fork: true,
+  });
+  markRepoTombstone('t1', 404);
+  saveTags('t1', ['灰']);
+  saveNote('t1', '墓碑备注');
+  // 宽限期：markRepoUnstarred 会把标签/备注搬进备份并清空活区
+  saveRepoData('g1', { name: 'owner/pending' });
+  saveTags('g1', ['待恢复']);
+  saveNote('g1', '待恢复备注');
+  markRepoUnstarred('g1');
+  const graceAt = loadPendingDelete().g1.unstarredAt;
+  // 已超期的宽限期条目：不出现在包里（按 ADR 0003 本来就当已删除）
+  store.set(pendingKey(), Object.assign({}, store.get(pendingKey()), {
+    gOld: { name: 'owner/old', unstarredAt: Date.now() - 25 * 60 * 60 * 1000, _tags: ['旧'], _note: '' },
+  }));
+
+  const pkgT = buildExportPackage();
+  eq('墓碑段：描述/语言/star/fork/时间齐全（能复现卡片）', pkgT.data.tombstones.t1, {
+    name: 'owner/gone', at: pkgT.data.tombstones.t1.at, status: 404, desc: '已消失的仓库',
+    lang: 'Rust', stars: 42, forks: 7, updatedAt: '2026-09-01T00:00:00Z',
+    starredAt: '2026-01-01T00:00:00Z', fork: true,
+  });
+  eq('墓碑的标签/备注仍走活区（tags/notes 段）', [pkgT.data.tags.t1, pkgT.data.notes.t1], [['灰'], '墓碑备注']);
+  eq('宽限期段：带标签与原始 unstarredAt', pkgT.data.grace.g1, { name: 'owner/pending', tags: ['待恢复'], note: '待恢复备注', unstarredAt: graceAt });
+  eq('…已超期的宽限期条目不进包', pkgT.data.grace.gOld, undefined);
+  ok('宽限期内容不在 tags/notes 段（活区已被清空）', pkgT.data.tags.g1 === undefined && pkgT.data.notes.g1 === undefined);
+
+  // --- 17b 导入到一台空机器：墓碑与宽限期都重建 ---
+  const roundTrip = buildExportPackage();
+  reset();
+  USER_ID = '111';
+  const repT = applyImportPackage(roundTrip);
+  eq('空机器导入：墓碑条目已重建', loadRepoCache().t1.tombstone.status, 404);
+  eq('…描述/语言/star/fork 都恢复了', [loadRepoCache().t1.desc, loadRepoCache().t1.lang, loadRepoCache().t1.stars, loadRepoCache().t1.forks], ['已消失的仓库', 'Rust', 42, 7]);
+  eq('…标签写进活区（因为条目已在缓存里）', loadAllTags().t1, ['灰']);
+  eq('…备注写进活区', loadAllNotes().t1, '墓碑备注');
+  eq('…计入 tombstonesRestored', repT.tombstonesRestored, 1);
+  eq('…宽限期条目已重建并保留原始 unstarredAt', loadPendingDelete().g1.unstarredAt, graceAt);
+  eq('…宽限期的标签/备注也回来了', [loadPendingDelete().g1._tags, loadPendingDelete().g1._note], [['待恢复'], '待恢复备注']);
+  eq('…计入 graceRestored', repT.graceRestored, 1);
+  ok('…恢复窗口里能看到它', listRestorable().some((e) => e.repoId === 'g1'));
+  ok('…墓碑仍可被 listTombstones 列出', listTombstones().some((e) => e.repoId === 't1'));
+
+  // --- 17c 导入：本地已有该仓库 ⇒ 本地权威，不套用包里的旧快照 ---
+  reset();
+  USER_ID = '111';
+  saveRepoData('t1', { name: 'owner/gone', desc: '本地新描述', stars: 99 });
+  applyImportPackage(roundTrip);
+  eq('本地已有条目 ⇒ 不套用包里的旧元数据', [loadRepoCache().t1.desc, loadRepoCache().t1.stars], ['本地新描述', 99]);
+  ok('…也不给它打墓碑', loadRepoCache().t1.tombstone === undefined);
+
+  // --- 17d 导入：宽限期已超时 ⇒ 直接消失 ---
+  reset();
+  USER_ID = '111';
+  const expiredPkg = {
+    kind: 'github-star-manager-export', schemaVersion: 1, exportedAt: new Date().toISOString(),
+    user: { id: '111' },
+    data: {
+      tags: {}, notes: {}, repoNames: {},
+      grace: { g2: { name: 'owner/g2', tags: ['a'], note: 'n', unstarredAt: Date.now() - 25 * 60 * 60 * 1000 } },
+    },
+  };
+  const repExp = applyImportPackage(expiredPkg);
+  eq('超时的宽限期条目：不建条目', loadPendingDelete().g2, undefined);
+  eq('…也不写标签', loadAllTags().g2, undefined);
+  eq('…计入 graceExpired', repExp.graceExpired, 1);
+
+  // --- 17e 导入：宽限期仓库本地已是 star 状态 ⇒ 标签/备注直接进活区 ---
+  reset();
+  USER_ID = '111';
+  saveRepoData('g3', { name: 'owner/g3' });   // 本地已 star（在整表缓存里）
+  const activePkg = {
+    kind: 'github-star-manager-export', schemaVersion: 1, exportedAt: new Date().toISOString(),
+    user: { id: '111' },
+    data: {
+      tags: {}, notes: {}, repoNames: {},
+      grace: { g3: { name: 'owner/g3', tags: ['从宽限期来'], note: '备注也来', unstarredAt: Date.now() - 60000 } },
+    },
+  };
+  const repAct = applyImportPackage(activePkg);
+  eq('本地已 star ⇒ 标签直接写活区', loadAllTags().g3, ['从宽限期来']);
+  eq('…备注也直接写活区', loadAllNotes().g3, '备注也来');
+  eq('…不进宽限期', loadPendingDelete().g3, undefined);
+  eq('…计入 graceAppliedActive', repAct.graceAppliedActive, 1);
+
+  // --- 17f 校验：两段的类型错误整包拒绝 ---
+  const basePkg = JSON.parse(JSON.stringify(roundTrip));
+  function withData(patch) {
+    const p = JSON.parse(JSON.stringify(basePkg));
+    Object.assign(p.data, patch);
+    return validateExportPackage(p);
+  }
+  ok('tombstones 不是对象 ⇒ 拒绝', !withData({ tombstones: [] }).ok);
+  ok('tombstones.status 不是数字 ⇒ 拒绝', !withData({ tombstones: { x: { name: 'a/b', at: 1, status: '404' } } }).ok);
+  ok('tombstones.lang 不是字符串 ⇒ 拒绝', !withData({ tombstones: { x: { name: 'a/b', at: 1, status: 404, lang: 5 } } }).ok);
+  ok('grace.tags 不是字符串数组 ⇒ 拒绝', !withData({ grace: { x: { name: 'a/b', tags: 'a', note: '', unstarredAt: 1 } } }).ok);
+  ok('grace.unstarredAt 缺失 ⇒ 拒绝', !withData({ grace: { x: { name: 'a/b', tags: [], note: '' } } }).ok);
+  ok('两段类型正确 ⇒ 接受', withData({}).ok);
 
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
   process.exit(fail ? 1 : 0);

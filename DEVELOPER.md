@@ -186,7 +186,8 @@ src/
     notes.ts          备注存储（saveNote 判空 = trim 后为空）
     pendingDelete.ts  待删除区（unstar 宽限期，含标签/备注/名字备份 + listRestorable/formatRemaining 供恢复窗口；4.17.0 新增 addPendingFromImport —— 导入路径专用，空不覆盖非空、非空整体替换、不重置 unstarredAt）
     tombstone.ts      墓碑（4.22.0）：markRepoTombstone / clearRepoTombstone / listTombstones / removeTombstones（删除连带标签/备注）
-    exportImport.ts   导入导出**纯逻辑**（4.7.0；**4.17.0**：导出 = tags/notes + 最小标识 repoNames、导入按「仓库在不在整表缓存里」逐仓库分派）：buildExportPackage / validateExportPackage / applyImportPackage；不碰 DOM、不弹对话框
+    exportImport.ts   导入导出**纯逻辑**（4.7.0；**4.17.0**：导出 = tags/notes + 最小标识 repoNames、导入按「仓库在不在整表缓存里」逐仓库分派；
+                      **4.23.0**：导出再加 `data.tombstones` / `data.grace` 两段可选载荷，导入原位重建）：buildExportPackage / validateExportPackage / applyImportPackage；不碰 DOM、不弹对话框
   ui/
     theme.ts          内联 UI 的主题解析（**4.19.3 新增**，issue #1）：`resolveUiTheme()` 在**打开 UI 的那一刻**
                       从页面现场取值，返回 `UiTheme`（canvas/fg/fgMuted/border/accent*/btn*/checked/backdrop/
@@ -520,7 +521,14 @@ ID 不可见、名称复用到不同 ID、或目标完全缺失时明确失败�
     "tags": { "<repoId>": ["tag"] },
     "notes": { "<repoId>": "文本" },         // 已剔除 trim 后为空的项；非空文本不 trim
     "repoNames": { "<repoId>": "owner/repo" },  // 4.17.0：最小标识（供导入后手动恢复），查不到就不写
-    "repoCache": { "<repoId>": { "name": "..." } } // 【旧形态，仅 4.7.0–4.16.x】只含有标签或有备注的仓库
+    "repoCache": { "<repoId>": { "name": "..." } }, // 【旧形态，仅 4.7.0–4.16.x】只含有标签或有备注的仓库
+    // 4.23.0：**只在非空时出现**的两段载荷（旧包形状不变）
+    "tombstones": { "<repoId>": { "name": "owner/gone", "desc": "...", "lang": "Rust",
+                                  "stars": 42, "forks": 7, "updatedAt": "...", "starredAt": "...",
+                                  "private": false, "fork": true, "isTemplate": false, "mirror": false,
+                                  "at": 1708000000000, "status": 404 } },
+    "grace": { "<repoId>": { "name": "owner/repo", "tags": ["tag"], "note": "文本",
+                             "unstarredAt": 1708000000000 } }
   }
 }
 ```
@@ -528,10 +536,22 @@ ID 不可见、名称复用到不同 ID、或目标完全缺失时明确失败�
 > **4.17.0 起**：导出包**不再含 `repoCache`**（上面那行只为说明 4.7.0–4.16.x 的形状），改为随带最小的
 > **`repoNames`**（每个仓库的 `owner/repo`）—— 描述性元数据（语言/star 数/描述）由同步承载，
 > 4.19.0 起 `owner/repo` 是名称提示，数字 ID 可在恢复时独立解析（ADR 0011）。
-> 导入路径**不往整表缓存写任何条目**；旧包（仍带 `repoCache`、`schemaVersion` 仍为 1）照常导入，
-> 该字段**只校验、不写入**。详见 `docs/adr/0001` 的「4.17.0 修订」段。
+> 导入路径**不往整表缓存写任何条目**，**唯一例外**是 4.23.0 的 `data.tombstones`（见下）；旧包（仍带
+> `repoCache`、`schemaVersion` 仍为 1）照常导入，该字段**只校验、不写入**。详见 `docs/adr/0001` 的「4.17.0 修订」段。
 
-**不含**：`github_pat`（敏感）、`stars_full_sync_meta`（ETag 基线与 token 身份 + 远端瞬时状态绑定，跨设备导入会让「全 304 = 无变化」误判为「缓存即现值」）、`stars_pending_delete_<归属id>`（临时状态）。
+> **4.23.0 的两段例外（ADR 0016）**：`data.tombstones` 与 `data.grace` 承载的是**网格上已经看不到的那些仓库**
+> —— 墓碑（卡片还在但灰，元数据只有本地缓存有，同步**不会**重建它，因为它的定义就是「不在远端星标列表里」）
+> 与宽限期条目（卡片已消失，标签/备注已被搬进 `stars_pending_delete_*`、活区为空）。不带就是永久丢失。
+> 两段都**只在非空时写入**，`schemaVersion` 仍是 1（新增可选字段，旧包/旧解析器不受影响）。
+> 导入分派（先墓碑、后宽限期、最后标签/备注主循环）：
+> ① 墓碑：本地缓存**已有**该仓库 ⇒ 跳过（本地权威，可能已 re-star）；没有 ⇒ 建条目 + `tombstone`，
+> 随后的主循环因条目已在缓存里而把其标签/备注写进**活区**，灰卡完整复现；
+> ② 宽限期：本地已 star（缓存在）⇒ 标签/备注**直接写活区**；否则按包里的**原始 `unstarredAt`** 重建条目
+> （`restorePendingFromExport`，剩余时间不重算），**已超时就丢弃**（不建、不续命）；
+> ③ 同一 repoId 同时出现在宽限期段与 tags/notes 段时以**宽限期段为准**（主循环跳过它）。
+
+**不含**：`github_pat`（敏感）、`stars_full_sync_meta`（ETag 基线与 token 身份 + 远端瞬时状态绑定，跨设备导入会让「全 304 = 无变化」误判为「缓存即现值」）、
+`stars_pending_delete_<归属id>` **这个键本身**（4.23.0 起其内容以 `data.grace` 的形式随包走，但仍是**一次性搬运**，不在目标机保留同一份键）。
 合并语义与拒绝路径见 `docs/adr/0001-export-import-format.md`。
 
 **导入默认不自动同步**（4.9.0，`docs/adr/0005-no-auto-sync-after-import.md`，推翻 `0001` 原段落）：导入是数据搬运，落盘即完成，是否拉远端由用户自己决定（标题行 Sync / TM 菜单）。收尾只做「Stars 页且网格已存在时重绘」。
@@ -842,12 +862,18 @@ pnpm test:exportimport   # = prepare.cjs（编译被测模块 → tests/exportIm
 
 覆盖范围（改动 `storage/exportImport.ts` 或 `storage/notes.ts` 的判空逻辑后必跑）：
 
-- 导出**不含** `github_pat` / 同步元数据（ETag）/ 宽限期备份 / **描述性仓库元数据**（4.17.0 起 `data.repoCache` 整个移除；随包只带**最小标识** `data.repoNames`）；空白备注不进包、非空备注不被 trim；
+- 导出**不含** `github_pat` / 同步元数据（ETag）/ **整表缓存的完整快照**（4.17.0 起 `data.repoCache` 整个移除；随包只带**最小标识** `data.repoNames`）；空白备注不进包、非空备注不被 trim；
+  4.23.0 的两段例外：`data.tombstones`（墓碑元数据，用于复现灰卡）与 `data.grace`（宽限期的标签/备注 + 原始 `unstarredAt`）——
+  都没有入口可从别处重建，且都**只在非空时写入**；已超期的宽限期条目不进包（按 ADR 0003 本来就当已删除）；
 - 校验：`kind` / `schemaVersion` / `user.id` 缺失或不匹配 / 结构不合法 全部拒绝（不部分解析、不写键）；
   **旧包（含 `data.repoCache`，schemaVersion 仍为 1）照常放行** —— 该字段仍被校验，但**内容一律忽略**；
 - 导入分派（4.17.0）：**在 `stars_repo_cache` 里 ⇒ 写活区**；**两条去向共用同一条胜负规则** —— 包内该仓库的标签/备注**非空即覆盖**目标、为空或缺省则保留目标；
   **不在 ⇒ 24h 宽限期**（`addPendingFromImport`：空不覆盖非空、不重置 `unstarredAt`、超期按新建）；
 - 幂等：同一包连导两次，第二轮 `tagsWritten` / `tagsRemoved` / `notesApplied` 全为 0，宽限期条目不重复新建；
+- 墓碑/宽限期搬运（4.23.0，组 `[17]`）：墓碑段含描述/语言/star/fork/时间 + `at`/`status`；宽限期段含标签/备注 + 原始 `unstarredAt`；
+  空机器导入后墓碑条目与宽限期条目都重建、标签写回活区；本地已有该仓库 ⇒ 不套用包里旧快照、不打墓碑；
+  超时宽限期 ⇒ `graceExpired` 且不建条目；宽限期但本地已 star ⇒ `graceAppliedActive` 且标签/备注进活区；
+  两段的类型错误（`status`/`lang`/`tags`/`unstarredAt`）整包拒绝；
 - **风险 22 回归锁**（`[12]`）：「缓存里有该仓库、`stars_full_sync_meta` 却缺失」时仍按成员关系写活区、不产生并存态；
 - `saveNote` 判空 = trim 后为空；存储按用户 ID 隔离。
 - `loadRepoCache` 是**纯读**（4.16.0 起）：不做清洗、不写盘。此前它会剔掉 `updated` / `langColor` 死字段与脏 `lang` 并持久化，该机制已按 AGENTS.md **D30** 删除。

@@ -54,9 +54,12 @@ function doExport(): void {
     window.alert('下载未能启动：本脚本依赖 Tampermonkey 的 GM_download。请在 TM 设置（需 Advanced 模式）的「下载」区把 json 加入允许的扩展名，并确认下载功能已开启。');
     return;
   }
+  const extra: string[] = [];
+  if (pkg.data.tombstones) extra.push(`异常仓库 ${Object.keys(pkg.data.tombstones).length}`);
+  if (pkg.data.grace) extra.push(`宽限期 ${Object.keys(pkg.data.grace).length}`);
   console.log(
     `[github-star-manager] 已导出：${filename}（标签仓库 ${Object.keys(pkg.data.tags).length}、` +
-      `备注 ${Object.keys(pkg.data.notes).length}）`
+      `备注 ${Object.keys(pkg.data.notes).length}${extra.length ? '、' + extra.join('、') : ''}）`
   );
 }
 
@@ -72,6 +75,10 @@ function reportText(r: ImportReport): string {
   if (r.notesOverwritten > 0) parts.push(`其中覆盖本地原有备注 ${r.notesOverwritten} 条`);
   if (r.notesSkippedEmpty > 0) parts.push(`跳过空备注 ${r.notesSkippedEmpty} 条`);
   if (r.pendingAdded > 0) parts.push(`本地不存在 ${r.pendingAdded} 个仓库，其标签/备注已放入 24h 宽限期`);
+  if (r.graceAppliedActive > 0) parts.push(`宽限期条目 ${r.graceAppliedActive} 个本地已在 star，标签/备注已直接写入`);
+  if (r.graceRestored > 0) parts.push(`恢复宽限期条目 ${r.graceRestored} 个（保留原剩余时间）`);
+  if (r.graceExpired > 0) parts.push(`跳过已超期的宽限期条目 ${r.graceExpired} 个`);
+  if (r.tombstonesRestored > 0) parts.push(`恢复异常仓库 ${r.tombstonesRestored} 个`);
   return parts.join('；');
 }
 
@@ -91,6 +98,9 @@ function confirmText(pkg: ExportPackage, currentId: string, needSync: boolean): 
     `· 本机确认没有该 star（或本机尚未同步过）⇒ 放入 24 小时宽限期，\n` +
     `  期间 star 回来、或任意一次成功同步到「远端已 star」即自动恢复；\n` +
     `  超过 24 小时仍未 star 的，其标签/备注会被删除。\n\n` +
+    `文件里还带「异常仓库」与「取消 star 未满 24h」两类条目时，按各自原状态恢复：\n` +
+    `· 异常仓库 ⇒ 回到网格（灰色卡片，描述 / 语言 / star 数一并恢复）；\n` +
+    `· 宽限期条目 ⇒ 按文件里的原始时间继续倒计时，已超过 24 小时的直接丢弃。\n\n` +
     (needSync
       ? `本机尚未完成过一次完整同步，导入前会先自动同步一次以确认本地 star 记录。\n` +
         `若同步失败（例如未配置 Token），上面的仓库会全部进入 24 小时宽限期 ——\n` +
@@ -162,8 +172,12 @@ function importFromFile(file: File): void {
           `\n· 重新 star、或任意一次成功同步到「远端已 star」，即自动恢复；` +
           `\n· 24 小时内没有任何一次成功同步${report.cacheAvailable ? '' : '（本机尚未同步过）'}` +
           `，这些标签/备注会被删除。`;
+    const graceHint =
+      report.graceExpired === 0
+        ? ''
+        : `\n\n文件里有 ${report.graceExpired} 个仓库的 24 小时宽限期已过，已按设计丢弃（不重建）。`;
     window.alert(
-      `导入完成。\n\n${reportText(report)}${pendingHint}\n\n如需刷新仓库元数据，请点标题行 Sync 或 TM 菜单「🔄 立即全量同步」。`
+      `导入完成。\n\n${reportText(report)}${pendingHint}${graceHint}\n\n如需刷新仓库元数据，请点标题行 Sync 或 TM 菜单「🔄 立即全量同步」。`
     );
     afterImport?.(report);
   };
