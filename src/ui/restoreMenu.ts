@@ -86,6 +86,8 @@ function openRestoreDialog(): void {
     '取消 star 的仓库：标签与备注保留 24 小时，期间可恢复。异常仓库：同步确认已无法访问（404/410/451），卡片显示为灰色，仍可筛选与编辑。',
   );
 
+  const status = el('div', { fontSize: '13px', color: theme.fgMuted, minHeight: '18px' });
+
   const listStyle: Partial<CSSStyleDeclaration> = {
     display: 'flex',
     flexDirection: 'column',
@@ -96,24 +98,12 @@ function openRestoreDialog(): void {
     padding: '8px',
     minHeight: '80px',
   };
-  const sectionTitle = (text: string): HTMLElement =>
-    el('div', { fontSize: '13px', fontWeight: '600', color: theme.fg, marginTop: '2px' }, text);
-
-  // 两个分区：已取消的 Star（24h 宽限期）与异常的 Star（墓碑）。分开显示，动作也分开。
-  const restorableTitle = sectionTitle('已取消的 Star（24 小时内可恢复）');
-  const list = el('div', listStyle);
-  const abnormalTitle = sectionTitle('异常的 Star（仓库已无法访问）');
-  const abnormalList = el('div', listStyle);
-
-  // 底部状态行 + 按钮行
-  const status = el('div', { fontSize: '13px', color: theme.fgMuted, minHeight: '18px' });
-  // 按钮跟着各自分区走（用户裁定）：勾选/恢复只对「已取消」有意义，删除只对「异常」有意义，
-  // 混成一排会让人以为「恢复选中」也能作用于异常仓库。
-  const actionRow = (): HTMLElement =>
-    el('div', { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' });
-  const restorableActions = actionRow();
-  const abnormalActions = actionRow();
-  const actions = actionRow();
+  const actionRowStyle: Partial<CSSStyleDeclaration> = {
+    display: 'flex',
+    gap: '8px',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+  };
 
   const btnPrimary: Partial<CSSStyleDeclaration> = {
     cursor: 'pointer',
@@ -134,25 +124,119 @@ function openRestoreDialog(): void {
     color: theme.btnFg,
   };
 
-  const btnAll = el('button', btnPlain, '全选');
-  const btnNone = el('button', btnPlain, '全不选');
-  const btnRun = el('button', btnPrimary, '恢复选中');
-  const btnStop = el('button', btnPlain, '取消执行');
-  const btnClose = el('button', btnPlain, '关闭');
-  const btnAbnormalAll = el('button', btnPlain, '全选');
-  const btnAbnormalNone = el('button', btnPlain, '全不选');
-  const btnAbnormalRun = el('button', btnPlain, '删除选中');
-  (btnAll as HTMLButtonElement).type = 'button';
-  (btnNone as HTMLButtonElement).type = 'button';
-  (btnRun as HTMLButtonElement).type = 'button';
-  (btnStop as HTMLButtonElement).type = 'button';
-  (btnClose as HTMLButtonElement).type = 'button';
-  (btnAbnormalAll as HTMLButtonElement).type = 'button';
-  (btnAbnormalNone as HTMLButtonElement).type = 'button';
-  (btnAbnormalRun as HTMLButtonElement).type = 'button';
+  /** 当前窗口内还活着的行（repoId → 行状态） */
+  const rows = new Map<string, { entry: RestorableEntry; box: HTMLElement }>();
+  /** 异常分区当前还活着的行（repoId → 行节点） */
+  const abnormalRows = new Map<string, HTMLElement>();
+
+  let running = false;
+  const cancelToken = { cancelled: false };
+
+  /**
+   * 两个分区**共用同一套骨架**（用户裁定，不允许两套平行实现）：标题 + 列表 + 一行
+   * 「全选 / 全不选 / 批量动作」+ 空态行 + 勾选集。差异只剩三处：标题、批量动作语义、
+   * 额外按钮（「取消执行」只属于可恢复分区）。**行视图不共用** —— 两侧字段本就不同
+   * （剩余时长 vs HTTP 状态），抹平它没有收益。
+   */
+  interface Section {
+    titleEl: HTMLElement;
+    list: HTMLElement;
+    actions: HTMLElement;
+    checked: Set<string>;
+    emptyText: string;
+    /** 分区里还活着的 repoId（「全选」与批量动作的取值域） */
+    live: () => string[];
+    btnAll: HTMLButtonElement;
+    btnNone: HTMLButtonElement;
+    btnRun: HTMLButtonElement;
+    refresh: () => void;
+  }
+  const sections: Section[] = [];
+
+  function syncEmpty(s: Section, isEmpty: boolean): void {
+    const existing = s.list.querySelector('.gsm-restore-empty');
+    if (!isEmpty) {
+      existing?.remove();
+      return;
+    }
+    if (existing) return;
+    const empty = el('div', { fontSize: '13px', color: theme.fgMuted, padding: '8px' }, s.emptyText);
+    empty.className = 'gsm-restore-empty';
+    s.list.appendChild(empty);
+  }
+
+  function makeSection(o: {
+    title: string;
+    emptyText: string;
+    /** 无选中时的批量按钮文字 */
+    runLabel: string;
+    /** 有选中时的批量按钮文字 */
+    runLabelWithCount: (n: number) => string;
+    /** 批量按钮是否用主按钮样式（恢复=主，删除=普通） */
+    primary?: boolean;
+    run: (ids: string[]) => void;
+    live: () => string[];
+    extra?: HTMLButtonElement[];
+  }): Section {
+    const titleEl = el(
+      'div',
+      { fontSize: '13px', fontWeight: '600', color: theme.fg, marginTop: '2px' },
+      o.title,
+    );
+    const list = el('div', listStyle);
+    const actions = el('div', actionRowStyle);
+    const checked = new Set<string>();
+    const btnAll = el('button', btnPlain, '全选') as HTMLButtonElement;
+    const btnNone = el('button', btnPlain, '全不选') as HTMLButtonElement;
+    const btnRun = el('button', o.primary ? btnPrimary : btnPlain, o.runLabel) as HTMLButtonElement;
+    btnAll.type = 'button';
+    btnNone.type = 'button';
+    btnRun.type = 'button';
+
+    const setAll = (on: boolean): void => {
+      if (running) return;
+      checked.clear();
+      if (on) for (const id of o.live()) checked.add(id);
+      for (const cb of list.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')) cb.checked = on;
+      refreshButtons();
+    };
+    btnAll.addEventListener('click', () => setAll(true));
+    btnNone.addEventListener('click', () => setAll(false));
+    btnRun.addEventListener('click', () => {
+      if (running) return;
+      const live = o.live();
+      const ids = [...checked].filter((id) => live.includes(id));
+      if (ids.length > 0) o.run(ids);
+    });
+
+    const refresh = (): void => {
+      const n = checked.size;
+      btnRun.textContent = n > 0 ? o.runLabelWithCount(n) : o.runLabel;
+      btnRun.disabled = running || n === 0;
+      // 空分区连「全选 / 全不选」一起隐藏：留着只是一排点不动的按钮
+      const empty = o.live().length === 0;
+      for (const b of [btnAll, btnNone]) {
+        b.disabled = running || empty;
+        b.hidden = empty;
+      }
+      for (const b of [btnAll, btnNone, btnRun]) b.style.opacity = b.disabled ? '0.6' : '';
+    };
+
+    actions.append(btnAll, btnNone, btnRun, ...(o.extra || []));
+    const section: Section = {
+      titleEl, list, actions, checked, emptyText: o.emptyText,
+      live: o.live, btnAll, btnNone, btnRun, refresh,
+    };
+    sections.push(section);
+    return section;
+  }
+
+  const btnStop = el('button', btnPlain, '取消执行') as HTMLButtonElement;
+  btnStop.type = 'button';
   btnStop.hidden = true;
-  btnAbnormalAll.hidden = true;
-  btnAbnormalNone.hidden = true;
+
+  const btnClose = el('button', btnPlain, '关闭') as HTMLButtonElement;
+  btnClose.type = 'button';
 
   const close = el('button', {
     position: 'absolute',
@@ -168,55 +252,44 @@ function openRestoreDialog(): void {
   (close as HTMLButtonElement).type = 'button';
   (close as HTMLButtonElement).setAttribute('aria-label', '关闭');
   // 执行中禁用关闭：否则窗口一关，「取消执行」按钮就跟着没了，而后续条目仍在发（ADR 0003）
-close.addEventListener('click', () => {
-  if (!running) closeDialog();
-});
+  close.addEventListener('click', () => {
+    if (!running) closeDialog();
+  });
 
-  /** 当前窗口内还活着的行（repoId → 行状态） */
-  const rows = new Map<string, { entry: RestorableEntry; box: HTMLElement }>();
-  /** 异常分区当前还活着的行（repoId → 行节点） */
-  /** 异常分区当前还活着的行（repoId → 行节点） */
-  const abnormalRows = new Map<string, HTMLElement>();
-  /** 已勾选的「已取消」条目 */
-  const checked = new Set<string>();
-  /** 已勾选的「异常」条目 */
-  const abnormalChecked = new Set<string>();
-  let running = false;
-  const cancelToken = { cancelled: false };
+  const restorable = makeSection({
+    title: '已取消的 Star（24 小时内可恢复）',
+    emptyText: '当前没有可恢复的条目。',
+    runLabel: '恢复选中',
+    runLabelWithCount: (n) => `恢复选中（${n}）`,
+    primary: true,
+    run: (ids) => runRestore(ids),
+    live: () => [...rows.keys()],
+    extra: [btnStop],
+  });
+  const abnormal = makeSection({
+    title: '异常的 Star（仓库已无法访问）',
+    emptyText: '当前没有异常仓库。',
+    runLabel: '删除选中',
+    runLabelWithCount: (n) => `删除选中（${n}）`,
+    run: (ids) => runDelete(ids),
+    live: () => [...abnormalRows.keys()],
+  });
+
+  const list = restorable.list;
+  const abnormalList = abnormal.list;
+  const checked = restorable.checked;
+  const abnormalChecked = abnormal.checked;
 
   function refreshButtons(): void {
-    const n = checked.size;
-    (btnRun as HTMLButtonElement).textContent = n > 0 ? `恢复选中（${n}）` : '恢复选中';
-    (btnRun as HTMLButtonElement).disabled = running || n === 0;
-    (btnRun as HTMLButtonElement).style.opacity = (btnRun as HTMLButtonElement).disabled ? '0.6' : '';
-    (btnAll as HTMLButtonElement).disabled = running;
-    (btnNone as HTMLButtonElement).disabled = running;
-    (btnClose as HTMLButtonElement).disabled = running;
-    // 异常分区的批量删除：与「已取消」一样先勾选，避免误点（删除不可撤销）
-    const an = abnormalChecked.size;
-    (btnAbnormalRun as HTMLButtonElement).textContent = an > 0 ? `删除选中（${an}）` : '删除选中';
-    (btnAbnormalRun as HTMLButtonElement).disabled = running || an === 0;
-    (btnAbnormalRun as HTMLButtonElement).style.opacity =
-      (btnAbnormalRun as HTMLButtonElement).disabled ? '0.6' : '';
-    for (const b of [btnAbnormalAll, btnAbnormalNone] as HTMLButtonElement[]) {
-      b.disabled = running;
-      b.hidden = abnormalRows.size === 0;
-    }
+    for (const s of sections) s.refresh();
+    btnClose.disabled = running;
   }
 
   function removeRow(repoId: string): void {
     rows.get(repoId)?.box.remove();
     rows.delete(repoId);
     checked.delete(repoId);
-    if (rows.size === 0 && !list.querySelector('.gsm-restore-empty')) {
-      const empty = el(
-        'div',
-        { fontSize: '13px', color: theme.fgMuted, padding: '8px' },
-        '当前没有可恢复的条目。'
-      );
-      empty.className = 'gsm-restore-empty';
-      list.appendChild(empty);
-    }
+    syncEmpty(restorable, rows.size === 0);
     refreshButtons();
   }
 
@@ -294,15 +367,7 @@ close.addEventListener('click', () => {
     abnormalRows.get(repoId)?.remove();
     abnormalRows.delete(repoId);
     abnormalChecked.delete(repoId);
-    if (abnormalRows.size === 0 && !abnormalList.querySelector('.gsm-restore-empty')) {
-      const empty = el(
-        'div',
-        { fontSize: '13px', color: theme.fgMuted, padding: '8px' },
-        '当前没有异常仓库。'
-      );
-      empty.className = 'gsm-restore-empty';
-      abnormalList.appendChild(empty);
-    }
+    syncEmpty(abnormal, abnormalRows.size === 0);
     refreshButtons();
   }
 
@@ -360,61 +425,26 @@ close.addEventListener('click', () => {
   }
 
 
-  (btnAll as HTMLButtonElement).addEventListener('click', () => {
-    list.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((cb) => {
-      cb.checked = true;
-    });
-    for (const repoId of rows.keys()) checked.add(repoId);
-    refreshButtons();
-  });
-  (btnNone as HTMLButtonElement).addEventListener('click', () => {
-    list.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((cb) => {
-      cb.checked = false;
-    });
-    checked.clear();
-    refreshButtons();
-  });
-
-  (btnAbnormalAll as HTMLButtonElement).addEventListener('click', () => {
-    abnormalList.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((cb) => {
-      cb.checked = true;
-    });
-    for (const repoId of abnormalRows.keys()) abnormalChecked.add(repoId);
-    refreshButtons();
-  });
-  (btnAbnormalNone as HTMLButtonElement).addEventListener('click', () => {
-    abnormalList.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((cb) => {
-      cb.checked = false;
-    });
-    abnormalChecked.clear();
-    refreshButtons();
-  });
-  (btnAbnormalRun as HTMLButtonElement).addEventListener('click', () => {
-    if (running) return;
-    const ids = [...abnormalChecked].filter((id) => abnormalRows.has(id));
-    if (ids.length === 0) return;
+  /** 批量删除选中的异常仓库：同步写盘，不需要队列（与恢复不同，这里没有远端请求）。 */
+  function runDelete(ids: string[]): void {
+    const live = ids.filter((id) => abnormalRows.has(id));
+    if (live.length === 0) return;
     const ok = window.confirm(
-      `删除选中的 ${ids.length} 个异常 Star 仓库？\n\n` +
+      `删除选中的 ${live.length} 个异常 Star 仓库？\n\n` +
         '· 仓库已无法访问，删除后不再出现在网格与恢复窗口；\n' +
         '· 它们的标签与备注也会一并删除；\n' +
         '· 操作不可撤销。\n\n确定删除吗？'
     );
     if (!ok) return;
-    const removed = removeTombstones(ids);
-    for (const id of ids) removeAbnormalRow(id);
+    const removed = removeTombstones(live);
+    for (const id of live) removeAbnormalRow(id);
     status.textContent = `已删除 ${removed} 个异常仓库。`;
     applyFilters({ keepPage: true });
-  });
+  }
 
-  (btnClose as HTMLButtonElement).addEventListener('click', () => closeDialog());
-  (btnStop as HTMLButtonElement).addEventListener('click', () => {
-    cancelToken.cancelled = true;
-    status.textContent = '正在停止…（已发出的请求不会回滚）';
-  });
-
-  (btnRun as HTMLButtonElement).addEventListener('click', () => {
-    if (running) return;
-    const targets = [...checked]
+  /** 批量恢复：严格串行、可取消、失败不自动重试（ADR 0003）。 */
+  function runRestore(ids: string[]): void {
+    const targets = ids
       .map((id) => rows.get(id)?.entry)
       .filter((e): e is RestorableEntry => !!e);
     if (targets.length === 0) return;
@@ -456,12 +486,21 @@ close.addEventListener('click', () => {
         pushNotice(`恢复完成：成功 ${summary.succeeded}/${summary.total}${cancelText}`, 'success');
       }
     });
-  });
+  }
 
-  restorableActions.append(btnAll, btnNone, btnRun, btnStop);
-  abnormalActions.append(btnAbnormalAll, btnAbnormalNone, btnAbnormalRun);
-  actions.append(btnClose);
-  box.append(title, hint, restorableTitle, list, restorableActions, abnormalTitle, abnormalList, abnormalActions, status, actions, close);
+  (btnClose as HTMLButtonElement).addEventListener('click', () => closeDialog());
+  (btnStop as HTMLButtonElement).addEventListener('click', () => {
+    cancelToken.cancelled = true;
+    status.textContent = '正在停止…（已发出的请求不会回滚）';
+  });
+  const closeRow = el('div', actionRowStyle);
+  closeRow.append(btnClose);
+  box.append(
+    title, hint,
+    restorable.titleEl, restorable.list, restorable.actions,
+    abnormal.titleEl, abnormal.list, abnormal.actions,
+    status, closeRow, close,
+  );
   overlay.appendChild(box);
 
   overlay.addEventListener('mousedown', (e) => {
@@ -476,30 +515,10 @@ close.addEventListener('click', () => {
   window.addEventListener('keydown', keyHandler);
 
   // 填充列表
-  const entries = listRestorable();
-  if (entries.length === 0) {
-    const empty = el(
-      'div',
-      { fontSize: '13px', color: theme.fgMuted, padding: '8px' },
-      '当前没有可恢复的条目。'
-    );
-    empty.className = 'gsm-restore-empty';
-    list.appendChild(empty);
-  } else {
-    for (const e of entries) bindRow(e);
-  }
-  const tombstones = listTombstones();
-  if (tombstones.length === 0) {
-    const empty = el(
-      'div',
-      { fontSize: '13px', color: theme.fgMuted, padding: '8px' },
-      '当前没有异常仓库。'
-    );
-    empty.className = 'gsm-restore-empty';
-    abnormalList.appendChild(empty);
-  } else {
-    for (const e of tombstones) bindAbnormalRow(e);
-  }
+  for (const e of listRestorable()) bindRow(e);
+  for (const e of listTombstones()) bindAbnormalRow(e);
+  syncEmpty(restorable, rows.size === 0);
+  syncEmpty(abnormal, abnormalRows.size === 0);
   refreshButtons();
 }
 
