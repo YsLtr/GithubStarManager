@@ -123,6 +123,15 @@ function openRestoreDialog(): void {
     background: theme.btnBg,
     color: theme.btnFg,
   };
+  const btnDanger: Partial<CSSStyleDeclaration> = {
+    cursor: 'pointer',
+    fontSize: '14px',
+    padding: '6px 14px',
+    borderRadius: theme.radiusMedium,
+    border: borderCss('1px', theme.btnDangerBorder),
+    background: theme.btnDangerBg,
+    color: theme.btnDangerFg,
+  };
 
   /** 当前窗口内还活着的行（repoId → 行状态） */
   const rows = new Map<string, { entry: RestorableEntry; box: HTMLElement }>();
@@ -172,8 +181,8 @@ function openRestoreDialog(): void {
     runLabel: string;
     /** 有选中时的批量按钮文字 */
     runLabelWithCount: (n: number) => string;
-    /** 批量按钮是否用主按钮样式（恢复=主，删除=普通） */
-    primary?: boolean;
+    /** 批量按钮的样式：恢复=主按钮，删除=危险（红色） */
+    variant?: 'primary' | 'danger';
     run: (ids: string[]) => void;
     live: () => string[];
     extra?: HTMLButtonElement[];
@@ -188,7 +197,8 @@ function openRestoreDialog(): void {
     const checked = new Set<string>();
     const btnAll = el('button', btnPlain, '全选') as HTMLButtonElement;
     const btnNone = el('button', btnPlain, '全不选') as HTMLButtonElement;
-    const btnRun = el('button', o.primary ? btnPrimary : btnPlain, o.runLabel) as HTMLButtonElement;
+    const runStyle = o.variant === 'primary' ? btnPrimary : o.variant === 'danger' ? btnDanger : btnPlain;
+    const btnRun = el('button', runStyle, o.runLabel) as HTMLButtonElement;
     btnAll.type = 'button';
     btnNone.type = 'button';
     btnRun.type = 'button';
@@ -213,12 +223,9 @@ function openRestoreDialog(): void {
       const n = checked.size;
       btnRun.textContent = n > 0 ? o.runLabelWithCount(n) : o.runLabel;
       btnRun.disabled = running || n === 0;
-      // 空分区连「全选 / 全不选」一起隐藏：留着只是一排点不动的按钮
-      const empty = o.live().length === 0;
-      for (const b of [btnAll, btnNone]) {
-        b.disabled = running || empty;
-        b.hidden = empty;
-      }
+      // 「全选 / 全不选」始终可见（用户裁定）：空分区下方也保留按钮位置，
+      // 不做 hide —— 按钮忽隐忽现比一直可见更让人怀疑是不是坏了。
+      for (const b of [btnAll, btnNone]) b.disabled = running;
       for (const b of [btnAll, btnNone, btnRun]) b.style.opacity = b.disabled ? '0.6' : '';
     };
 
@@ -261,7 +268,7 @@ function openRestoreDialog(): void {
     emptyText: '当前没有可恢复的条目。',
     runLabel: '恢复选中',
     runLabelWithCount: (n) => `恢复选中（${n}）`,
-    primary: true,
+    variant: 'primary',
     run: (ids) => runRestore(ids),
     live: () => [...rows.keys()],
     extra: [btnStop],
@@ -271,6 +278,7 @@ function openRestoreDialog(): void {
     emptyText: '当前没有异常仓库。',
     runLabel: '删除选中',
     runLabelWithCount: (n) => `删除选中（${n}）`,
+    variant: 'danger',
     run: (ids) => runDelete(ids),
     live: () => [...abnormalRows.keys()],
   });

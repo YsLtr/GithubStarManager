@@ -60,6 +60,10 @@ export interface UiTheme {
   btnPrimaryBg: string;
   btnPrimaryFg: string;
   btnPrimaryBorder: string;
+  /** 危险按钮（`.btn-danger` 族）。底色取不到 ⇒ 留空保持次要按钮外观，前景退到 danger 文字色 */
+  btnDangerBg: string;
+  btnDangerFg: string;
+  btnDangerBorder: string;
   /** 原生 checkbox 的选中色（`accent-color`）。**取不到就留空** = 浏览器默认（跟随 color-scheme） */
   checked: string;
   /** 遮罩层底色（`--overlay-backdrop-bgColor`，即 GitHub 自己弹窗后面的那层） */
@@ -218,6 +222,12 @@ export function resolveUiTheme(): UiTheme {
   const primaryBgEmphasis =
     token(cs, ['--button-primary-bgColor-rest']) || sample(NATIVE.primary, 'backgroundColor');
   const btnPrimaryBg = primaryBgEmphasis || btnBg;
+  // 危险按钮底色：要**实心红**（用户裁定「红色按钮」）。GitHub 的
+  // `--button-danger-bgColor-rest` 实测是 `#f6f8fa`（灰底红字的 rest 态），拿它只会得到
+  // 「既不像危险也不像普通」的中间态 ⇒ 取强调域 `--bgColor-danger-emphasis`（真机 #cf222e），
+  // 退到 `.btn-danger` 的 hover 面。两者都没有就留空 = 保持次要按钮外观，前景退 danger 文字色。
+  const dangerBg =
+    token(cs, ['--bgColor-danger-emphasis']) || token(cs, ['--button-danger-bgColor-hover']);
   // 主按钮前景：**整个强调域**的配对约束 —— 底不在强调域，前景也一律留空。
   //   · 底在强调域 ⇒ `--button-primary-fgColor-rest`（生产路径，= `--fgColor-white`）→ onEmphasis；
   //   · 底退到 `btnBg`（亮色 #f6f8fa 这种默认面）⇒ 前景留空、继承页面前景色（与底同域）。
@@ -246,6 +256,12 @@ export function resolveUiTheme(): UiTheme {
     // 也不无条件拿 onEmphasis 兜（见上面 `primaryBgEmphasis` 的配对约束）
     btnPrimaryFg,
     btnPrimaryBorder: token(cs, ['--button-primary-borderColor-rest']) || btnPrimaryBg,
+    // 危险按钮：实心红底 + onEmphasis 前景（配对约束同上，底不在强调域就不配对）
+    btnDangerBg: dangerBg,
+    btnDangerFg: dangerBg
+      ? token(cs, ['--fgColor-onEmphasis']) || token(cs, ['--button-danger-fgColor-hover'])
+      : token(cs, ['--fgColor-danger']) || EMPTY,
+    btnDangerBorder: token(cs, ['--borderColor-danger-emphasis']) || dangerBg || border,
     // 勾选框同理：`accent-color` 是**表面色**，不能拿文本强调色兜（暗色下会白勾压白面板）。
     // 取不到就留空 = 浏览器默认，天然跟随 color-scheme
     checked: token(cs, ['--control-checked-bgColor-rest']) || sample(NATIVE.checkbox, 'accentColor'),

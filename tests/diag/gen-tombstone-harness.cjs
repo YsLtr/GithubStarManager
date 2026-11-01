@@ -37,8 +37,31 @@ for (let i = 1; i <= REPOS; i += 1) {
 // （Primer 的 primitives 里有它）。缺了它，octicon 的 path 会用 SVG 默认填充色 **黑**，
 // 于是 `.stars-star-btn.starred { color: #e3b341 }` 与墓碑的 `color: var(--fgColor-muted)`
 // 都看不出效果 —— 表现是「所有卡片的星星都是黑的」，看上去像墓碑样式串到了整页。
+// 夹具还必须补上 Primer 的一小组颜色 token：`ui/theme.ts` 只从**页面**取色、取不到就不写该
+// 属性（D35），而纯静态夹具没有 GitHub 的根样式 ⇒ 危险/主按钮会退成浏览器默认灰。
+// 这里写的是 2026-10 真机 `github.com/<me>?tab=stars` 上的实测值（light），别自己调色。
 const head = `<style>
   svg { fill: currentColor; }
+  :root {
+    --bgColor-default: #ffffff;
+    --bgColor-muted: #f6f8fa;
+    --fgColor-default: #1f2328;
+    --fgColor-muted: #59636e;
+    --borderColor-default: #d1d9e0;
+    --fgColor-accent: #0969da;
+    --fgColor-danger: #d1242f;
+    --fgColor-onEmphasis: #ffffff;
+    --bgColor-danger-emphasis: #cf222e;
+    --borderColor-danger-emphasis: #cf222e;
+    --button-primary-bgColor-rest: #1f883d;
+    --button-primary-fgColor-rest: #ffffff;
+    --button-primary-borderColor-rest: #1f883d;
+    --button-default-bgColor-rest: #f6f8fa;
+    --button-default-fgColor-rest: #24292f;
+    --button-default-borderColor-rest: #d1d9e0;
+    --borderRadius-medium: 6px;
+    --borderRadius-large: 12px;
+  }
 </style>
 <script>
 /* 本夹具用自己的账号 id（理由见生成器里的 USER_ID 注释） */
