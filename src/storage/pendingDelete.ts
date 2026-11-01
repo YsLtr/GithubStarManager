@@ -134,12 +134,15 @@ export function markRepoUnstarred(repoId: string, seed?: RepoData): void {
   if (!existing && !seed && tags.length === 0 && !note) return;
 
   const pending = loadPendingDelete();
-  pending[repoId] = Object.assign({}, existing || seed || {}, {
+  const entry = Object.assign({}, existing || seed || {}, {
     name: seed?.name || existing?.name || '',
     unstarredAt: Date.now(),
     _tags: tags,
     _note: note,
   });
+  // 墓碑只是「远端列表里消失」的标记；用户已主动取消这张卡，恢复后不该继续是灰的。
+  delete entry.tombstone;
+  pending[repoId] = entry;
   savePendingDelete(pending);
 
   if (existing) {

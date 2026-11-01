@@ -6,7 +6,22 @@
 
 ---
 
-## 本轮交接：4.21.0 —— 编辑器收尾避开「按下到松开」，点另一处不再被吃掉
+## 本轮交接：4.22.0 —— 墓碑：仓库消失不再被当成手动取消 star
+
+交接时间：**2026-10-27 18:40 +0800**；分支 `master`。
+
+- **现象/触发**（issue #5）：刷新同步时，「本地缓存有、远端星标列表没有」一律被当成**用户手动取消 star** —— 搬进 24h 宽限期并清空标签/备注。但同一个现象也可能是仓库本身已删除 / 下线 / 无权访问：用户没做任何事，数据和恢复入口都不该按「取消」处理。
+- **判定**（`src/fullSync.ts` A 段）：每个嫌疑条目先探测仓库本身 —— 200 ⇒ 手动取消（沿用既有 `applyExternalUnstar` 走 24h 宽限期）；**404 / 410 / 451** ⇒ 墓碑（`RepoData.tombstone = { at, status }`，条目**留在** `stars_repo_cache`）；网络 / 403 / 限流 ⇒ 本轮不动。全正文模式只查存在性（`collectStarredChecks(..., { existenceOnly: true })`，少一发 `/user/starred`）；**已在墓碑上的条目不重复探测**；仓库重新出现在星标列表 ⇒ 交集分支清墓碑（灰卡变回正常卡）。
+- **墓碑卡**：`buildCardFromCache` 加 `.stars-grid-card-tombstone` + 标题提示；`base.css` 把背景 / 边框 / 名称 / 描述 / 标签 / 语言点 / 星标 / 备注与标签输入框边框 / 各种 hover 压到 muted 灰。标签与备注仍在**活区** ⇒ 筛选、编辑照旧；`stars_repo_cache` 是 GM 存储（自动镜像 localStorage）且条目不被删除 ⇒ 元数据保留、导出包的 `repoNames` 照常可用。
+- **再次 unstar**：墓碑卡点击**不发写请求**（必然 404），直接 `markRepoUnstarred` → 与其他仓库一样进入 24h 宽限期；搬备份时剔除 `tombstone`，恢复后不再灰。
+- **恢复窗口**：TM 菜单改为「♻️ 取消/异常的 Star 仓库」，两个分区。异常分区可单条删除或「删除全部异常」（连同标签/备注一起删，不可撤销）。
+- **验证**：`pnpm check` 绿、dist **229.59 kB**、`@grant` 恰 5 项；`pnpm test:api` **37 通过**（新增 5 条：墓碑生成 / 可达仓库仍走普通 unstar / 已墓碑不重复探测 / 仓库回归清墓碑 / 批量删除连带标签备注）；`pnpm test:exportimport` **153 通过**。
+- **边界**：证据在 mock 网络层与纯逻辑，**真机未复验**（真机要造一个已删除仓库）；classic token 无 `repo` scope 时私有仓库的 404 会落成墓碑（有意：比「清标签」保守，仓库恢复可达后自动清墓碑）；全正文模式每个嫌疑新增 1–2 次请求，额度不足时整轮同步放弃（与切片核对同一条红线）。
+- 决策全文：`docs/adr/0015-tombstone-abnormal-stars.md`。
+
+---
+
+## 上一轮交接：4.21.0 —— 编辑器收尾避开「按下到松开」，点另一处不再被吃掉
 
 交接时间：**2026-10-27 16:15 +0800**；分支 `master`。
 
@@ -85,9 +100,9 @@
 
 ## 当前状态
 
-版本 **4.21.0**（`package.json` 是单一版本源，`vite.config.ts` 读它写脚本头）。
+版本 **4.22.0**（`package.json` 是单一版本源，`vite.config.ts` 读它写脚本头）。
 
-本轮落点 = 4.21.0（编辑器收尾避开「按下到松开」，点另一处不再被吃掉）。版本演进与每轮改了什么查 `git log`，决策依据查 `docs/adr/`。
+本轮落点 = 4.22.0（墓碑：仓库消失与手动取消 star 分开；恢复窗口拆成两个分区）。版本演进与每轮改了什么查 `git log`，决策依据查 `docs/adr/`。
 唯一需要跨版本记住的四条实测结论：
 - **主题 token**：GitHub 的 `--color-*` 一代已整体改名（`--bgColor-*` / `--fgColor-*` / `--borderColor-*`）；真机暗色页实测旧名在 `:root` 上**全为空**。内联 UI 一律走 `ui/theme.ts` 的 `resolveUiTheme()`，**不写死颜色**（`scripts/verify-theme-tokens.cjs` 把关）。
 - **事件在节点离场后不可用**：移除聚焦元素**会**派发 `blur`，但目标要么已在文档外（`blur`/`focusout` 都传播不到 `document`），要么——**4.20.1 实测，三次一致**——派发发生在**摘除之前**：那一刻 `isConnected` 仍是 `true`、`parentNode` 还在、`document.contains()` 也 true。两个后果都要记住：① 任何「靠 document 上的收尾事件兜住被删节点」的写法都会挂死 ⇒ 要挂在**捕获相位** `blur` 上，或者干脆别删（D36 的做法）；② **`isConnected` 挡不住「脚本重绘摘掉编辑器」** ⇒ 想区分「用户失焦」与「重绘副作用」只能靠发起方标志（`src/inlineEdit.ts` 的 `suppressInlineCommit()`）。
@@ -127,6 +142,8 @@
 - **D35 · 内联 UI 配色只从页面取**（issue #1）：TM 菜单的内联 UI（`ui/restoreMenu.ts` / `ui/exportImportMenu.ts` / `ui/notifications.ts`）**不许出现任何颜色字面量，也不许引用 `--color-*` 旧一代变量**。一律 `resolveUiTheme()` 现场解析（token → 采样原生节点 → 取不到就**不写该属性**）。判据由 `scripts/verify-theme-tokens.cjs` 在 `pnpm check` 里把关；新增内联 UI 时把新 token 加进 `UiTheme`，不要就地写 `#hex`。`confirm`/`alert` 是浏览器原生对话框，不在本约束内（脚本改不了）。
 - **D36 · 编辑会话期间挂起重绘**（4.20.0；4.20.1 补第四条，取代 D12 与 D12 补）：卡片里存在未提交的编辑会话（`.stars-card-notes-edit` / `.stars-tag-input`，判据只在 `src/inlineEdit.ts` 的 `hasInlineEditor()`）⇒ **整条 `applyFilters` 挂起**（不碰任何 DOM，避免「控件刷了、网格没换」的半应用态），编辑结束后补跑一次。**不做**抢救式提交、**不做**快照重开。三条不可动的形状：① **结束信号挂在 document 捕获相位的 `blur`**（不是 `focusout`）—— 提交处理器就地摘节点，摘掉后 `focusout` 目标已在文档外、传播不到 document，靠它收尾会让挂起永久挂死；另配 `keyup` 与 `pointerup`/窗口失焦。② **重绘期间网格不得出现空态**：`renderBrowsePage` 是唯一拆建点，必须分片建好再一次 `replaceChildren`。③ **页码保持**：重绘不改变筛选条件时调用方必须显式传 `applyFilters({ keepPage: true })`（遗漏的表现 = 在第 N 页操作后回第 1 页）；筛选/排序条件变更**不传**，回第 1 页属预期；越界由 `renderBrowsePage` 夹取。挂起槽单例、合并规则「任一方要求回第 1 页则以它为准」。**新增直调 `renderBrowsePage` 的入口必须先确认自己不可能发生在编辑会话期间**；他人页走 `renderBrowsePageDeferred`。销毁路径（`viewTeardown` / `exitOtherStarsView`）必须 `cancelDeferredApply()` 并 `commitInlineEditors()`。唯一例外是**外部取关**：卡片将转只读，草稿改由 `mergeDraftIntoGraceBackup()` 并入宽限期备份，编辑器的 `isConnected` 守卫保证落盘不写进活区。④ **脚本自己发起的重绘不算用户提交**（4.20.1）：Chromium 在**摘除之前**就派发 blur（`isConnected` 仍为 true），所以 `ui/notes.ts` / `ui/tagFilter.ts` / `readonly.ts` 清空容器处必须包 `suppressInlineCommit()`，否则草稿写回活区、且 `commit` 里的 `renderNotes()` 会把编辑监听重新绑上 ⇒ 只读卡片又能点开编辑框。`commitInlineEditors()` 相反，**不做**抑制。第三条的完整判据是一张表（哪种重绘传 `keepPage`），见 `DEVELOPER.md` §7 —— 4.20.0 起不再有「前件包含排序、后句又排除排序」的自相矛盾。
 - **D37 · 编辑器的 DOM 收尾排到「按下到松开」之后**（4.21.0，全文 `docs/adr/0014`）：编辑器提交时**落盘同步**（这一击可能导航走），但**改 DOM 的收尾**（拆编辑框 / 重画本卡区域 / `applyFilters`）必须走 `inlineEdit.finishInlineEdit()` —— 按着指针就排到 `pointerup` 之后的一拍，没按着就立即执行。判据 `isPressInFlight()` **只有一份实现**在 `src/inlineEdit.ts`（`pointerdown` / `pointerup` / `pointercancel` / 窗口 `blur` 四信号），任何模块都**不许**再自己记「指针按着」的标志。原因：`click` 派发给「mousedown 与 mouseup 目标的最近公共祖先」，在 blur 里同步重画会让按下的节点在松手前离场 ⇒ Chrome **连 click 都不派发**（夹具实录里一条 click 都没有），用户那一下点击静默失效。四条不可动的形状：① 监听只在**编辑框被创建时** `armPressTracking()`（D18：窄视口一行都不碰），两个回滚点（`viewTeardown` / `exitOtherStarsView`）调 `disarmPressTracking()`，它**必须连状态与队列一起复位**（留一个 `true` 会让此后每次重绘都判成「用户还按着」而永不兑现）；② 收尾跑完发 `onInlineEditSettled` —— 挂起重绘可能正等「页面上没有编辑器」，推迟收尾后不会再有 blur/keyup 来敲门；③ 收尾里先查容器 `isConnected`（视图可能已被拆掉）；④ **新增卡片内联编辑器**必须同样 `armPressTracking()` + `finishInlineEdit()`，否则它会把用户的下一击吃掉（与 D36 第 3 条残余同一件事）。
+
+- **D38 · 墓碑（仓库不可访问）**（4.22.0，全文 `docs/adr/0015`）：同步发现「本地有、远端星标列表无」的条目时，**必须先探测仓库本身**再决定去向。仓库可达（200）⇒ 手动取消 star，走既有 24h 宽限期（`applyExternalUnstar`）；**404 / 410 / 451** ⇒ 墓碑：条目**留在** `stars_repo_cache` 并写 `tombstone: { at, status }`，**标签/备注留在活区**（仍可筛选、可编辑、随导出）；其余状态（网络/403/限流）⇒ 本轮不动，**绝不**把不确定当墓碑。四条不可动的形状：① 已在墓碑上的条目**不重复探测**（它本就不在远端列表里，每轮探测纯浪费额度）；② 仓库重新出现在星标列表 ⇒ 交集分支**清墓碑**；③ 墓碑卡再次 unstar **不发写请求**（必然 404），直接 `markRepoUnstarred` 进 24h 宽限期，搬备份时剔除 `tombstone`；④ 恢复窗口的「异常」分区只能**删除**（单条 / 全部），删除会**连同标签与备注**清掉 —— 不做「恢复」（仓库已不可访问，恢复只会造出下一次同步又判死的条目）。新增读取 `tombstone` 的视图必须先确认它仍走 `stars_repo_cache`（不要另存一份成员关系）。
 
 ---
 
@@ -200,7 +217,7 @@
 
 ## 下一步
 
-1. **升级 4.21.0 后，用 dev 脚本的人必须重装 dev loader**（机制见「dev 模式」第 4 条）；正式版不受影响。
+1. **升级 4.22.0 后，用 dev 脚本的人必须重装 dev loader**（机制见「dev 模式」第 4 条）；正式版不受影响。
 2. **D36 的剩余真机确认**：挂起/兑现本身已在真机通过（见「本轮交接」），还差**进页自动同步**这一条真实触发源 —— 刷新 `github.com/<me>?tab=stars` 后 2s 内打开某张卡的备注编辑框并打字，看编辑框是否仍在、字还在；点别处后网格补跑一次、备注已落盘。控制台应各有一条「卡片正在编辑：本次重绘推迟到编辑结束后（D36）」与「编辑已结束：补跑挂起的重绘（D36）」。
 3. **风险 21 的真机确认**：换一份属于另一个账号的 token ⇒ 横幅应点名两个账号并含归属句；错号期间的标签落在 token 账号命名空间；关掉横幅后换 token 或换登录账号应重新弹出；配置面板留空点「保存并同步」应只报提示、不清除 token。
 4. **keepPage 守卫的真机确认**：按「本轮交接」的跑法在真实 github.com 上于第 2 页加/删标签确认页码不变；顺带处理「未决问题」②–④（起点断言、`stars_lang_colors` 被连带清理、清理失败静默）。

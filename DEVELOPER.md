@@ -185,6 +185,7 @@ src/
                       唯一写入点 setTokenVerified（先确认身份再落库 token，见 ADR 0010）
     notes.ts          备注存储（saveNote 判空 = trim 后为空）
     pendingDelete.ts  待删除区（unstar 宽限期，含标签/备注/名字备份 + listRestorable/formatRemaining 供恢复窗口；4.17.0 新增 addPendingFromImport —— 导入路径专用，空不覆盖非空、非空整体替换、不重置 unstarredAt）
+    tombstone.ts      墓碑（4.22.0）：markRepoTombstone / clearRepoTombstone / listTombstones / removeTombstones（删除连带标签/备注）
     exportImport.ts   导入导出**纯逻辑**（4.7.0；**4.17.0**：导出 = tags/notes + 最小标识 repoNames、导入按「仓库在不在整表缓存里」逐仓库分派）：buildExportPackage / validateExportPackage / applyImportPackage；不碰 DOM、不弹对话框
   ui/
     theme.ts          内联 UI 的主题解析（**4.19.3 新增**，issue #1）：`resolveUiTheme()` 在**打开 UI 的那一刻**
@@ -203,7 +204,8 @@ src/
                       —— **4.10.0 起容器入口带视口门**：`ensureContainer()` 在窄视口返回 null，`pushNotice` 交回空句柄（否则窄视口下同步会把整座栈懒重建出来）
                       —— **4.19.3 起配色来自 `theme.ts`**：`KIND_ICON`（只有图标 path）与 `theme.notice[kind]`
                       （bg/border/fg 三个 tone）分家；`BTN_SHADOW`/`CARD_SHADOW` 常量已删（改 `theme.btnShadow`/`theme.restingShadow`）
-    restoreMenu.ts    TM 菜单「♻️ 恢复已取消的 star」（4.9.0）：可勾选 + 一键恢复选中 + 每行 ☆ 按钮 + 进度 + 取消
+    restoreMenu.ts    TM 菜单「♻️ 取消/异常的 Star 仓库」（4.9.0 起；4.22.0 拆两区）：已取消的可勾选/单条恢复 +
+                      进度/取消；异常（墓碑）只能单条或全部删除（连带标签/备注）
                       （4.19.3 起全部配色取自 `theme.ts` 的 `resolveUiTheme()`）
     tagFilter.ts      标签 pill、筛选栏（原位重绘 = 共现收窄，勾选不关 popover）、pill 选中态同步、refreshTagFilterBar（候选刷新唯一入口）
     hideListsMenu.ts  TM 菜单「🙈 隐藏 Lists 区块」开关（持久键 stars_hide_lists + 标签刷新 + 门控即时生效）
@@ -304,7 +306,8 @@ GitHub API (PAT)                                GitHub DOM（无缓存 / 详情�
     "updatedAt": "2026-09-01T00:00:00Z",   // = REST pushed_at（最后 push；「Recently active」排序依据，卡片相对时间现算源）
     "starredAt": "2026-08-01T00:00:00Z", // star 时间（同步回填；「Recently starred」排序依据）
     "private": false, "fork": false, "isTemplate": false, "mirror": false, // Type 筛选四标志
-    "ts": 1708000000000                // 缓存写入时间
+    "tombstone": { "at": 1708000000000, "status": 404 }, // 可选：墓碑（4.22.0，仓库已不可访问；见 §外部 unstar 检测）
+    "ts": 1708000000000                // 缓存写入时间（历史字段，无读者）
   }
 }
 ```
@@ -471,8 +474,19 @@ ID 不可见、名称复用到不同 ID、或目标完全缺失时明确失败�
 星状态真相**只由整表 diff 权威判定**：扫描远端列表，远端无而本地有 → `applyExternalUnstar()`（宽限管线 + 幂等自愈：已入宽限区不重复写区但仍清缓存脏态）。逐条双 404 核对队列、到货快照、位移挂起等历史链路已随 API 主模式整体移除。
 
 切片混合模式下，local-only 嫌疑交给 `collectStarredChecks()`：先按 ID 确认名称，再查星标。
-星标 204 = 保留，已确认目标上的星标 404 = 取关；元数据 404/身份不符/不可判定 = 保留。
-全部核对结束后才提交本地变化；额度不足、限流或 401 整轮放弃；普通权限 403 / 网络失败保留该项，其他已确认项仍可提交。全 304 与正文权威模式不额外查仓库。
+星标 204 = 保留；已确认目标上的星标 404 = 取关。
+
+**4.22.0 起两种扫描模式都要先判定「仓库是否还在」**（issue #5）：
+
+- 仓库可达 ⇒ 手动取消 star，走上面的宽限管线；
+- **404 / 410 / 451 ⇒ 墓碑**（`markRepoTombstone`）：条目**留在** `stars_repo_cache`（不搬宽限期、不清标签/备注），
+  写 `tombstone: { at, status }`，卡片渲染为灰色但仍参与筛选与编辑；
+- 已在墓碑上的条目不重复探测；仓库重新出现在星标列表 ⇒ 交集分支清墓碑；
+- 网络 / 403 / 身份不符 / 限流 ⇒ 本轮不动（不把不确定写成墓碑）。
+
+全正文模式只要存在性（`collectStarredChecks(..., { existenceOnly: true })`，少一发 `/user/starred`）；
+全 304 不查。（`classic` token 无 `repo` scope 时私有仓库 404 会落成墓碑 —— 有意的保守降级，见 ADR 0015。）
+全部核对结束后才提交本地变化；额度不足、限流或 401 整轮放弃；普通权限 403 / 网络失败保留该项，其他已确认项仍可提交。
 
 > **改 GitHub 原生元素的尺寸时，选择器必须收窄到「那一个」**（4.13.0 真机教训）：头像规则原来写的是裸
 > `.Layout-sidebar .avatar-user`，结果把侧栏里 Sponsors 区块的小头像一起撑大（13 个 35px → 120px，被迫竖排）。
@@ -559,7 +573,10 @@ ID 不可见、名称复用到不同 ID、或目标完全缺失时明确失败�
 - 200 页 `parseItem` 收正文；**304 页用本地切片组装**（`buildLocalSlices`：缓存按 `starred_at` 降序每 100 切页 —— 304 = 内容与上次同步逐字节一致 = 缓存即现值）。
 - 无基线 / 超 TTL / 阀门失守（缓存缺 `starred_at`、切片盖不住、正文×切片重叠 <50%、尾页满页疑增长超一页）→ `pullAllUnconditional`（Link 头预知总页 + 波次拉全，兜底后 tailEtag 清空待首探）。
 
-**整表 diff 三向**：新增/恢复 → `saveRepoData` / `markRepoStarred`；远端无本地有 → `applyExternalUnstar`；交集 → 回填 `starredAt` + 元数据刷新（只对正文页条目做，切片条目 304 证明未变则不写不数；`updated` 展示文本保留旧值）。
+**整表 diff 三向**：新增/恢复 → `saveRepoData` / `markRepoStarred`；远端无本地有 → **先探测仓库本身**（4.22.0）：
+可达 ⇒ `applyExternalUnstar`（24h 宽限期）；404/410/451 ⇒ `markRepoTombstone`（条目留在缓存、卡片变灰）；
+其余状态 ⇒ 本轮不动；交集 → 回填 `starredAt` + 元数据刷新 + **存在墓碑则清墓碑**（只对正文页条目做元数据刷新，
+切片条目 304 证明未变则不写不数；`updated` 展示文本保留旧值）。
 
 **完整性红线**：任何不完整信号（分页中断、解析失败、超 200 页上限、速率余量 <10）都抛错、catch 不改任何数据 —— 半张表会把未拉到的页全判 unstar。
 
@@ -642,7 +659,7 @@ ID 不可见、名称复用到不同 ID、或目标完全缺失时明确失败�
 
 - **恢复 = 真实远端写请求**：`restoreOne()` 走队列 → `setStarState(..., true)` → 成功才 `markRepoStarred()`（复原标签/备注）+ `syncCardAfterStarChange()`。**禁止只做本地回滚**（那会制造「本地有星、远端无星」，下一轮同步又判成外部取关）。
 - `restoreMany()` **逐条 await**（严格串行）、执行中**可取消**（只停后续，已发出的不回滚）、**不自动重试**、无数量阈值；限流或凭证失效停止后续。
-- TM 菜单「♻️ 恢复已取消的 star（24h 内）」= 可勾选 + 一键「恢复选中」+ **每行一个 ☆ 恢复 按钮**；`confirm` 显示条数与预估耗时（≥1s/条）。
+- TM 菜单「♻️ 取消/异常的 Star 仓库」（4.22.0 起两区）：已取消区 = 可勾选 + 一键「恢复选中」+ **每行一个 ☆ 恢复 按钮**；`confirm` 显示条数与预估耗时（≥1s/条）。异常区 = 墓碑行（`listTombstones()`），只能单条/全部删除（「删除全部异常」，连带标签与备注，不可撤销）。
 - **变化简报**（`emitSyncReport`）：任何 `runFullSync` 路径收尾都弹；口径只有「取消 star / 新增 / 恢复」，**元数据刷新只进控制台**；无变化也弹「无变化（共 N 个 star）」（304 免额度早退路径同样弹）；**不判重**；每条外部取关**各弹一条带「恢复」按钮的通知**。
 - **通知栈**（`ui/notifications.ts`）：常挂 `document.body`（**不是** header 子节点），锚在**全局头部下方**（`div.header-wrapper.js-header-wrapper` 底边 + 8px，滚动/改窗口时 rAF 重算，头部滚出视口后回落视口顶部 8px）、新条目从底部追加、无条数上限、3s 自动消失、**悬停整个区域暂停计时**、带动作按钮的条目成功后原地划掉并重置 3s。**观感 = GitHub 自己的 `.flash`**（内联消息族）：`bgColor-*-muted` 浅色底 + `borderColor-*-muted` 1px 真描边 + 16px 细线 octicon 着 `fgColor-*`；**4.19.3 起这些颜色不再由本文件写死**，而在 `buildItem()` 里经 `resolveUiTheme()` 现场取（`theme.notice[kind]` + `theme.restingShadow` + `theme.btnShadow` + `theme.radiusMedium`），`KIND_ICON` 只留图标 path。尺度对齐本脚本既有 UI（`--borderRadius-medium`、`--shadow-resting-small`、`12px 16px` 内边距、按钮 14px / `6px 14px`）。**不要**用 Primer `Toast` 的 48px 满饱和图标条 + 三层悬浮投影（浮动 toast 族，与卡片/横幅语言不同族）。样式全内联（可出现在任意 github.com 页面，不依赖 Stars 视图注入的样式表）。**4.10.0 起容器入口带视口门**：`ensureContainer()` 在窄视口返回 `null`，`pushNotice` 交回**空句柄**并留一条 console —— 否则窄视口下从 TM 菜单触发一次同步就会把整座栈懒重建出来（与「窄视口完全惰性」冲突）。
 - **失败一律 `alert` 一行文字**（ADR 0003）：写失败、单条恢复失败、批量恢复的失败汇总都走 `alert`——3s 的通知承载不了「唯一可能造成数据丢失的事件」的反馈。

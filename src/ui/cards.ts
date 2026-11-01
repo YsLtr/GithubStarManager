@@ -18,6 +18,11 @@ export function buildCardFromCache(repoId: string, data: RepoData): HTMLDivEleme
   const card = document.createElement('div');
   card.className = 'stars-grid-card stars-grid-card-cached';
   card.dataset.repoId = repoId;
+  // 墓碑（4.22.0）：仓库已不可访问，整卡灰色但仍参与筛选/编辑。样式见 base.css。
+  if (data.tombstone) {
+    card.classList.add('stars-grid-card-tombstone');
+    card.title = `仓库已无法访问（HTTP ${data.tombstone.status}），已标记为异常 Star`;
+  }
 
   const repoHref = '/' + (data.name || '');
   card.dataset.repoName = '/' + (data.name || '');
@@ -140,6 +145,16 @@ export function createStarButtonForCached(card: HTMLElement, data: RepoData, isS
 
     const target = !btn.classList.contains('starred');
     setStarButtonVisual(btn, target); // 乐观翻转
+
+    // 墓碑（4.22.0）：仓库已不可访问，写请求只会 404。取消 star 是纯本地动作 ——
+    // 与普通 unstar 一样把元数据/标签/备注搬进 24h 宽限期（markRepoUnstarred 会剔除墓碑标记）。
+    if (!target && data.tombstone) {
+      markRepoUnstarred(repoId, data);
+      setViewStarOverride(repoId, false);
+      syncCardAfterStarChange(repoId, false);
+      pushRestoreNotice(repoId, fullName, 'manual');
+      return;
+    }
 
     const handle = enqueueMutation<StarWriteOutcome>({
       key: repoTargetKey(requestTarget),

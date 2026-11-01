@@ -165,6 +165,54 @@
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   }
 
+  /* ===== 墓碑卡片（4.22.0，issue #5）：仓库已不可访问 =====
+     只改观感，不改功能：仍参与筛选、标签/备注仍可编辑。颜色全走页面 token；
+     星标、语言点、标签 pill、备注/标签输入框边框、各 hover 一律压到 muted。 */
+  .stars-grid-card.stars-grid-card-tombstone {
+    background: var(--bgColor-muted, #f6f8fa) !important;
+    border-color: var(--borderColor-muted, #d1d9e0) !important;
+  }
+  .stars-grid-card.stars-grid-card-tombstone:hover {
+    box-shadow: 0 1px 3px var(--borderColor-muted, rgba(0, 0, 0, 0.12));
+  }
+  .stars-grid-card.stars-grid-card-tombstone .stars-card-header h3 a,
+  .stars-grid-card.stars-grid-card-tombstone .stars-card-desc,
+  .stars-grid-card.stars-grid-card-tombstone .stars-card-meta,
+  .stars-grid-card.stars-grid-card-tombstone .stars-card-meta a,
+  .stars-grid-card.stars-grid-card-tombstone .stars-card-notes-text,
+  .stars-grid-card.stars-grid-card-tombstone .stars-card-notes-placeholder,
+  .stars-grid-card.stars-grid-card-tombstone .stars-tag {
+    color: var(--fgColor-muted, #656d76) !important;
+  }
+  .stars-grid-card.stars-grid-card-tombstone .stars-card-meta a:hover,
+  .stars-grid-card.stars-grid-card-tombstone .stars-tag-add:hover {
+    color: var(--fgColor-muted, #656d76) !important;
+  }
+  .stars-grid-card.stars-grid-card-tombstone .stars-tag {
+    background: var(--bgColor-neutral-muted, #eaeef2) !important;
+  }
+  .stars-grid-card.stars-grid-card-tombstone .stars-tag-add:hover {
+    background: var(--bgColor-neutral-muted, #eaeef2) !important;
+    border-color: var(--borderColor-muted, #d1d9e0) !important;
+  }
+  .stars-grid-card.stars-grid-card-tombstone .stars-tag-add,
+  .stars-grid-card.stars-grid-card-tombstone .stars-card-notes {
+    border-color: var(--borderColor-muted, #d1d9e0) !important;
+    color: var(--fgColor-muted, #656d76) !important;
+  }
+  .stars-grid-card.stars-grid-card-tombstone .repo-language-color {
+    background-color: var(--fgColor-muted, #656d76) !important;
+  }
+  .stars-grid-card.stars-grid-card-tombstone .stars-star-btn,
+  .stars-grid-card.stars-grid-card-tombstone .stars-star-btn.starred {
+    color: var(--fgColor-muted, #656d76) !important;
+  }
+  /* 进入编辑态时的边框：备注 textarea / 标签输入框 */
+  .stars-grid-card.stars-grid-card-tombstone .stars-card-notes-edit,
+  .stars-grid-card.stars-grid-card-tombstone .stars-tag-input {
+    border-color: var(--fgColor-muted, #656d76) !important;
+  }
+
   /* 卡片标题 */
   .stars-grid-card .stars-card-header h3 {
     font-size: 14px !important;

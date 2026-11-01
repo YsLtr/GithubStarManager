@@ -38,6 +38,7 @@ import { pushRestoreNotice } from './restore';
 import { loadPendingDelete, markRepoStarred } from './storage/pendingDelete';
 import { pushNotice } from './ui/notifications';
 import { hasApiData, loadRepoCache, saveRepoCache, saveRepoData } from './storage/repoCache';
+import { markRepoTombstone } from './storage/tombstone';
 import type { FullSyncMeta, RepoCache, RepoData } from './types';
 import { currentGeneration, ifCurrent } from './lifecycle';
 import { isDesktop } from './utils';
@@ -59,6 +60,8 @@ interface SyncSummary {
   added: number;
   restored: number;
   unstarred: number;
+  /** 本轮新判定为「仓库已不可访问」的墓碑数 */
+  tombstoned: number;
   backfilled: number;
 }
 
@@ -70,6 +73,13 @@ const RATE_FLOOR = 10;
 /** ETag 快筛冷却：进页/frame 重渲染风暴下最多 60s 探一次 */
 const PROBE_COOLDOWN_MS = 60_000;
 /** 整表 TTL 兜底：ETag 只代表首页，中部变化可能长期 304 → 超时强制整表 */
+/** 仓库本身「不可访问」的判定（4.22.0 墓碑）：404 已删除/无权访问、410 已永久移除、451 因法律原因不可用。
+ * 只认这三个明确状态；403 / 网络 / 限流一律「本轮不动」—— 不能把一时抖动写成墓碑。
+ * 已知歧义：classic token 无 repo scope 时私有仓库也是 404，会落成墓碑（比误判 unstar 更保守：
+ * 元数据与标签都留在缓存里，仓库重新可达时下一次同步自动清墓碑）。 */
+function isGoneStatus(status: number): boolean {
+  return status === 404 || status === 410 || status === 451;
+}
 const FULL_SYNC_TTL_MS = 48 * 60 * 60 * 1000;
 let syncing = false;
 let lastProbeAt = 0;
@@ -608,6 +618,7 @@ interface SyncReportInput {
   added: number;
   restored: number;
   unstarred: number;
+  tombstoned: number;
   refreshed: number;
   unstarredItems: Array<{ repoId: string; name: string }>;
 }
@@ -620,7 +631,7 @@ interface SyncReportInput {
  * - 每条外部取关**各弹一条带「恢复」按钮的通知**（逐条动作，不做「恢复全部」语义）。
  */
 function emitSyncReport(source: 'button' | 'auto', r: SyncReportInput): void {
-  if (r.added === 0 && r.restored === 0 && r.unstarred === 0) {
+  if (r.added === 0 && r.restored === 0 && r.unstarred === 0 && r.tombstoned === 0) {
     pushNotice(`同步完成：无变化（共 ${r.total} 个 star）`, 'info');
     // 元数据刷新只进控制台（ADR 0003 口径）
     if (r.refreshed > 0) console.log(`[github-star-manager] 同步：元数据刷新 ${r.refreshed} 条（不进简报）`);
@@ -628,11 +639,13 @@ function emitSyncReport(source: 'button' | 'auto', r: SyncReportInput): void {
   }
   const parts: string[] = [];
   if (r.unstarred > 0) parts.push(`取消 star ${r.unstarred}`);
+  if (r.tombstoned > 0) parts.push(`异常仓库 ${r.tombstoned}`);
   if (r.added > 0) parts.push(`新增 ${r.added}`);
   if (r.restored > 0) parts.push(`恢复 ${r.restored}`);
   const text = `同步完成：${parts.join('、')}（共 ${r.total} 个 star）`;
-  // 有外部取关 = 数据有风险 → 用 danger 视觉并保持逐条可恢复；否则只是信息性更新
-  pushNotice(text, r.unstarred > 0 ? 'danger' : 'success');
+  // 有外部取关 = 数据有风险 → 用 danger 视觉并保持逐条可恢复；墓碑仓库不可恢复，用 warn；
+  // 其余只是信息性更新。恢复入口在 TM 菜单「取消/异常的 Star 仓库」。
+  pushNotice(text, r.unstarred > 0 ? 'danger' : r.tombstoned > 0 ? 'warn' : 'success');
   for (const it of r.unstarredItems) pushRestoreNotice(it.repoId, it.name, 'report');
   if (source === 'auto') console.log('[github-star-manager] 自动同步产出变化，简报已弹出');
   if (r.refreshed > 0) console.log(`[github-star-manager] 同步：元数据刷新 ${r.refreshed} 条（不进简报）`);
@@ -699,7 +712,7 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
       // 无变化也弹（ADR 0003）：用户需要知道「同步确实跑过了」
       const total = storedMeta.count ?? 0;
       pushNotice(`同步完成：无变化（共 ${total} 个 star）`, 'info');
-      produced = { pages: 0, total, added: 0, restored: 0, unstarred: 0, backfilled: 0 };
+      produced = { pages: 0, total, added: 0, restored: 0, unstarred: 0, tombstoned: 0, backfilled: 0 };
       return produced;
     }
     console.log(
@@ -711,29 +724,37 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
     // A. 外部 unstar：本地缓存有、远端无 → 走既有宽限管线。
     // 全正文模式：整表即权威确认；切片混合模式：嫌疑先逐条 GET 核对（204=切片平局误报保留 / 404=真取关）。
     const cacheBefore = loadRepoCache();
-    const suspects = Object.keys(cacheBefore).filter(id => !remoteMap.has(id));
+    const suspects = Object.keys(cacheBefore).filter(id => !remoteMap.has(id) && !cacheBefore[id].tombstone);
     // 全部网络核对在任何本地变更之前完成。失败/额度耗尽时不可能已搬走前几条标签。
-    const checked = scan.hybrid ? await collectStarredChecks(tok,
+    // 全正文模式：整表已证明「不在星标里」，只缺仓库本身的可达性（existenceOnly = 省掉 /user/starred 那一发）；
+    // 切片混合模式：local-only 嫌疑连星标状态一起核对（204=切片平局误报保留 / 404=真取关或仓库消失）。
+    const checked = await collectStarredChecks(tok,
       suspects.map(id => repoTarget(id, cacheBefore[id].name)), scanRemaining, response => {
         if (response.status === 401 || response.status === 403) reportAuthIssue(response);
-      }) : [];
+      }, { existenceOnly: !scan.hybrid });
     /** 本轮新确认的外部取关（简报要逐条给「恢复」按钮，故留名字） */
     const unstarredItems: Array<{ repoId: string; name: string }> = [];
     let unstarred = 0;
+    let tombstoned = 0;
     for (const [index, repoId] of suspects.entries()) {
       let path = cacheBefore[repoId].name || '';
-      if (scan.hybrid) {
-        const result = checked[index];
-        if (result.ok && !result.gone) {
-          console.log(`[github-star-manager] 嫌疑核对：${cacheBefore[repoId].name || repoId} 仍 star（切片平局误报），保留`);
+      const result = checked[index];
+      if (!result.ok) {
+        if (isGoneStatus(result.status)) {
+          if (markRepoTombstone(repoId, result.status)) {
+            tombstoned += 1;
+            console.log(`[github-star-manager] ⌗ 仓库已不可访问（HTTP ${result.status}），标记为异常（墓碑）：${path || repoId}`);
+          }
           continue;
         }
-        if (!result.ok) {
-          console.log(`[github-star-manager] 嫌疑核对不可判定（网络/异常状态），本轮不动：${cacheBefore[repoId].name || repoId}`);
-          continue;
-        }
-        path = result.target.fullName;
+        console.log(`[github-star-manager] 嫌疑核对不可判定（网络/异常状态），本轮不动：${path || repoId}`);
+        continue;
       }
+      if (scan.hybrid && !result.gone) {
+        console.log(`[github-star-manager] 嫌疑核对：${cacheBefore[repoId].name || repoId} 仍 star（切片平局误报），保留`);
+        continue;
+      }
+      path = result.target.fullName;
       if (applyExternalUnstar(repoId, path)) {
         unstarred += 1;
         unstarredItems.push({ repoId, name: path.replace(/^\//, '') || repoId });
@@ -765,6 +786,8 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
     for (const it of remoteMap.values()) {
       const entry = cache[it.repoId];
       if (!entry) continue;
+      // 仓库重新出现在星标里 ⇒ 已恢复可达，清墓碑（灰卡变回正常卡）；不碰标签/备注。
+      if (entry.tombstone) { delete entry.tombstone; refreshed += 1; }
       if (it.starredAt && entry.starredAt !== it.starredAt) {
         entry.starredAt = it.starredAt;
         backfilled += 1;
@@ -800,12 +823,13 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
       added,
       restored,
       unstarred,
+      tombstoned,
       backfilled,
     };
     console.log(
       `[github-star-manager] ★ P4 全量同步完成：${summary.total} 个 star / ${scan.pages} 页` +
         `（正文 ${scan.bodyPages} + 切片 ${scan.slicePages}）— 新增 ${added}、恢复 ${restored}、外部 unstar ${unstarred}、` +
-        `回填 star 时间 ${backfilled}、元数据刷新 ${refreshed}`
+        `异常仓库 ${tombstoned}、回填 star 时间 ${backfilled}、元数据刷新 ${refreshed}`
     );
     document.querySelector('.gsm-setup-banner')?.remove(); // 同步成功即撤配置横幅（缓存已就绪）
     emitSyncReport(source, {
@@ -813,11 +837,12 @@ export async function runFullSync(source: 'button' | 'auto'): Promise<SyncSummar
       added,
       restored,
       unstarred,
+      tombstoned,
       refreshed,
       unstarredItems,
     });
     // 有增删差异或可见元数据更新 → **立即重绘**网格（不问「是否刷新」）
-    rerenderAfterSync(added + restored + unstarred + backfilled + refreshed);
+    rerenderAfterSync(added + restored + unstarred + tombstoned + backfilled + refreshed);
     // 写元数据：逐页 ETag 基线（304 页沿用旧校验值、正文页用响应值，剥 W/ 规范形）+ lastFullSyncAt + 总数
     const outMeta: FullSyncMeta = { etags: scan.etags, lastFullSyncAt: Date.now(), count: scan.items.length };
     // 归属账号（4.18.0）：记录「这份整表缓存是谁的列表」，**只写不判** —— 没有任何读门看它
@@ -991,7 +1016,7 @@ function renderSyncButton(btn: HTMLElement, host: HTMLElement, state: SyncState)
   const s = state.lastSummary;
   btn.title = s
     ? `上次同步：${s.total} 个 star / ${s.pages} 页 — 新增 ${s.added}、恢复 ${s.restored}、` +
-      `外部 unstar ${s.unstarred}、回填 star 时间 ${s.backfilled}`
+      `外部 unstar ${s.unstarred}、异常仓库 ${s.tombstoned}、回填 star 时间 ${s.backfilled}`
     : SYNC_DEFAULT_TITLE;
 }
 

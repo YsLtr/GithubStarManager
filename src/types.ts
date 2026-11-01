@@ -21,6 +21,18 @@ export interface RepoData {
   mirror?: boolean;
   /** 仅在待删除区条目上存在 */
   unstarredAt?: number;
+  /** 墓碑（4.22.0）：同步确认「远端列表没有它，且仓库本身已不可访问」。
+   * 条目仍留在整表缓存里（参与筛选/编辑/导出），卡片渲染为灰色；
+   * 用户对它点 unstar 后与普通仓库一样进入 24h 宽限期，仓库重新可访问时由下一次同步清除。 */
+  tombstone?: TombstoneInfo;
+}
+
+/** 墓碑的判定依据（只写不判之外仍有展示价值：恢复窗口里显示 HTTP 状态与发现时间） */
+export interface TombstoneInfo {
+  /** 判定时刻（ms） */
+  at: number;
+  /** 探测到的 HTTP 状态：404 = 已删除或无权访问；410/451 = 已下线/因法律原因不可用 */
+  status: number;
 }
 
 /** 待删除区条目：unstar 宽限期内保留的数据 + 标签/备注备份 */

@@ -53,7 +53,7 @@ const clone = value => value === undefined ? value : structuredClone(value);
 global.GM_getValue = (key, fallback) => store.has(key) ? clone(store.get(key)) : fallback;
 global.GM_setValue = (key, value) => { storageWrites.push(key); store.set(key, clone(value)); };
 global.localStorage = { getItem: key => mirror.get(key) ?? null, setItem: (key, value) => mirror.set(key, value), removeItem: key => mirror.delete(key) };
-const { targets: t, repositories: api, writes, queue, restore, sync } = require('./.build/api.cjs');
+const { targets: t, repositories: api, writes, queue, restore, sync, tombstone } = require('./.build/api.cjs');
 const API = 'https://api.github.com';
 let calls = [];
 let requestExpectations = [];
@@ -305,13 +305,70 @@ async function test(name, fn) {
     assert.equal(await sync.runFullSync('auto'), null);
     assert.deepEqual([...store], before); assert.deepEqual(storageWrites, []); done();
   });
-  await test('real mixed sync: metadata 404 preserves local tags; renamed-star 204 preserves membership', async () => {
+  await test('real mixed sync: metadata 404 becomes tombstone (not unstar); renamed-star 204 preserves membership', async () => {
     const pages = seedHybrid();
     const done = mock([...pages, metadata('1', '', { status: 404 }), { url: `${API}/repos/old/r1`, status: 404 },
       metadata('2', 'new/two'), state(204, 'new/two')]);
-    assert.equal((await sync.runFullSync('auto')).unstarred, 0);
+    const result = await sync.runFullSync('auto');
+    assert.equal(result.unstarred, 0); assert.equal(result.tombstoned, 1);
     assert.deepEqual(store.get('stars_tags_999'), { 1: ['do-not-lose'], 2: ['keep'] });
-    assert.ok(store.get('stars_repo_cache')['1']); assert.equal(store.get('stars_repo_cache')['2'].name, 'new/two'); done();
+    assert.ok(store.get('stars_repo_cache')['1'].tombstone); assert.equal(store.get('stars_repo_cache')['2'].name, 'new/two');
+    assert.equal(store.get('stars_pending_delete_999'), undefined); done();
+  });
+  const tombstonePages = () => [{ url: `${API}/user/starred?per_page=100&page=1&sort=created&direction=desc`, status: 200,
+    body: [], headers: { etag: '"one"' } }];
+  await test('full-body sync: gone repository is tombstoned, cache/tags kept, no per-star check', async () => {
+    store.set('github_pat', 'ghp_test'); store.set('stars_repo_cache', { 12: { name: 'dead/repo' } });
+    store.set('stars_tags_999', { 12: ['belongs-to-dead'] });
+    const done = mock([...tombstonePages(), metadata('12', '', { status: 404 }), { url: `${API}/repos/dead/repo`, status: 404 }]);
+    const result = await sync.runFullSync('auto');
+    assert.equal(result.unstarred, 0); assert.equal(result.tombstoned, 1);
+    assert.equal(store.get('stars_repo_cache')['12'].tombstone.status, 404);
+    assert.deepEqual(store.get('stars_tags_999')['12'], ['belongs-to-dead']);
+    assert.equal(store.get('stars_pending_delete_999'), undefined);
+    assert.equal(calls.length, 3); done();
+  });
+  await test('full-body sync: existing repository is still an ordinary unstar', async () => {
+    store.set('github_pat', 'ghp_test'); store.set('stars_repo_cache', { 12: { name: 'live/repo' } });
+    store.set('stars_tags_999', { 12: ['keep'] });
+    const done = mock([...tombstonePages(), metadata('12', 'live/repo')]);
+    const result = await sync.runFullSync('auto');
+    assert.equal(result.unstarred, 1); assert.equal(result.tombstoned, 0);
+    assert.equal(store.get('stars_repo_cache')['12'], undefined);
+    assert.deepEqual(store.get('stars_pending_delete_999')['12']._tags, ['keep']); done();
+  });
+  await test('tombstone is not re-probed every sync, and clears when repo comes back', async () => {
+    store.set('github_pat', 'ghp_test');
+    store.set('stars_repo_cache', { 12: { name: 'back/repo', tombstone: { at: clock, status: 404 } } });
+    const done = mock([...tombstonePages()]);
+    const result = await sync.runFullSync('auto');
+    assert.equal(result.unstarred, 0); assert.equal(result.tombstoned, 0);
+    assert.ok(store.get('stars_repo_cache')['12'].tombstone); assert.equal(calls.length, 1); done();
+
+    reset();
+    store.set('github_pat', 'ghp_test');
+    store.set('stars_repo_cache', { 12: { name: 'back/repo', tombstone: { at: clock, status: 404 } } });
+    const done2 = mock([{ url: `${API}/user/starred?per_page=100&page=1&sort=created&direction=desc`, status: 200,
+      body: [{ starred_at: new Date(clock).toISOString(), repository: { id: 12, full_name: 'back/repo' } }], headers: { etag: '"one"' } }]);
+    const again = await sync.runFullSync('auto');
+    assert.equal(again.unstarred, 0);
+    assert.equal(store.get('stars_repo_cache')['12'].tombstone, undefined); done2();
+  });
+  await test('tombstone helpers list and delete tombstones with their tags/notes', () => {
+    store.set('stars_repo_cache', {
+      12: { name: 'dead/one', tombstone: { at: clock - 1000, status: 404 } },
+      13: { name: 'dead/two', tombstone: { at: clock, status: 451 } },
+      14: { name: 'alive/repo' },
+    });
+    store.set('stars_tags_999', { 12: ['a'], 13: ['b'], 14: ['c'] });
+    store.set('stars_notes_999', { 12: 'note' });
+    assert.deepEqual(tombstone.listTombstones().map(e => [e.repoId, e.status]), [['13', 451], ['12', 404]]);
+    assert.equal(tombstone.removeTombstones(['12']), 1);
+    assert.equal(store.get('stars_repo_cache')['12'], undefined);
+    assert.equal(store.get('stars_tags_999')['12'], undefined);
+    assert.equal(store.get('stars_notes_999')['12'], undefined);
+    assert.equal(tombstone.removeTombstones(), 1);
+    assert.deepEqual(Object.keys(store.get('stars_repo_cache')), ['14']);
   });
   await test('mixed sync commits confirmed removals only for ordinary 403/network; 401 abandons all', async () => {
     for (const kind of ['403', 'network', '401']) {

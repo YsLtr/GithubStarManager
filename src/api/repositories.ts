@@ -104,26 +104,43 @@ export async function checkRepoStarred(token: string, target: RepoTarget, option
 }
 
 /** 先完成全部核对再交回调用者提交；中途限流/凭证失效不会留下半份 diff。 */
+export interface CheckOptions {
+  /**
+   * true = 只核对「仓库是否还存在」（不需要 `/user/starred` 那一发，返回的 `gone` 恒为 false）。
+   * 4.22.0 墓碑判定用：全正文整表模式已由远端列表证明「不在星标里」，缺的只是仓库本身的可达性。
+   */
+  existenceOnly?: boolean;
+}
+
+/** 先完成全部核对再交回调用者提交；中途限流/凭证失效不会留下半份 diff。 */
 export async function collectStarredChecks(
   token: string, targets: RepoTarget[], remaining: number | null, onResponse?: (response: Response) => void,
+  options: CheckOptions = {},
 ): Promise<StarCheckResult[]> {
   const floor = 10;
-  // 一条最多 ID + 名称回退 + 星标状态三次显式请求（重定向由响应额度继续约束）。
-  if (remaining !== null && remaining < targets.length * 3 + floor) throw new Error('速率余量不足以完成仓库核对，本轮放弃');
+  // 一条最多 ID + 名称回退 + 星标状态三次显式请求（重定向由响应额度继续约束）；只查存在性时少一次。
+  const perTarget = options.existenceOnly ? 2 : 3;
+  if (remaining !== null && remaining < targets.length * perTarget + floor) throw new Error('速率余量不足以完成仓库核对，本轮放弃');
   const results: StarCheckResult[] = [];
+  const track = (response: Response): void => {
+    onResponse?.(response);
+    const header = response.headers.get('x-ratelimit-remaining');
+    const observed = header === null ? NaN : Number(header);
+    if (remaining !== null) remaining -= 1;
+    if (Number.isFinite(observed)) remaining = remaining === null ? observed : Math.min(remaining, observed);
+    if (remaining !== null && remaining < floor) throw new Error('仓库核对期间速率余量不足，本轮放弃');
+  };
   for (const target of targets) {
-    const result = await checkRepoStarred(token, target, { onResponse: response => {
-      onResponse?.(response);
-      const header = response.headers.get('x-ratelimit-remaining');
-      const observed = header === null ? NaN : Number(header);
-      if (remaining !== null) remaining -= 1;
-      if (Number.isFinite(observed)) remaining = remaining === null ? observed : Math.min(remaining, observed);
-      if (remaining !== null && remaining < floor) throw new Error('仓库核对期间速率余量不足，本轮放弃');
-    } });
+    if (options.existenceOnly) {
+      const resolved = await resolveRepoTarget(token, target, { onResponse: track });
+      results.push(resolved.ok ? { ok: true, gone: false, target: resolved.target } : resolved);
+    } else {
+      results.push(await checkRepoStarred(token, target, { onResponse: track }));
+    }
+    const result = results[results.length - 1];
     if (!result.ok && (result.reason === 'rate-limited' || result.reason === 'unauthorized')) {
       throw new Error(result.reason === 'rate-limited' ? '仓库核对触发限流，本轮放弃' : 'Token 已失效，本轮放弃');
     }
-    results.push(result);
   }
   return results;
 }
