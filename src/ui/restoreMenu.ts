@@ -107,7 +107,13 @@ function openRestoreDialog(): void {
 
   // 底部状态行 + 按钮行
   const status = el('div', { fontSize: '13px', color: theme.fgMuted, minHeight: '18px' });
-  const actions = el('div', { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' });
+  // 按钮跟着各自分区走（用户裁定）：勾选/恢复只对「已取消」有意义，删除只对「异常」有意义，
+  // 混成一排会让人以为「恢复选中」也能作用于异常仓库。
+  const actionRow = (): HTMLElement =>
+    el('div', { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' });
+  const restorableActions = actionRow();
+  const abnormalActions = actionRow();
+  const actions = actionRow();
 
   const btnPrimary: Partial<CSSStyleDeclaration> = {
     cursor: 'pointer',
@@ -417,8 +423,10 @@ close.addEventListener('click', () => {
     });
   });
 
-  actions.append(btnAll, btnNone, btnRun, btnStop, btnDeleteAll, btnClose);
-  box.append(title, hint, restorableTitle, list, abnormalTitle, abnormalList, status, actions, close);
+  restorableActions.append(btnAll, btnNone, btnRun, btnStop);
+  abnormalActions.append(btnDeleteAll);
+  actions.append(btnClose);
+  box.append(title, hint, restorableTitle, list, restorableActions, abnormalTitle, abnormalList, abnormalActions, status, actions, close);
   overlay.appendChild(box);
 
   overlay.addEventListener('mousedown', (e) => {
