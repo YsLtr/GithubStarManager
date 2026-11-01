@@ -139,7 +139,6 @@ function openRestoreDialog(): void {
   const btnRun = el('button', btnPrimary, '恢复选中');
   const btnStop = el('button', btnPlain, '取消执行');
   const btnClose = el('button', btnPlain, '关闭');
-  const btnDeleteAll = el('button', btnPlain, '删除全部异常');
   const btnAbnormalAll = el('button', btnPlain, '全选');
   const btnAbnormalNone = el('button', btnPlain, '全不选');
   const btnAbnormalRun = el('button', btnPlain, '删除选中');
@@ -148,12 +147,10 @@ function openRestoreDialog(): void {
   (btnRun as HTMLButtonElement).type = 'button';
   (btnStop as HTMLButtonElement).type = 'button';
   (btnClose as HTMLButtonElement).type = 'button';
-  (btnDeleteAll as HTMLButtonElement).type = 'button';
   (btnAbnormalAll as HTMLButtonElement).type = 'button';
   (btnAbnormalNone as HTMLButtonElement).type = 'button';
   (btnAbnormalRun as HTMLButtonElement).type = 'button';
   btnStop.hidden = true;
-  btnDeleteAll.hidden = true;
   btnAbnormalAll.hidden = true;
   btnAbnormalNone.hidden = true;
 
@@ -195,10 +192,6 @@ close.addEventListener('click', () => {
     (btnAll as HTMLButtonElement).disabled = running;
     (btnNone as HTMLButtonElement).disabled = running;
     (btnClose as HTMLButtonElement).disabled = running;
-    (btnDeleteAll as HTMLButtonElement).disabled = running;
-    (btnDeleteAll as HTMLButtonElement).hidden = abnormalRows.size === 0;
-    (btnDeleteAll as HTMLButtonElement).textContent =
-      abnormalRows.size > 0 ? `删除全部异常（${abnormalRows.size}）` : '删除全部异常';
     // 异常分区的批量删除：与「已取消」一样先勾选，避免误点（删除不可撤销）
     const an = abnormalChecked.size;
     (btnAbnormalRun as HTMLButtonElement).textContent = an > 0 ? `删除选中（${an}）` : '删除选中';
@@ -366,28 +359,6 @@ close.addEventListener('click', () => {
     abnormalList.appendChild(row);
   }
 
-  (btnDeleteAll as HTMLButtonElement).addEventListener('click', () => {
-    if (running) return;
-    const n = abnormalRows.size;
-    if (n === 0) return;
-    const ok = window.confirm(
-      `删除全部 ${n} 个异常 Star 仓库？\n\n` +
-        '· 仓库已无法访问，删除后不再出现在网格与恢复窗口；\n' +
-        '· 它们的标签与备注也会一并删除；\n' +
-        '· 操作不可撤销。\n\n确定删除吗？'
-    );
-    if (!ok) return;
-    const removed = removeTombstones();
-    abnormalRows.clear();
-    abnormalChecked.clear();
-    abnormalList.replaceChildren();
-    const empty = el('div', { fontSize: '13px', color: theme.fgMuted, padding: '8px' }, '当前没有异常仓库。');
-    empty.className = 'gsm-restore-empty';
-    abnormalList.appendChild(empty);
-    refreshButtons();
-    status.textContent = `已删除 ${removed} 个异常仓库。`;
-    applyFilters({ keepPage: true });
-  });
 
   (btnAll as HTMLButtonElement).addEventListener('click', () => {
     list.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((cb) => {
@@ -488,7 +459,7 @@ close.addEventListener('click', () => {
   });
 
   restorableActions.append(btnAll, btnNone, btnRun, btnStop);
-  abnormalActions.append(btnAbnormalAll, btnAbnormalNone, btnAbnormalRun, btnDeleteAll);
+  abnormalActions.append(btnAbnormalAll, btnAbnormalNone, btnAbnormalRun);
   actions.append(btnClose);
   box.append(title, hint, restorableTitle, list, restorableActions, abnormalTitle, abnormalList, abnormalActions, status, actions, close);
   overlay.appendChild(box);
