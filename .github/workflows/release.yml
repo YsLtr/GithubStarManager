@@ -76,8 +76,24 @@ jobs:
             exit 1
           fi
 
+          # 地址只有一个来源：产物头里的 @downloadURL（vite.config.ts 写入），这里只读不写
+          INSTALL_URL=$(sed -n 's|^// @downloadURL *||p' dist/github-star-manager.user.js)
+          test -n "$INSTALL_URL" || { echo "dist 头里没有 @downloadURL（生产构建才会写）" >&2; exit 1; }
+
           gh release create "$TAG" \
             dist/github-star-manager.user.js \
             --target "$GITHUB_SHA" \
             --title "GithubStarManager $VERSION" \
             --generate-notes
+
+          # 安装与更新是同一个地址（latest 永久指向最新产物），前置到自动生成的 notes 之前
+          {
+            echo "## 安装 / 更新"
+            echo
+            echo "- 安装（Tampermonkey 点开即提示安装）：$INSTALL_URL"
+            echo "- 更新：重新打开上面的地址即可覆盖安装；已启用「自动检查更新」的会自行提示"
+            echo
+            gh release view "$TAG" --json body -q .body
+          } > release-body.md
+
+          gh release edit "$TAG" --notes-file release-body.md

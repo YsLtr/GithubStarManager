@@ -5,6 +5,11 @@ import pkg from './package.json' with { type: 'json' };
 /** 脚本名/产物名/包名的单一来源（4.6.0）：构建期注入 __SCRIPT_SLUG__，源码不重复写名字 */
 const SCRIPT_SLUG = 'github-star-manager';
 const SCRIPT_NAME = 'GithubStarManager';
+// 发布产物的固定下载地址（releases/latest 永久指向最新一次 release 的 asset）：
+// 这是「安装即更新」的唯一入口，release.yml 的说明文字也用它
+const RELEASE_SCRIPT_URL = 'https://github.com/YsLtr/GithubStarManager/releases/latest/download/github-star-manager.user.js';
+// @updateURL/@downloadURL 只进构建产物：dev loader 同名同版本，带上去会把 dev 脚本自动换成正式版
+const UPDATE_HEADERS = process.env.NODE_ENV === 'production' ? { updateURL: RELEASE_SCRIPT_URL, downloadURL: RELEASE_SCRIPT_URL } : {};
 export default defineConfig({
   plugins: [
     monkey({
@@ -31,6 +36,7 @@ export default defineConfig({
         // - GM_deleteValue     → 唯一用途是清理 4.0.10 的历史死键，该一次性清理已删除
         grant: ['GM_getValue', 'GM_setValue', 'GM_registerMenuCommand', 'GM_openInTab', 'GM_download'],
         'run-at': 'document-start',
+        ...UPDATE_HEADERS,
       },
       build: {
         fileName: `${SCRIPT_SLUG}.user.js`,

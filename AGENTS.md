@@ -6,7 +6,20 @@
 
 ---
 
-## 本轮交接：4.23.0 —— 墓碑与宽限期随导出包走（能跨设备复现），导入按原状态重建
+## 本轮交接：4.24.0 —— 安装/更新地址进产物头与 release 正文
+
+交接时间：**2026-11-01 17:00 +0800**；分支 `master`。
+
+- **问题**：此前产物头里没有 `@updateURL` / `@downloadURL`，只靠 TM「没声明时回退用安装地址」的未文档化行为。实测 `releases/latest/download/github-star-manager.user.js` 是 **302**，`Location` 钉死到 `releases/download/v<当前版本>/...`，之后还有一层跳 `objects.githubusercontent.com` —— 管理器记哪个地址无契约保证，记落地地址就永久盯着当前版本、静默不更新；粘贴源码安装的用户更是没有安装地址。
+- **改动**（`vite.config.ts`）：`RELEASE_SCRIPT_URL` 单一常量 + `UPDATE_HEADERS`，只在 `NODE_ENV === 'production'` 时并入 `userscript`，产物头多出 `@downloadURL` / `@updateURL`（同一个 `latest` 地址）。**dev loader 绝不能带**：它与正式版同名同 `@version`，带上后一有新 release 就会把 dev 脚本自动换成正式版、HMR 静默失效。
+- **地址只有一个来源**：`.github/workflows/release.yml` 不再硬编码 URL，改为从构建产物头读出 `INSTALL_URL=$(sed -n 's|^// @downloadURL *||p' dist/...user.js)`，为空即 `exit 1` —— 顺带成了「`@downloadURL` 到底有没有进产物」的自检。release 正文把「安装 / 更新」段落前置到 `--generate-notes` 生成的 notes 之前（`gh release create` → 读 body → 拼 → `gh release edit --notes-file`）。
+- **README**：安装段改为「点地址即装，重开同一地址即更新」，并点明头里已声明两个 URL。
+- **验证**：`pnpm check` 绿、dist **238.35 kB**、`@grant` 仍恰 5 项、头注释实读包含两行 URL；`sed` 提取在本地 bash 实测得到正确 URL；`curl -sI` 确认 `latest/download` 302 到当版 tag。
+- **边界**：workflow 未实跑（本地无法触发 `gh release`）；`pnpm dev` 未实拉一次 loader 确认头里**没有**这两行（依据是 Vite 在加载 config 前已设好 `NODE_ENV`，`node_modules/vite/dist/node/chunks/node.js:36891`）。若 `gh release create` 成功而 `edit` 失败，release 会存在但没有安装段落（作业红，不静默）。fork 构建会指向上游仓库，需改 `vite.config.ts` 那一个常量。
+
+---
+
+## 上一轮交接：4.23.0 —— 墓碑与宽限期随导出包走（能跨设备复现），导入按原状态重建
 
 交接时间：**2026-10-27 19:30 +0800**；分支 `master`。
 
@@ -121,9 +134,9 @@
 
 ## 当前状态
 
-版本 **4.23.0**（`package.json` 是单一版本源，`vite.config.ts` 读它写脚本头）。
+版本 **4.24.0**（`package.json` 是单一版本源，`vite.config.ts` 读它写脚本头）。
 
-本轮落点 = 4.23.0（墓碑与宽限期随导出包走，导入按原状态重建）。版本演进与每轮改了什么查 `git log`，决策依据查 `docs/adr/`。
+本轮落点 = 4.24.0（安装/更新地址进产物头与 release 正文）。版本演进与每轮改了什么查 `git log`，决策依据查 `docs/adr/`。
 唯一需要跨版本记住的四条实测结论：
 - **主题 token**：GitHub 的 `--color-*` 一代已整体改名（`--bgColor-*` / `--fgColor-*` / `--borderColor-*`）；真机暗色页实测旧名在 `:root` 上**全为空**。内联 UI 一律走 `ui/theme.ts` 的 `resolveUiTheme()`，**不写死颜色**（`scripts/verify-theme-tokens.cjs` 把关）。
 - **事件在节点离场后不可用**：移除聚焦元素**会**派发 `blur`，但目标要么已在文档外（`blur`/`focusout` 都传播不到 `document`），要么——**4.20.1 实测，三次一致**——派发发生在**摘除之前**：那一刻 `isConnected` 仍是 `true`、`parentNode` 还在、`document.contains()` 也 true。两个后果都要记住：① 任何「靠 document 上的收尾事件兜住被删节点」的写法都会挂死 ⇒ 要挂在**捕获相位** `blur` 上，或者干脆别删（D36 的做法）；② **`isConnected` 挡不住「脚本重绘摘掉编辑器」** ⇒ 想区分「用户失焦」与「重绘副作用」只能靠发起方标志（`src/inlineEdit.ts` 的 `suppressInlineCommit()`）。

@@ -86,7 +86,11 @@
 
 ### 安装脚本
 
-从[项目 Releases](https://github.com/YsLtr/GithubStarManager/releases) 下载 `github-star-manager.user.js`，或在管理器里新建脚本后粘贴内容。
+点这个地址即可安装（管理器会提示安装）；以后**重新打开同一个地址就是更新**：
+
+<https://github.com/YsLtr/GithubStarManager/releases/latest/download/github-star-manager.user.js>
+
+也可以进[项目 Releases](https://github.com/YsLtr/GithubStarManager/releases) 手动下载 `github-star-manager.user.js`，或在管理器里新建脚本后粘贴内容。脚本头里已声明 `@updateURL` / `@downloadURL` 指向上面这个 `latest` 地址 —— 启用「自动检查更新」后由管理器自行提示。
 
 ### 配置 Token
 
